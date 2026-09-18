@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">RobotRun</string>
+    <string name="capture_notification_channel">Screen capture</string>
+    <string name="capture_notification_title">RobotRun screen capture is running</string>
+    <string name="accessibility_service_description">RobotRun manual gesture test service</string>
+</resources>

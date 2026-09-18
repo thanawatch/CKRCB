@@ -1,0 +1,442 @@
+package com.example.cookierunbot.automation
+
+import android.content.Context
+import android.graphics.Color
+import android.graphics.PixelFormat
+import android.graphics.Rect
+import android.graphics.drawable.GradientDrawable
+import android.os.Handler
+import android.os.Build
+import android.os.Looper
+import android.provider.Settings
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
+import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
+import android.widget.Button
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
+import android.widget.ScrollView
+import android.widget.Switch
+import android.widget.TextView
+import android.widget.Toast
+import com.example.cookierunbot.CookieRunBotApplication
+import com.example.cookierunbot.capture.LatestFrameProvider
+import android.util.Log
+import android.util.DisplayMetrics
+import kotlin.math.abs
+
+/** Draggable control bubble shown above the game while screen capture is active. */
+class BotControlOverlay(private val context: Context) {
+    private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+    private val handler = Handler(Looper.getMainLooper())
+    private val root = FrameLayout(context)
+    private val bubble = Button(context)
+    private val panel = LinearLayout(context)
+    private val panelScroll = ScrollView(context)
+    private val panelStatus = TextView(context)
+    private val fastStart = Switch(context)
+    private val cookieRelay = Switch(context)
+    private val postRelay = Switch(context)
+    private val desiredBoost = Switch(context)
+    private val boostGroup = RadioGroup(context)
+    private val detectRelic = Switch(context)
+    private val sendFriendLife = Switch(context)
+    private val quickLives = Switch(context)
+    private val saveDebugImages = Switch(context)
+    private val jumpFixed = Switch(context)
+    private val jumpContinuous = Switch(context)
+    private val fixedCount = EditText(context)
+    private val interval = EditText(context)
+    private var attached = false
+    private var expanded = false
+    private var selectedBoost = BoostChoice.MAGNETIC
+    private var dragStartRawX = 0f
+    private var dragStartRawY = 0f
+    private var dragStartX = 0
+    private var dragStartY = 0
+    private var dragged = false
+
+    private val layoutParams = WindowManager.LayoutParams(
+        collapsedSize(),
+        collapsedSize(),
+        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+        COLLAPSED_FLAGS,
+        PixelFormat.TRANSLUCENT,
+    ).apply {
+        gravity = Gravity.TOP or Gravity.START
+        x = dp(8)
+        y = dp(80)
+    }
+
+    private val statusUpdater = object : Runnable {
+        override fun run() {
+            updateStatus()
+            if (attached) handler.postDelayed(this, STATUS_UPDATE_MS)
+        }
+    }
+
+    fun show(): Boolean {
+        if (attached) return true
+        if (!Settings.canDrawOverlays(context)) return false
+        buildViews()
+        return try {
+            windowManager.addView(root, layoutParams)
+            attached = true
+            handler.post(statusUpdater)
+            Log.i(CookieRunBotApplication.TAG, "[OVERLAY] Bot control bubble shown")
+            true
+        } catch (error: Exception) {
+            Log.e(CookieRunBotApplication.TAG, "[OVERLAY] Unable to show bubble", error)
+            false
+        }
+    }
+
+    fun dismiss() {
+        if (!attached) return
+        attached = false
+        handler.removeCallbacks(statusUpdater)
+        hideKeyboard()
+        runCatching { windowManager.removeView(root) }
+        Log.i(CookieRunBotApplication.TAG, "[OVERLAY] Bot control bubble removed")
+    }
+
+    private fun buildViews() {
+        root.removeAllViews()
+        panel.removeAllViews()
+        bubble.apply {
+            textSize = 11f
+            setTextColor(Color.WHITE)
+            background = roundedBackground(Color.rgb(20, 110, 190), dp(28).toFloat())
+            setPadding(0, 0, 0, 0)
+            setOnTouchListener(dragListener { setExpanded(true) })
+        }
+        root.addView(bubble, FrameLayout.LayoutParams(collapsedSize(), collapsedSize()))
+
+        panel.orientation = LinearLayout.VERTICAL
+        panel.setPadding(dp(12), dp(8), dp(12), dp(10))
+        panel.background = roundedBackground(Color.argb(245, 30, 30, 34), dp(14).toFloat())
+
+        val header = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(TextView(context).apply {
+                text = "RobotRun"
+                textSize = 17f
+                setTextColor(Color.WHITE)
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(Button(context).apply {
+                text = "×"
+                setOnClickListener { setExpanded(false) }
+            }, LinearLayout.LayoutParams(dp(52), dp(44)))
+            setOnTouchListener(dragListener())
+        }
+        panel.addView(header, matchWidth())
+        panelStatus.setTextColor(Color.WHITE)
+        panelStatus.textSize = 14f
+        panel.addView(panelStatus, matchWidth())
+
+        val options = BotOptionsStore.load(context)
+        addSwitch(fastStart, "Use owned Fast Start", options.useFastStart)
+        addSwitch(cookieRelay, "Use owned Cookie Relay", options.useCookieRelay)
+        addSwitch(postRelay, "Run action sequence after Cookie Relay", options.postCookieRelaySequence)
+        addSwitch(desiredBoost, "Use Desired Random Boost", options.useDesiredRandomBoost)
+        selectedBoost = options.desiredBoost
+        panel.addView(TextView(context).apply {
+            text = "Desired Boost"
+            setTextColor(Color.WHITE)
+        }, matchWidth())
+        boostGroup.orientation = RadioGroup.VERTICAL
+        boostGroup.removeAllViews()
+        BoostChoice.entries.forEach { choice ->
+            boostGroup.addView(RadioButton(context).apply {
+                id = View.generateViewId()
+                text = choice.displayName
+                textSize = 14f
+                setTextColor(Color.WHITE)
+                isChecked = choice == selectedBoost
+                setOnCheckedChangeListener { _, checked ->
+                    if (checked) selectedBoost = choice
+                }
+            }, matchWidth())
+        }
+        panel.addView(boostGroup, matchWidth())
+        addSwitch(detectRelic, "Detect Relic", options.detectRelic)
+        addSwitch(sendFriendLife, "Send Friend Life", options.sendFriendLife)
+        addSwitch(quickLives, "Receive/Send Lives after each game", options.receiveSendLivesAfterEachGame)
+        addSwitch(saveDebugImages, "Save Debug Images", options.saveDebugImages)
+
+        panel.addView(TextView(context).apply {
+            text = "Jump mode (both off = no jump)"
+            setTextColor(Color.WHITE)
+        }, matchWidth())
+        addSwitch(jumpFixed, "Jump by Count", options.jumpMode == JumpMode.FIXED_COUNT)
+        addSwitch(jumpContinuous, "Auto Jump", options.jumpMode == JumpMode.CONTINUOUS)
+        fixedCount.apply {
+            hint = "Number of taps"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setText((options.fixedJumpCount.takeIf { it > 0 } ?: 10).toString())
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.LTGRAY)
+        }
+        interval.apply {
+            hint = "Tap interval 100-1000 ms"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setText(options.tapIntervalMs.toString())
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.LTGRAY)
+        }
+        panel.addView(fixedCount, matchWidth())
+        panel.addView(interval, matchWidth())
+
+        cookieRelay.setOnCheckedChangeListener { _, checked ->
+            postRelay.isEnabled = checked
+            if (!checked) postRelay.isChecked = false
+        }
+        desiredBoost.setOnCheckedChangeListener { _, _ -> updateInputStates() }
+        jumpFixed.setOnCheckedChangeListener { _, checked ->
+            if (checked) jumpContinuous.isChecked = false
+            updateInputStates()
+        }
+        jumpContinuous.setOnCheckedChangeListener { _, checked ->
+            if (checked) jumpFixed.isChecked = false
+            updateInputStates()
+        }
+        updateInputStates()
+
+        val actions = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(Button(context).apply {
+                text = "Start Bot"
+                setOnClickListener { startBot() }
+            }, LinearLayout.LayoutParams(0, dp(50), 1f))
+            addView(Button(context).apply {
+                text = "Stop Bot"
+                setOnClickListener {
+                    BotRuntime.stop()
+                    updateStatus()
+                    setExpanded(false)
+                }
+            }, LinearLayout.LayoutParams(0, dp(50), 1f))
+        }
+        panel.addView(actions, matchWidth())
+
+        panelScroll.removeAllViews()
+        panelScroll.isFillViewport = false
+        panelScroll.isVerticalScrollBarEnabled = true
+        panelScroll.clipToPadding = false
+        panelScroll.setPadding(0, 0, 0, dp(24))
+        // Explicit WRAP_CONTENT is important here. Without it, ScrollView may
+        // measure the panel at viewport height and the bottom action buttons
+        // never become part of the scroll range.
+        panelScroll.addView(
+            panel,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        panelScroll.visibility = View.GONE
+        root.addView(
+            panelScroll,
+            FrameLayout.LayoutParams(expandedWidth(), expandedHeight()),
+        )
+        updateStatus()
+    }
+
+    private fun startBot() {
+        try {
+            val options = readOptions()
+            BotOptionsStore.save(context, options)
+            if (!LatestFrameProvider.diagnostics().captureRunning) {
+                panelStatus.text = "Capture is not running"
+                Toast.makeText(context, panelStatus.text, Toast.LENGTH_LONG).show()
+                return
+            }
+            BotRuntime.initialize(context.applicationContext)
+            BotRuntime.start(options)
+            updateStatus()
+            if (BotRuntime.isRunning()) {
+                setExpanded(false)
+            } else {
+                panelStatus.text = "Bot could not start; check permissions"
+                Toast.makeText(context, panelStatus.text, Toast.LENGTH_LONG).show()
+            }
+        } catch (error: IllegalArgumentException) {
+            panelStatus.text = error.message ?: "Invalid options"
+            Toast.makeText(context, panelStatus.text, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun readOptions(): BotOptions {
+        val mode = when {
+            jumpFixed.isChecked -> JumpMode.FIXED_COUNT
+            jumpContinuous.isChecked -> JumpMode.CONTINUOUS
+            else -> JumpMode.NONE
+        }
+        val count = fixedCount.text.toString().toIntOrNull() ?: 0
+        val tapInterval = interval.text.toString().toIntOrNull() ?: 250
+        return BotOptions(
+            useFastStart = fastStart.isChecked,
+            useCookieRelay = cookieRelay.isChecked,
+            postCookieRelaySequence = cookieRelay.isChecked && postRelay.isChecked,
+            useDesiredRandomBoost = desiredBoost.isChecked,
+            desiredBoost = selectedBoost,
+            detectRelic = detectRelic.isChecked,
+            sendFriendLife = sendFriendLife.isChecked,
+            receiveSendLivesAfterEachGame = quickLives.isChecked,
+            saveDebugImages = saveDebugImages.isChecked,
+            jumpMode = mode,
+            fixedJumpCount = if (mode == JumpMode.FIXED_COUNT) count else 0,
+            tapIntervalMs = if (mode == JumpMode.NONE) 250 else tapInterval,
+        )
+    }
+
+    private fun addSwitch(view: Switch, label: String, checked: Boolean) {
+        view.text = label
+        view.textSize = 14f
+        view.setTextColor(Color.WHITE)
+        view.isChecked = checked
+        panel.addView(view, matchWidth())
+    }
+
+    private fun updateInputStates() {
+        postRelay.isEnabled = cookieRelay.isChecked
+        boostGroup.visibility = if (desiredBoost.isChecked) View.VISIBLE else View.GONE
+        fixedCount.isEnabled = jumpFixed.isChecked
+        interval.isEnabled = jumpFixed.isChecked || jumpContinuous.isChecked
+    }
+
+    private fun updateStatus() {
+        val running = BotRuntime.isRunning()
+        val capture = LatestFrameProvider.diagnostics()
+        val accessibilityEnabled = BotAccessibilityService.isEnabled(context)
+        val accessibilityConnected = BotAccessibilityService.isConnected()
+        val frameReady = capture.captureRunning &&
+            capture.frameAgeMs != null &&
+            capture.frameAgeMs <= AutomationConfig.MAX_FRAME_AGE_MS
+        val ready = accessibilityEnabled && accessibilityConnected && frameReady
+        bubble.text = when {
+            !running -> "BOT\nOFF"
+            ready -> "BOT\nON"
+            else -> "BOT\nWAIT"
+        }
+        bubble.background = roundedBackground(
+            when {
+                !running -> Color.rgb(20, 110, 190)
+                ready -> Color.rgb(20, 150, 70)
+                else -> Color.rgb(210, 125, 20)
+            },
+            dp(28).toFloat(),
+        )
+        panelStatus.text = when {
+            !running -> "Status: Stopped"
+            !capture.captureRunning -> "Waiting: Screen capture"
+            !frameReady -> "Waiting: Fresh screen frame"
+            !accessibilityEnabled -> "Waiting: Accessibility permission disabled"
+            !accessibilityConnected -> "Waiting: Accessibility service disconnected"
+            else -> "Status: Running"
+        }
+    }
+
+    private fun setExpanded(value: Boolean) {
+        if (expanded == value || !attached) return
+        expanded = value
+        hideKeyboard()
+        bubble.visibility = if (value) View.GONE else View.VISIBLE
+        panelScroll.visibility = if (value) View.VISIBLE else View.GONE
+        layoutParams.width = if (value) expandedWidth() else collapsedSize()
+        layoutParams.height = if (value) expandedHeight() else collapsedSize()
+        layoutParams.flags = if (value) EXPANDED_FLAGS else COLLAPSED_FLAGS
+        clampPosition()
+        windowManager.updateViewLayout(root, layoutParams)
+    }
+
+    private fun dragListener(onClick: (() -> Unit)? = null) = View.OnTouchListener { _, event ->
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                dragStartRawX = event.rawX
+                dragStartRawY = event.rawY
+                dragStartX = layoutParams.x
+                dragStartY = layoutParams.y
+                dragged = false
+                true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = (event.rawX - dragStartRawX).toInt()
+                val dy = (event.rawY - dragStartRawY).toInt()
+                if (abs(dx) > dp(4) || abs(dy) > dp(4)) dragged = true
+                layoutParams.x = dragStartX + dx
+                layoutParams.y = dragStartY + dy
+                clampPosition()
+                if (attached) windowManager.updateViewLayout(root, layoutParams)
+                true
+            }
+            MotionEvent.ACTION_UP -> {
+                if (!dragged) onClick?.invoke()
+                true
+            }
+            else -> false
+        }
+    }
+
+    private fun clampPosition() {
+        val bounds = screenBounds()
+        layoutParams.x = layoutParams.x.coerceIn(0, (bounds.width() - layoutParams.width).coerceAtLeast(0))
+        layoutParams.y = layoutParams.y.coerceIn(0, (bounds.height() - layoutParams.height).coerceAtLeast(0))
+    }
+
+    private fun hideKeyboard() {
+        (context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+            .hideSoftInputFromWindow(root.windowToken, 0)
+        root.clearFocus()
+    }
+
+    private fun roundedBackground(color: Int, radius: Float) = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        setColor(color)
+        cornerRadius = radius
+    }
+
+    private fun matchWidth() = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT,
+    )
+
+    private fun collapsedSize() = dp(58)
+    private fun expandedWidth() = dp(310)
+    private fun expandedHeight(): Int {
+        // Overlay context metrics can remain in the display's natural (portrait)
+        // orientation while the game is landscape. Use the short display edge so
+        // the window always fits inside the visible screen in both orientations.
+        val bounds = screenBounds()
+        val available = minOf(bounds.width(), bounds.height())
+        return minOf(dp(440), (available * 0.88).toInt())
+    }
+
+    @Suppress("DEPRECATION")
+    private fun screenBounds(): Rect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        windowManager.currentWindowMetrics.bounds
+    } else {
+        val metrics = DisplayMetrics()
+        windowManager.defaultDisplay.getRealMetrics(metrics)
+        Rect(0, 0, metrics.widthPixels, metrics.heightPixels)
+    }
+    private fun dp(value: Int) = (value * context.resources.displayMetrics.density).toInt()
+
+    companion object {
+        private const val STATUS_UPDATE_MS = 500L
+        private const val COLLAPSED_FLAGS =
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+        private const val EXPANDED_FLAGS =
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+
+    }
+}
