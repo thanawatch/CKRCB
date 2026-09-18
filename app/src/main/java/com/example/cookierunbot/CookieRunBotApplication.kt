@@ -12,6 +12,7 @@ class CookieRunBotApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         PersistentTrace.initialize(this)
+        DebugLogStore.log("[BUILD] commit=${BuildConfig.BUILD_COMMIT} buildTime=${BuildConfig.BUILD_TIME}")
         DebugLogStore.log("[APP] RobotRun process started")
         val loaded = OpenCVLoader.initLocal()
         Log.i(TAG, "[OPENCV] initialized=$loaded")

@@ -1,6 +1,13 @@
 /.gradle/
 /.idea/
 /local.properties
+local.properties
+*.jks
+*.keystore
+*.p12
+*.pem
+*.env
+.env.*
 **/build/
 /captures/
 .externalNativeBuild/

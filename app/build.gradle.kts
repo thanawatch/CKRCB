@@ -3,6 +3,12 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+fun String.asBuildConfigString(): String =
+    "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
+
+val buildCommit = providers.environmentVariable("BUILD_COMMIT").orElse("unknown")
+val buildTime = providers.environmentVariable("BUILD_TIME").orElse("unknown")
+
 android {
     namespace = "com.example.cookierunbot"
     compileSdk = 36
@@ -13,6 +19,8 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
+        buildConfigField("String", "BUILD_COMMIT", buildCommit.get().asBuildConfigString())
+        buildConfigField("String", "BUILD_TIME", buildTime.get().asBuildConfigString())
     }
 
     buildTypes {
@@ -23,6 +31,10 @@ android {
                 "proguard-rules.pro",
             )
         }
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     compileOptions {
