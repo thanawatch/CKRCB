@@ -5,6 +5,8 @@ import android.os.SystemClock
 import android.os.Process
 import android.util.Log
 import com.example.cookierunbot.CookieRunBotApplication
+import com.example.cookierunbot.capture.ContentGeometryRegistry
+import com.example.cookierunbot.capture.FrameNormalizer
 import com.example.cookierunbot.capture.LatestFrameProvider
 import com.example.cookierunbot.capture.FrameSnapshot
 import com.example.cookierunbot.detection.DetectionResult
@@ -70,6 +72,7 @@ class BotController(
     private var lastRewardPopupAction: BotStage? = null
     private var consecutiveRewardPopupActions = 0
     private var minimumFreshFrameGeneration = -1L
+    private var pendingDailyNewTapGeneration = -1L
 
     fun isRunning(): Boolean = synchronized(lock) { running }
 
@@ -113,6 +116,7 @@ class BotController(
             lastDetectFrameLogAt = 0L
             resetRewardPopupGuard()
             minimumFreshFrameGeneration = -1L
+            pendingDailyNewTapGeneration = -1L
             resetNoMatchEpisode()
             executor = Executors.newSingleThreadExecutor { runnable ->
                 Thread(runnable, "cookierun-bot-loop").apply { priority = Thread.NORM_PRIORITY - 1 }
@@ -303,6 +307,43 @@ class BotController(
                 lastDetectionAt = now
                 Log.i(CookieRunBotApplication.TAG, "[RECOVERY] Full stage scan group=$group")
             }
+            logDailyNewPostTapResult(detector, frame, result)
+            logPartyRunSeasonRewardsPostTapResult(detector, frame, result)
+            // DAILY_NEW diagnostics when in PRE_GAME
+            if (group == DetectionGroup.PRE_GAME) {
+                val dailyNewResult = detector.detect(BotStage.DAILY_NEW, frame.mat)
+                if (!dailyNewResult.matched && dailyNewResult.score >= 0) {
+                    Log.i(
+                        CookieRunBotApplication.TAG,
+                        "[DAILY_NEW_DIAG] frameSequence=${frame.generation} " +
+                            "score=${format(dailyNewResult.score)} " +
+                            "matched=${dailyNewResult.matched} " +
+                            "roi=(432,12,849,78) " +
+                            "templateSize=${dailyNewResult.width}x${dailyNewResult.height} " +
+                            "roiSize=417x66"
+                    )
+                }
+                val partyRunRewardsResult = detector.detect(BotStage.PARTY_RUN_SEASON_REWARDS, frame.mat)
+                if (!partyRunRewardsResult.matched && partyRunRewardsResult.score >= 0) {
+                    Log.i(
+                        CookieRunBotApplication.TAG,
+                        "[PARTY_RUN_SEASON_REWARDS_DIAG] frameSequence=${frame.generation} " +
+                            "score=${format(partyRunRewardsResult.score)} " +
+                            "matched=${partyRunRewardsResult.matched} " +
+                            "roi=(350,0,940,140) " +
+                            "templateSize=${partyRunRewardsResult.width}x${partyRunRewardsResult.height} " +
+                            "roiSize=590x140"
+                    )
+                }
+            }
+            // Check if DAILY_NEW was detected in recovery scan but group is not PRE_GAME
+            if (result != null && result.state == BotStage.DAILY_NEW && group != DetectionGroup.PRE_GAME) {
+                logDiagnostic("[DAILY_NEW_SKIP] reason=wrong_detection_group group=${group.name}")
+            }
+            // Check if PARTY_RUN_SEASON_REWARDS was detected in recovery scan but group is not PRE_GAME
+            if (result != null && result.state == BotStage.PARTY_RUN_SEASON_REWARDS && group != DetectionGroup.PRE_GAME) {
+                logDiagnostic("[PARTY_RUN_SEASON_REWARDS_SKIP] reason=wrong_detection_group group=${group.name}")
+            }
             if (result == null) {
                 handleNoMatchDiagnostics(detector, frame)
                 if (now - lastTraceHeartbeatAt >= 5000L) {
@@ -318,7 +359,15 @@ class BotController(
             }
             resetNoMatchEpisode()
             lastDetectionAt = now
-            if (result.state == lastStage) return
+            if (result.state == lastStage) {
+                if (result.state == BotStage.DAILY_NEW) {
+                    logDiagnostic("[DAILY_NEW_SKIP] reason=same_state_lastStage")
+                }
+                if (result.state == BotStage.PARTY_RUN_SEASON_REWARDS) {
+                    logDiagnostic("[PARTY_RUN_SEASON_REWARDS_SKIP] reason=same_state_lastStage")
+                }
+                return
+            }
             if (result.state !in REWARD_PRE_GAME_POPUPS) resetRewardPopupGuard()
             val previousStage = lastStage
             LatestFrameProvider.updateDetection(result)
@@ -370,7 +419,19 @@ class BotController(
             BotStage.DAILY_CHECKIN -> rewardPopup(result.state, "DAILY_CHECKIN", AutomationConfig.DAILY_CHECKIN_ACCEPT, sourceWidth, sourceHeight, frameGeneration)
             BotStage.DAILY_CHECKIN_BOOST_SET -> rewardPopup(result.state, "DAILY_CHECKIN_BOOST_SET", AutomationConfig.DAILY_BOOST_ACCEPT, sourceWidth, sourceHeight, frameGeneration)
             BotStage.DAILY_TREASURE -> rewardPopup(result.state, "DAILY_TREASURE", AutomationConfig.DAILY_TREASURE_ACCEPT, sourceWidth, sourceHeight, frameGeneration)
-            BotStage.DAILY_NEW -> rewardPopup(result.state, "DAILY_NEW", AutomationConfig.DAILY_NEW_ACCEPT, sourceWidth, sourceHeight, frameGeneration)
+            BotStage.DAILY_NEW -> {
+                logDiagnostic("[DAILY_NEW_DIAG] matched=true score=${format(result.score)}")
+                logDiagnostic("[DAILY_NEW_ACTION] requested logical=(1128,74)")
+                rewardPopup(
+                    result.state,
+                    "DAILY_NEW",
+                    AutomationConfig.DAILY_NEW_ACCEPT,
+                    sourceWidth,
+                    sourceHeight,
+                    frameGeneration,
+                    jitter = 0,
+                )
+            }
             BotStage.ENTER_LEAGUE -> rewardPopup(result.state, "ENTER_LEAGUE", AutomationConfig.ENTER_LEAGUE_ACCEPT, sourceWidth, sourceHeight, frameGeneration)
             BotStage.LEAGUE_RESULTS -> rewardPopup(result.state, "LEAGUE_RESULTS", AutomationConfig.LEAGUE_RESULTS_ACCEPT, sourceWidth, sourceHeight, frameGeneration)
             BotStage.PREVIOUS_RANK_RESULTS -> rewardPopup(result.state, "PREVIOUS_RANK_RESULTS", AutomationConfig.PREVIOUS_RANK_ACCEPT, sourceWidth, sourceHeight, frameGeneration)
@@ -382,9 +443,140 @@ class BotController(
             BotStage.CONNECTION_LOST -> handleConnectionLost(sourceWidth, sourceHeight)
             BotStage.INACTIVE -> handleInactive(sourceWidth, sourceHeight)
             BotStage.PARTY_RUN -> rewardPopup(result.state, "PARTY_RUN", AutomationConfig.PARTY_RUN_CLOSE, sourceWidth, sourceHeight, frameGeneration)
+            BotStage.PARTY_RUN_SEASON_REWARDS -> handlePartyRunSeasonRewards(result, sourceWidth, sourceHeight, frameGeneration)
             BotStage.GAME_SETTINGS -> rewardPopup(result.state, "GAME_SETTINGS", AutomationConfig.GAME_SETTINGS_CLOSE, sourceWidth, sourceHeight, frameGeneration)
             BotStage.IN_GAME -> Unit
         }
+    }
+
+    private fun handlePartyRunSeasonRewards(
+        result: DetectionResult,
+        sourceWidth: Int,
+        sourceHeight: Int,
+        frameGeneration: Long,
+    ) {
+        logDiagnostic("[STATE_MATCH] state=PARTY_RUN_SEASON_REWARDS score=${format(result.score)}")
+        logDiagnostic("[ACTION] state=PARTY_RUN_SEASON_REWARDS action=CONFIRM")
+        logDiagnostic(
+            "[ACTION_MAP]\n" +
+                "state=PARTY_RUN_SEASON_REWARDS\n" +
+                "coordinateType=PHYSICAL\n" +
+                "physical=(1260,980)"
+        )
+        val physicalPoint = PhysicalPoint(1260, 980)
+        
+        // Check popup guard first
+        if (!allowRewardPopupAction(BotStage.PARTY_RUN_SEASON_REWARDS)) {
+            logDiagnostic("[POPUP_RETRY] state=PARTY_RUN_SEASON_REWARDS retry=blocked_by_guard")
+            return
+        }
+
+        val accepted = performPhysicalTap(
+            "PARTY_RUN_SEASON_REWARDS",
+            physicalPoint,
+            sourceWidth,
+            sourceHeight,
+            frameGeneration,
+            onCallback = { success ->
+                handlePartyRunSeasonRewardsCallback(success, frameGeneration)
+            },
+        )
+        logDiagnostic("[GESTURE] state=PARTY_RUN_SEASON_REWARDS dispatchAccepted=$accepted")
+        if (!accepted) {
+            // dispatch rejected - re-arm state, don't record action
+            minimumFreshFrameGeneration = frameGeneration
+            lastStage = null
+            logDiagnostic(
+                "[PARTY_RUN_SEASON_REWARDS] dispatch rejected; re-armed and waiting for fresh frame " +
+                    "generation>$frameGeneration"
+            )
+        }
+        // If accepted, callback will handle the rest
+    }
+
+    private fun handlePartyRunSeasonRewardsCallback(success: Boolean, detectionFrameGeneration: Long) {
+        if (!success) {
+            // callback success=false - re-arm state, don't record success, retry
+            logDiagnostic(
+                "[PARTY_RUN_SEASON_REWARDS] callback failed; re-arming state"
+            )
+            lastStage = null
+            pendingPartyRunSeasonRewardsTapGeneration = -1L
+            return
+        }
+
+        // callback success=true
+        // Use current/latest frame generation as freshness baseline (NOT detection-time frame generation)
+        val postCallbackBaseline = LatestFrameProvider.currentGeneration()
+        logDiagnostic("[POPUP] state=PARTY_RUN_SEASON_REWARDS postCallbackBaselineGeneration=$postCallbackBaseline")
+
+        // Record popup action
+        recordRewardPopupAction(BotStage.PARTY_RUN_SEASON_REWARDS)
+
+        // Wait for genuinely fresh frame (generation > postCallbackBaseline)
+        val fresh = LatestFrameProvider.awaitNextSnapshot(
+            postCallbackBaseline,
+            POPUP_FRESH_FRAME_TIMEOUT_MS,
+        )
+        if (fresh != null) {
+            try {
+                logDiagnostic(
+                    "[STATE_REDETECT]\n" +
+                        "previous=PARTY_RUN_SEASON_REWARDS\n" +
+                        "baselineGeneration=$postCallbackBaseline\n" +
+                        "freshFrameSequence=${fresh.generation}"
+                )
+                minimumFreshFrameGeneration = -1L
+                // Generic PRE_GAME redetection - screen is authoritative
+                updateGroup(DetectionGroup.PRE_GAME)
+                lastStage = null
+            } finally {
+                fresh.mat.release()
+            }
+        } else {
+            Log.w(
+                CookieRunBotApplication.TAG,
+                "[PARTY_RUN_SEASON_REWARDS] Waiting for fresh frame after callback generation>$postCallbackBaseline"
+            )
+            minimumFreshFrameGeneration = postCallbackBaseline
+        }
+        pendingPartyRunSeasonRewardsTapGeneration = -1L
+    }
+
+    private var pendingPartyRunSeasonRewardsTapGeneration = -1L
+
+    private fun performPhysicalTap(
+        name: String,
+        physicalPoint: PhysicalPoint,
+        sourceWidth: Int,
+        sourceHeight: Int,
+        frameGeneration: Long,
+        onCallback: ((Boolean) -> Unit)? = null,
+    ): Boolean {
+        logBotActionRequest(name)
+        val result = synchronized(lock) {
+            if (!running) return actionSkippedBotStopped(name)
+            actionExecutor.tapAbsolutePhysicalCircle(
+                name,
+                LogicalPoint(0, 0), // logical reference not used for physical tap
+                physicalPoint,
+                0.0, // no radius jitter - tap exact physical coordinate
+                sourceWidth,
+                sourceHeight,
+                onGestureCompleted = if (name == "PARTY_RUN_SEASON_REWARDS") {
+                    { _, success ->
+                        logDiagnostic("[GESTURE] state=PARTY_RUN_SEASON_REWARDS callbackSuccess=$success")
+                        onCallback?.invoke(success)
+                    }
+                } else {
+                    null
+                },
+            )
+        }
+        if (name == "PARTY_RUN_SEASON_REWARDS") {
+            logDiagnostic("[PARTY_RUN_SEASON_REWARDS] dispatchAccepted=${result.accepted}")
+        }
+        return reportActionResult(result)
     }
 
     private fun handleMainMenu(detector: StateDetector, sourceWidth: Int, sourceHeight: Int) {
@@ -838,9 +1030,26 @@ class BotController(
         sourceWidth: Int,
         sourceHeight: Int,
         frameGeneration: Long,
+        jitter: Int = AutomationConfig.DEFAULT_SAFE_JITTER,
     ) {
-        if (!allowRewardPopupAction(stage)) return
-        if (!performTap(name, point, sourceWidth, sourceHeight)) return
+        if (!allowRewardPopupAction(stage)) {
+            if (stage == BotStage.DAILY_NEW) {
+                logDiagnostic("[DAILY_NEW_SKIP] reason=popup_retry_guard")
+            }
+            return
+        }
+        if (!performTap(name, point, sourceWidth, sourceHeight, jitter)) {
+            if (stage == BotStage.DAILY_NEW) {
+                minimumFreshFrameGeneration = frameGeneration
+                lastStage = null
+                logDiagnostic(
+                    "[DAILY_NEW] dispatch rejected; re-armed and waiting for fresh frame " +
+                        "generation>$frameGeneration",
+                )
+            }
+            return
+        }
+        if (stage == BotStage.DAILY_NEW) pendingDailyNewTapGeneration = frameGeneration
         recordRewardPopupAction(stage)
         delayOrStop(randomMs(800, 1400))
         finishRewardPopupAction(stage, frameGeneration)
@@ -858,6 +1067,12 @@ class BotController(
                     "waiting for screen state to change"
             Log.w(CookieRunBotApplication.TAG, message)
             DebugLogStore.log(message)
+            if (stage == BotStage.DAILY_NEW) {
+                logDiagnostic("[DAILY_NEW_SKIP] reason=popup_retry_guard")
+            }
+            if (stage == BotStage.PARTY_RUN_SEASON_REWARDS) {
+                logDiagnostic("[PARTY_RUN_SEASON_REWARDS_SKIP] reason=popup_retry_guard")
+            }
             return false
         }
         Log.i(
@@ -922,13 +1137,106 @@ class BotController(
         } finally { snapshot.mat.release() }
     }
 
-    private fun performTap(name: String, point: LogicalPoint, sourceWidth: Int, sourceHeight: Int, jitter: Int = AutomationConfig.DEFAULT_SAFE_JITTER): Boolean {
+    private fun performTap(
+        name: String,
+        point: LogicalPoint,
+        sourceWidth: Int,
+        sourceHeight: Int,
+        jitter: Int = AutomationConfig.DEFAULT_SAFE_JITTER,
+    ): Boolean {
         logBotActionRequest(name)
+        if (name == "DAILY_NEW") {
+            val contentRect = ContentGeometryRegistry.current(sourceWidth, sourceHeight)?.contentRect
+                ?: FrameNormalizer.contentTransform(sourceWidth, sourceHeight).contentRect
+            val mapped = CoordinateMapper.logicalToPhysical(
+                point.x,
+                point.y,
+                sourceWidth,
+                sourceHeight,
+            )
+            logDiagnostic("[DAILY_NEW] logicalTarget=(${point.x},${point.y})")
+            logDiagnostic("[DAILY_NEW] jitter=$jitter")
+            logDiagnostic("[DAILY_NEW] sourceSize=${sourceWidth}x${sourceHeight}")
+            logDiagnostic("[DAILY_NEW] contentRect=${rectText(contentRect)}")
+            logDiagnostic("[DAILY_NEW] mappedPhysical=(${mapped.x},${mapped.y})")
+            logDiagnostic(
+                "[DAILY_NEW_ACTION_MAP] " +
+                    "logical=(${point.x},${point.y}) " +
+                    "contentRect=${rectText(contentRect)} " +
+                    "physical=(${mapped.x},${mapped.y})"
+            )
+        }
         val result = synchronized(lock) {
             if (!running) return actionSkippedBotStopped(name)
-            actionExecutor.tap(name, point, sourceWidth, sourceHeight, jitter)
+            actionExecutor.tap(
+                name,
+                point,
+                sourceWidth,
+                sourceHeight,
+                jitter,
+                onGestureCompleted = if (name == "DAILY_NEW") {
+                    { _, success ->
+                        // result will be available after this lambda is created
+                        logDiagnostic("[DAILY_NEW_GESTURE] callbackSuccess=$success")
+                    }
+                } else {
+                    null
+                },
+            )
+        }
+        if (name == "DAILY_NEW") {
+            logDiagnostic("[DAILY_NEW] dispatchAccepted=${result.accepted}")
+            logDiagnostic("[DAILY_NEW_GESTURE] accepted=${result.accepted}")
         }
         return reportActionResult(result)
+    }
+
+    private fun logDailyNewPostTapResult(
+        detector: StateDetector,
+        frame: FrameSnapshot,
+        detected: DetectionResult?,
+    ) {
+        val tappedGeneration = pendingDailyNewTapGeneration
+        if (tappedGeneration < 0L || frame.generation <= tappedGeneration) return
+
+        if (detected?.state == BotStage.DAILY_NEW) {
+            logDiagnostic(
+                "[DAILY_NEW] dispatchAccepted=true popupStillPresent=true " +
+                    "score=${format(detected.score)} generation=${frame.generation}",
+            )
+        } else {
+            val dailyNew = detector.detect(BotStage.DAILY_NEW, frame.mat)
+            logDiagnostic(
+                "[DAILY_NEW] dispatchAccepted=true popupGone=${!dailyNew.matched} " +
+                    "postTapScore=${format(dailyNew.score)} " +
+                    "nextState=${detected?.state?.name ?: "NO_MATCH"} generation=${frame.generation}",
+            )
+        }
+        pendingDailyNewTapGeneration = -1L
+    }
+
+    private fun logPartyRunSeasonRewardsPostTapResult(
+        detector: StateDetector,
+        frame: FrameSnapshot,
+        detected: DetectionResult?,
+    ) {
+        val tappedGeneration = pendingPartyRunSeasonRewardsTapGeneration
+        if (tappedGeneration < 0L || frame.generation <= tappedGeneration) return
+
+        if (detected?.state == BotStage.PARTY_RUN_SEASON_REWARDS) {
+            logDiagnostic(
+                "[PARTY_RUN_SEASON_REWARDS] dispatchAccepted=true popupStillPresent=true " +
+                    "score=${format(detected.score)} generation=${frame.generation}",
+            )
+        } else {
+            val rewards = detector.detect(BotStage.PARTY_RUN_SEASON_REWARDS, frame.mat)
+            logDiagnostic(
+                "[PARTY_RUN_SEASON_REWARDS] dispatchAccepted=true popupGone=${!rewards.matched} " +
+                    "postTapScore=${format(rewards.score)} " +
+                    "nextState=${detected?.state?.name ?: "NO_MATCH"} generation=${frame.generation}",
+            )
+        }
+        pendingPartyRunSeasonRewardsTapGeneration = -1L
     }
 
     private fun performDetectedTap(
@@ -1076,6 +1384,12 @@ class BotController(
             DebugLogStore.log(
                 "[ACTION] state=${result.actionName} SKIPPED reason=DISPATCH_NOT_ACCEPTED",
             )
+            if (result.actionName == "DAILY_NEW") {
+                logDiagnostic("[DAILY_NEW_SKIP] reason=dispatch_not_accepted")
+            }
+            if (result.actionName == "PARTY_RUN_SEASON_REWARDS") {
+                logDiagnostic("[PARTY_RUN_SEASON_REWARDS_SKIP] reason=dispatch_not_accepted")
+            }
         }
         return result.accepted
     }
@@ -1083,6 +1397,12 @@ class BotController(
     private fun actionSkippedBotStopped(name: String): Boolean {
         Log.w(CookieRunBotApplication.TAG, "[ACTION] SKIPPED state=$name reason=BOT_NOT_RUNNING")
         DebugLogStore.log("[ACTION] state=$name SKIPPED reason=BOT_NOT_RUNNING")
+        if (name == "DAILY_NEW") {
+            logDiagnostic("[DAILY_NEW_SKIP] reason=bot_not_running")
+        }
+        if (name == "PARTY_RUN_SEASON_REWARDS") {
+            logDiagnostic("[PARTY_RUN_SEASON_REWARDS_SKIP] reason=bot_not_running")
+        }
         return false
     }
 
@@ -1176,6 +1496,12 @@ class BotController(
         if (now - lastNoMatchDiagnosticAt >= NO_MATCH_DIAGNOSTIC_INTERVAL_MS) {
             val scores = detector.scoreStages(PRE_GAME_DIAGNOSTIC_STAGES, frame.mat)
             val best = scores.maxByOrNull(DetectionResult::score)
+            scores.firstOrNull { it.state == BotStage.DAILY_NEW }?.let { dailyNew ->
+                logDiagnostic(
+                    "[DAILY_NEW] noMatch score=${format(dailyNew.score)} " +
+                        "threshold=${format(AutomationConfig.MATCH_THRESHOLD)}",
+                )
+            }
             val scoreText = scores.joinToString(" ") { result ->
                 "${result.state.name}=${format(result.score)}"
             }
@@ -1279,6 +1605,7 @@ class BotController(
             BotStage.RELIC_COMPLETE,
             BotStage.RELIC_CLAIM,
             BotStage.PARTY_RUN,
+            BotStage.PARTY_RUN_SEASON_REWARDS,
             BotStage.GAME_SETTINGS,
         )
         private val PRE_GAME = listOf(
@@ -1286,7 +1613,7 @@ class BotController(
             BotStage.RELIC_CLAIM, BotStage.DAILY_CHECKIN, BotStage.DAILY_CHECKIN_BOOST_SET,
             BotStage.DAILY_TREASURE, BotStage.DAILY_NEW, BotStage.ENTER_LEAGUE,
             BotStage.LEAGUE_RESULTS, BotStage.PREVIOUS_RANK_RESULTS,
-            BotStage.TOO_MANY_TREASURES, BotStage.PARTY_RUN, BotStage.GAME_SETTINGS,
+            BotStage.TOO_MANY_TREASURES, BotStage.PARTY_RUN, BotStage.PARTY_RUN_SEASON_REWARDS, BotStage.GAME_SETTINGS,
             BotStage.MAINMENU, BotStage.PURCHASE_ITEM,
         )
         private val IN_GAME = listOf(BotStage.GAME_RELAY, BotStage.GAME_COMPLETE, BotStage.GAME_START)
@@ -1312,10 +1639,12 @@ class BotController(
             BotStage.MAINMENU,
             BotStage.PURCHASE_ITEM,
             BotStage.PARTY_RUN,
+            BotStage.PARTY_RUN_SEASON_REWARDS,
             BotStage.GAME_SETTINGS,
             BotStage.DAILY_CHECKIN,
             BotStage.DAILY_CHECKIN_BOOST_SET,
             BotStage.DAILY_TREASURE,
+            BotStage.DAILY_NEW,
             BotStage.CONGRATULATIONS,
             BotStage.LEVEL_UP,
             BotStage.RELIC_COMPLETE,
@@ -1329,7 +1658,7 @@ class BotController(
             BotStage.CONNECTION_LOST, BotStage.INACTIVE, BotStage.GAME_COMPLETE,
             BotStage.OVERTAKE_BREAK_SCORE, BotStage.MYSTERY_BOX, BotStage.CONGRATULATIONS,
             BotStage.RELIC_COMPLETE, BotStage.RELIC_CLAIM, BotStage.TOO_MANY_TREASURES,
-            BotStage.MAINMENU, BotStage.PARTY_RUN, BotStage.GAME_SETTINGS,
+            BotStage.MAINMENU, BotStage.PARTY_RUN, BotStage.PARTY_RUN_SEASON_REWARDS, BotStage.GAME_SETTINGS,
             BotStage.PURCHASE_ITEM, BotStage.LEVEL_UP, BotStage.DAILY_CHECKIN,
             BotStage.DAILY_CHECKIN_BOOST_SET, BotStage.DAILY_TREASURE,
             BotStage.DAILY_NEW, BotStage.ENTER_LEAGUE, BotStage.LEAGUE_RESULTS,

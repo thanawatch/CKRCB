@@ -164,6 +164,7 @@ class ActionExecutor(private val context: Context? = null) {
         physicalRadius: Double,
         sourceWidth: Int,
         sourceHeight: Int,
+        onGestureCompleted: ((completedAtNanos: Long, success: Boolean) -> Unit)? = null,
     ): ActionResult {
         val angle = Random.nextDouble(0.0, 2.0 * PI)
         val distance = physicalRadius * sqrt(Random.nextDouble())
@@ -183,8 +184,52 @@ class ActionExecutor(private val context: Context? = null) {
                 PhysicalPoint(x, y),
             )
         }
+        if (!GestureArbiter.acquire(GesturePriority.NORMAL)) {
+            Log.w(
+                CookieRunBotApplication.TAG,
+                "[ACTION] SKIPPED state=$actionName reason=ACTION_IN_PROGRESS",
+            )
+            DebugLogStore.log("[ACTION] state=$actionName SKIPPED reason=ACTION_IN_PROGRESS")
+            if (actionName == "DAILY_NEW") {
+                Log.i(
+                    CookieRunBotApplication.TAG,
+                    "[DAILY_NEW_SKIP] reason=action_in_progress"
+                )
+                DebugLogStore.log("[DAILY_NEW_SKIP] reason=action_in_progress")
+            }
+            if (actionName == "PARTY_RUN_SEASON_REWARDS") {
+                Log.i(
+                    CookieRunBotApplication.TAG,
+                    "[PARTY_RUN_SEASON_REWARDS_SKIP] reason=action_in_progress"
+                )
+                DebugLogStore.log("[PARTY_RUN_SEASON_REWARDS_SKIP] reason=action_in_progress")
+            }
+            return ActionResult(
+                actionName,
+                false,
+                logicalReference.x,
+                logicalReference.y,
+                PhysicalPoint(x, y),
+            )
+        }
         Log.i(CookieRunBotApplication.TAG, "[ACTION] dispatch start state=$actionName")
-        val dispatch = BotAccessibilityService.dispatchPhysicalPoint(x, y, "[ACTION] $actionName")
+        DebugLogStore.log("[ACTION] state=$actionName dispatch=start")
+        val dispatch = try {
+            BotAccessibilityService.dispatchPhysicalPoint(
+                x,
+                y,
+                "[ACTION]",
+                onCompleted = { completedAtNanos, success ->
+                    GestureArbiter.release()
+                    onGestureCompleted?.invoke(completedAtNanos, success)
+                },
+            ).also {
+                if (!it.accepted) GestureArbiter.release()
+            }
+        } catch (error: Exception) {
+            GestureArbiter.release()
+            throw error
+        }
         return ActionResult(
             actionName,
             dispatch.accepted,
@@ -234,6 +279,13 @@ class ActionExecutor(private val context: Context? = null) {
                 "[ACTION] SKIPPED state=$actionName reason=ACTION_IN_PROGRESS",
             )
             DebugLogStore.log("[ACTION] state=$actionName SKIPPED reason=ACTION_IN_PROGRESS")
+            if (actionName == "DAILY_NEW") {
+                Log.i(
+                    CookieRunBotApplication.TAG,
+                    "[DAILY_NEW_SKIP] reason=action_in_progress"
+                )
+                DebugLogStore.log("[DAILY_NEW_SKIP] reason=action_in_progress")
+            }
             return ActionResult(
                 actionName,
                 false,
@@ -299,6 +351,20 @@ class ActionExecutor(private val context: Context? = null) {
             DebugLogStore.log(
                 "[ACTION] state=$actionName SKIPPED reason=ACCESSIBILITY_PERMISSION_DISABLED",
             )
+            if (actionName == "DAILY_NEW") {
+                Log.i(
+                    CookieRunBotApplication.TAG,
+                    "[DAILY_NEW_SKIP] reason=accessibility_permission_disabled"
+                )
+                DebugLogStore.log("[DAILY_NEW_SKIP] reason=accessibility_permission_disabled")
+            }
+            if (actionName == "PARTY_RUN_SEASON_REWARDS") {
+                Log.i(
+                    CookieRunBotApplication.TAG,
+                    "[PARTY_RUN_SEASON_REWARDS_SKIP] reason=accessibility_permission_disabled"
+                )
+                DebugLogStore.log("[PARTY_RUN_SEASON_REWARDS_SKIP] reason=accessibility_permission_disabled")
+            }
             return false
         }
         if (!connected || !instancePresent) {
@@ -310,6 +376,20 @@ class ActionExecutor(private val context: Context? = null) {
             DebugLogStore.log(
                 "[ACTION] state=$actionName SKIPPED reason=ACCESSIBILITY_SERVICE_DISCONNECTED",
             )
+            if (actionName == "DAILY_NEW") {
+                Log.i(
+                    CookieRunBotApplication.TAG,
+                    "[DAILY_NEW_SKIP] reason=accessibility_service_disconnected"
+                )
+                DebugLogStore.log("[DAILY_NEW_SKIP] reason=accessibility_service_disconnected")
+            }
+            if (actionName == "PARTY_RUN_SEASON_REWARDS") {
+                Log.i(
+                    CookieRunBotApplication.TAG,
+                    "[PARTY_RUN_SEASON_REWARDS_SKIP] reason=accessibility_service_disconnected"
+                )
+                DebugLogStore.log("[PARTY_RUN_SEASON_REWARDS_SKIP] reason=accessibility_service_disconnected")
+            }
             return false
         }
         return true

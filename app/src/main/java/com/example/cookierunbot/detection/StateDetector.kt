@@ -2,6 +2,8 @@ package com.example.cookierunbot.detection
 
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.util.Log
+import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.automation.BotStage
 import org.opencv.android.Utils
 import org.opencv.core.Core
@@ -10,6 +12,7 @@ import org.opencv.core.Rect
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
 import java.util.EnumMap
+import java.util.Locale
 import kotlin.math.roundToInt
 
 class StateDetector(context: Context) : AutoCloseable {
@@ -131,7 +134,58 @@ class StateDetector(context: Context) : AutoCloseable {
             var bestWidth = 0
             var bestHeight = 0
 
-            for (template in templates.getValue(stage)) {
+            val templatesForStage = templates.getValue(stage)
+            val template = templatesForStage.firstOrNull()
+            if (stage == BotStage.DAILY_NEW && template != null) {
+                val templateWidth = template.cols()
+                val templateHeight = template.rows()
+                val roiWidth = roiGray.cols()
+                val roiHeight = roiGray.rows()
+                if (templateWidth > roiWidth || templateHeight > roiHeight) {
+                    Log.i(
+                        CookieRunBotApplication.TAG,
+                        "[DAILY_NEW_DIAG] skipped=template_larger_than_roi " +
+                            "templateSize=${templateWidth}x${templateHeight} " +
+                            "roiSize=${roiWidth}x${roiHeight} " +
+                            "roi=(${roiRect.x},${roiRect.y},${roiRect.x + roiRect.width},${roiRect.y + roiRect.height})"
+                    )
+                    return DetectionResult(
+                        state = stage,
+                        score = -1.0,
+                        matched = false,
+                        x = -1,
+                        y = -1,
+                        width = 0,
+                        height = 0,
+                    )
+                }
+            }
+            if (stage == BotStage.PARTY_RUN_SEASON_REWARDS && template != null) {
+                val templateWidth = template.cols()
+                val templateHeight = template.rows()
+                val roiWidth = roiGray.cols()
+                val roiHeight = roiGray.rows()
+                if (templateWidth > roiWidth || templateHeight > roiHeight) {
+                    Log.i(
+                        CookieRunBotApplication.TAG,
+                        "[PARTY_RUN_SEASON_REWARDS_DIAG] skipped=template_larger_than_roi " +
+                            "templateSize=${templateWidth}x${templateHeight} " +
+                            "roiSize=${roiWidth}x${roiHeight} " +
+                            "roi=(${roiRect.x},${roiRect.y},${roiRect.x + roiRect.width},${roiRect.y + roiRect.height})"
+                    )
+                    return DetectionResult(
+                        state = stage,
+                        score = -1.0,
+                        matched = false,
+                        x = -1,
+                        y = -1,
+                        width = 0,
+                        height = 0,
+                    )
+                }
+            }
+
+            for (template in templatesForStage) {
                 if (roiGray.cols() < template.cols() || roiGray.rows() < template.rows()) {
                     continue
                 }
@@ -151,10 +205,34 @@ class StateDetector(context: Context) : AutoCloseable {
                 }
             }
 
+            val matched = bestScore >= MATCH_THRESHOLD
+            if (stage == BotStage.DAILY_NEW) {
+                Log.i(
+                    CookieRunBotApplication.TAG,
+                    "[DAILY_NEW_DIAG] frameSequence=0 " +
+                        "score=${String.format(Locale.US, "%.4f", bestScore)} " +
+                        "matched=$matched " +
+                        "roi=(${roiRect.x},${roiRect.y},${roiRect.x + roiRect.width},${roiRect.y + roiRect.height}) " +
+                        "templateSize=${bestWidth}x${bestHeight} " +
+                        "roiSize=${roiGray.cols()}x${roiGray.rows()}"
+                )
+            }
+            if (stage == BotStage.PARTY_RUN_SEASON_REWARDS) {
+                Log.i(
+                    CookieRunBotApplication.TAG,
+                    "[PARTY_RUN_SEASON_REWARDS_DIAG] frameSequence=0 " +
+                        "score=${String.format(Locale.US, "%.4f", bestScore)} " +
+                        "matched=$matched " +
+                        "roi=(${roiRect.x},${roiRect.y},${roiRect.x + roiRect.width},${roiRect.y + roiRect.height}) " +
+                        "templateSize=${bestWidth}x${bestHeight} " +
+                        "roiSize=${roiGray.cols()}x${roiGray.rows()}"
+                )
+            }
+
             return DetectionResult(
                 state = stage,
                 score = bestScore,
-                matched = bestScore >= MATCH_THRESHOLD,
+                matched = matched,
                 x = bestX,
                 y = bestY,
                 width = bestWidth,
@@ -264,6 +342,7 @@ class StateDetector(context: Context) : AutoCloseable {
             BotStage.TOO_MANY_TREASURES,
             BotStage.OVERTAKE_BREAK_SCORE,
             BotStage.PARTY_RUN,
+            BotStage.PARTY_RUN_SEASON_REWARDS,
             BotStage.GAME_SETTINGS,
         )
         private val ROI_BY_STAGE = mapOf(
@@ -290,9 +369,10 @@ class StateDetector(context: Context) : AutoCloseable {
             BotStage.TOO_MANY_TREASURES to Rect(353, 154, 931 - 353, 476 - 154),
             BotStage.OVERTAKE_BREAK_SCORE to Rect(479, 64, 799 - 479, 132 - 64),
             BotStage.PARTY_RUN to Rect(359, 44, 922 - 359, 138 - 44),
+            BotStage.PARTY_RUN_SEASON_REWARDS to Rect(350, 0, 590, 140),
             BotStage.GAME_SETTINGS to Rect(484, 62, 769 - 484, 122 - 62),
         )
-        private val TEMPLATE_PATHS_BY_STAGE = mapOf(
+private val TEMPLATE_PATHS_BY_STAGE = mapOf(
             BotStage.MAINMENU to listOf("templates/MAINMENU_1.png"),
             BotStage.PURCHASE_ITEM to listOf("templates/PURCHASE_ITEM_1.png"),
             BotStage.GAME_START to listOf("templates/GAME_START_1.png"),
@@ -316,6 +396,7 @@ class StateDetector(context: Context) : AutoCloseable {
             BotStage.TOO_MANY_TREASURES to listOf("templates/TOO_MANY_TREASURES_1.png"),
             BotStage.OVERTAKE_BREAK_SCORE to listOf("templates/OVERTAKE_BREAK_SCORE_1.png"),
             BotStage.PARTY_RUN to listOf("templates/PARTY_RUN_1.png"),
+            BotStage.PARTY_RUN_SEASON_REWARDS to listOf("templates/PARTY_RUN_SEASON_REWARDS_1.png"),
             BotStage.GAME_SETTINGS to listOf("templates/GAME_SETTINGS_1.png"),
         )
         private val SCALE_BY_STAGE = mapOf(
@@ -344,6 +425,7 @@ class StateDetector(context: Context) : AutoCloseable {
             BotStage.TOO_MANY_TREASURES to listOf(1.0),
             BotStage.OVERTAKE_BREAK_SCORE to listOf(1.0),
             BotStage.PARTY_RUN to listOf(1.0),
+            BotStage.PARTY_RUN_SEASON_REWARDS to listOf(1.0),
             BotStage.GAME_SETTINGS to listOf(1.0),
         )
 
