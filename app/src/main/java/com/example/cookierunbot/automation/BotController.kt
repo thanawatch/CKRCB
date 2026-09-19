@@ -875,9 +875,22 @@ class BotController(
         listener.onAction(result)
         logDiagnostic("[GESTURE] state=$stage dispatchAccepted=${result.accepted}")
         if (!result.accepted) return
-        callback.await(GESTURE_CALLBACK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        val callbackArrived = callback.await(
+            GESTURE_CALLBACK_TIMEOUT_MS,
+            TimeUnit.MILLISECONDS,
+        )
+        if (!callbackArrived) {
+            Log.w(CookieRunBotApplication.TAG, "[GESTURE] state=$stage callback=TIMEOUT")
+            DebugLogStore.log("[GESTURE] state=$stage callback=TIMEOUT")
+            actionExecutor.releaseGestureLease()
+            lastStage = null
+            return
+        }
         if (!callbackSuccess.get()) {
             Log.w(CookieRunBotApplication.TAG, "[GESTURE] state=$stage callbackSuccess=false")
+            DebugLogStore.log("[GESTURE] state=$stage callbackSuccess=false")
+            lastStage = null
+            return
         }
         recordRewardPopupAction(stage)
         finishRewardPopupAction(stage, frameGeneration)

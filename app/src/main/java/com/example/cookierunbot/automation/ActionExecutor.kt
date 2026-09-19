@@ -16,6 +16,9 @@ import kotlin.random.Random
 class ActionExecutor(private val context: Context? = null) {
     fun isActionInProgress(): Boolean = GestureArbiter.isBusy()
 
+    /** Releases a physical-tap lease when its accessibility callback times out. */
+    fun releaseGestureLease() = GestureArbiter.release()
+
     fun tap(
         actionName: String,
         point: LogicalPoint,
