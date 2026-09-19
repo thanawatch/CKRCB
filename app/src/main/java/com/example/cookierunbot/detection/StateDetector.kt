@@ -343,6 +343,7 @@ class StateDetector(context: Context) : AutoCloseable {
             BotStage.OVERTAKE_BREAK_SCORE,
             BotStage.PARTY_RUN,
             BotStage.PARTY_RUN_SEASON_REWARDS,
+            BotStage.TIME_DEAL,
             BotStage.GAME_SETTINGS,
         )
         private val ROI_BY_STAGE = mapOf(
@@ -370,6 +371,7 @@ class StateDetector(context: Context) : AutoCloseable {
             BotStage.OVERTAKE_BREAK_SCORE to Rect(479, 64, 799 - 479, 132 - 64),
             BotStage.PARTY_RUN to Rect(359, 44, 922 - 359, 138 - 44),
             BotStage.PARTY_RUN_SEASON_REWARDS to Rect(350, 0, 590, 140),
+            BotStage.TIME_DEAL to Rect(160, 0, 420 - 160, 90),
             BotStage.GAME_SETTINGS to Rect(484, 62, 769 - 484, 122 - 62),
         )
 private val TEMPLATE_PATHS_BY_STAGE = mapOf(
@@ -397,6 +399,7 @@ private val TEMPLATE_PATHS_BY_STAGE = mapOf(
             BotStage.OVERTAKE_BREAK_SCORE to listOf("templates/OVERTAKE_BREAK_SCORE_1.png"),
             BotStage.PARTY_RUN to listOf("templates/PARTY_RUN_1.png"),
             BotStage.PARTY_RUN_SEASON_REWARDS to listOf("templates/PARTY_RUN_SEASON_REWARDS_1.png"),
+            BotStage.TIME_DEAL to listOf("templates/TIME_DEAL_1.png"),
             BotStage.GAME_SETTINGS to listOf("templates/GAME_SETTINGS_1.png"),
         )
         private val SCALE_BY_STAGE = mapOf(
@@ -426,6 +429,7 @@ private val TEMPLATE_PATHS_BY_STAGE = mapOf(
             BotStage.OVERTAKE_BREAK_SCORE to listOf(1.0),
             BotStage.PARTY_RUN to listOf(1.0),
             BotStage.PARTY_RUN_SEASON_REWARDS to listOf(1.0),
+            BotStage.TIME_DEAL to listOf(1.0),
             BotStage.GAME_SETTINGS to listOf(1.0),
         )
 

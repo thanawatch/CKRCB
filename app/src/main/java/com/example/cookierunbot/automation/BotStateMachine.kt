@@ -25,6 +25,7 @@ enum class BotStage {
     OVERTAKE_BREAK_SCORE,
     PARTY_RUN,
     PARTY_RUN_SEASON_REWARDS,
+    TIME_DEAL,
     GAME_SETTINGS,
     IN_GAME,
 }

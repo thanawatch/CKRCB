@@ -22,6 +22,7 @@ import java.util.concurrent.Executors
 import kotlin.random.Random
 
 private const val PARTY_RUN_SEASON_REWARDS_CALLBACK_TIMEOUT_MS = 3_000L
+private const val TIME_DEAL_CALLBACK_TIMEOUT_MS = 3_000L
 
 enum class DetectionGroup { PRE_GAME, IN_GAME, POST_GAME }
 
@@ -77,6 +78,8 @@ class BotController(
     private var pendingDailyNewTapGeneration = -1L
     private var pendingPartyRunSeasonRewardsGesture: GestureCancellation? = null
     private var partyRunSeasonRewardsCallbackFailures = 0
+    private var pendingTimeDealGesture: GestureCancellation? = null
+    private var timeDealCallbackFailures = 0
     /** Invalidates late accessibility callbacks and delayed timeout runnables across runs. */
     private var botRunGeneration = 0L
 
@@ -127,6 +130,8 @@ class BotController(
             pendingPartyRunSeasonRewardsTapGeneration = -1L
             pendingPartyRunSeasonRewardsGesture = null
             partyRunSeasonRewardsCallbackFailures = 0
+            pendingTimeDealGesture = null
+            timeDealCallbackFailures = 0
             resetNoMatchEpisode()
             executor = Executors.newSingleThreadExecutor { runnable ->
                 Thread(runnable, "cookierun-bot-loop").apply { priority = Thread.NORM_PRIORITY - 1 }
@@ -144,6 +149,7 @@ class BotController(
 
     fun stop() {
         val stoppedPartyGesture: GestureCancellation?
+        val stoppedTimeDealGesture: GestureCancellation?
         val worker = synchronized(lock) {
             if (!running && executor == null) return
             running = false
@@ -153,9 +159,12 @@ class BotController(
             pendingPartyRunSeasonRewardsTapGeneration = -1L
             stoppedPartyGesture = pendingPartyRunSeasonRewardsGesture
             pendingPartyRunSeasonRewardsGesture = null
+            stoppedTimeDealGesture = pendingTimeDealGesture
+            pendingTimeDealGesture = null
             currentExecutor
         }
         stoppedPartyGesture?.cancel()
+        stoppedTimeDealGesture?.cancel()
         autoTapper.stop("BOT_EXIT")
         worker?.shutdownNow()
         Log.i(CookieRunBotApplication.TAG, "[BOT] Stopped")
@@ -462,6 +471,7 @@ class BotController(
             BotStage.INACTIVE -> handleInactive(sourceWidth, sourceHeight)
             BotStage.PARTY_RUN -> rewardPopup(result.state, "PARTY_RUN", AutomationConfig.PARTY_RUN_CLOSE, sourceWidth, sourceHeight, frameGeneration)
             BotStage.PARTY_RUN_SEASON_REWARDS -> handlePartyRunSeasonRewards(result, sourceWidth, sourceHeight, frameGeneration)
+            BotStage.TIME_DEAL -> handleTimeDeal(result, sourceWidth, sourceHeight, frameGeneration)
             BotStage.GAME_SETTINGS -> rewardPopup(result.state, "GAME_SETTINGS", AutomationConfig.GAME_SETTINGS_CLOSE, sourceWidth, sourceHeight, frameGeneration)
             BotStage.IN_GAME -> Unit
         }
@@ -589,6 +599,100 @@ class BotController(
     }
 
     private var pendingPartyRunSeasonRewardsTapGeneration = -1L
+
+    private fun handleTimeDeal(
+        result: DetectionResult,
+        sourceWidth: Int,
+        sourceHeight: Int,
+        frameGeneration: Long,
+    ) {
+        if (synchronized(lock) { pendingTimeDealGesture?.isCompleted == false }) {
+            logDiagnostic("[TIME_DEAL_SKIP] reason=callback_pending")
+            return
+        }
+        logDiagnostic("[STATE_MATCH] state=TIME_DEAL score=${format(result.score)}")
+        logDiagnostic("[ACTION] state=TIME_DEAL action=CLOSE")
+        logDiagnostic("[ACTION_MAP] state=TIME_DEAL coordinateType=PHYSICAL physical=(2000,70)")
+        if (timeDealCallbackFailures >= MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS) {
+            logDiagnostic("[TIME_DEAL_SKIP] reason=callback_retry_limit")
+            return
+        }
+        if (!allowRewardPopupAction(BotStage.TIME_DEAL)) {
+            logDiagnostic("[POPUP_RETRY] state=TIME_DEAL retry=blocked_by_guard")
+            return
+        }
+
+        val runGeneration = synchronized(lock) { botRunGeneration }
+        logBotActionRequest("TIME_DEAL")
+        val action = synchronized(lock) {
+            if (!running) {
+                actionSkippedBotStopped("TIME_DEAL")
+                ActionResult("TIME_DEAL", false, 0, 0, null)
+            } else {
+                actionExecutor.tapAbsolutePhysicalCircle(
+                    actionName = "TIME_DEAL",
+                    logicalReference = LogicalPoint(0, 0),
+                    physicalPoint = PhysicalPoint(2000, 70),
+                    physicalRadius = 0.0,
+                    sourceWidth = sourceWidth,
+                    sourceHeight = sourceHeight,
+                    callbackTimeoutMs = TIME_DEAL_CALLBACK_TIMEOUT_MS,
+                    onGestureCompleted = { _, success, timedOut ->
+                        logDiagnostic("[GESTURE] state=TIME_DEAL callbackSuccess=$success")
+                        handleTimeDealCallback(runGeneration, success, timedOut)
+                    },
+                )
+            }
+        }
+        reportActionResult(action)
+        logDiagnostic("[GESTURE] state=TIME_DEAL dispatchAccepted=${action.accepted}")
+        if (!action.accepted) {
+            minimumFreshFrameGeneration = frameGeneration
+            lastStage = null
+            return
+        }
+        synchronized(lock) {
+            if (running && botRunGeneration == runGeneration && action.pendingGesture?.isCompleted == false) {
+                pendingTimeDealGesture = action.pendingGesture
+            }
+        }
+    }
+
+    private fun handleTimeDealCallback(runGeneration: Long, success: Boolean, timedOut: Boolean) {
+        if (!synchronized(lock) { running && botRunGeneration == runGeneration }) return
+        synchronized(lock) { pendingTimeDealGesture = null }
+        if (timedOut) logDiagnostic("[GESTURE] state=TIME_DEAL callback=TIMEOUT")
+        if (!success) {
+            timeDealCallbackFailures += 1
+            lastStage = null
+            minimumFreshFrameGeneration = LatestFrameProvider.currentGeneration()
+            updateGroup(DetectionGroup.PRE_GAME)
+            return
+        }
+
+        timeDealCallbackFailures = 0
+        val postCallbackBaseline = LatestFrameProvider.currentGeneration()
+        logDiagnostic("[POPUP] state=TIME_DEAL postCallbackBaselineGeneration=$postCallbackBaseline")
+        recordRewardPopupAction(BotStage.TIME_DEAL)
+        val fresh = LatestFrameProvider.awaitNextSnapshot(postCallbackBaseline, POPUP_FRESH_FRAME_TIMEOUT_MS)
+        if (fresh != null) {
+            try {
+                logDiagnostic(
+                    "[STATE_REDETECT] previous=TIME_DEAL baselineGeneration=$postCallbackBaseline " +
+                        "freshFrameSequence=${fresh.generation}",
+                )
+                minimumFreshFrameGeneration = -1L
+                updateGroup(DetectionGroup.PRE_GAME)
+                lastStage = null
+            } finally {
+                fresh.mat.release()
+            }
+        } else {
+            minimumFreshFrameGeneration = postCallbackBaseline
+            updateGroup(DetectionGroup.PRE_GAME)
+            lastStage = null
+        }
+    }
 
     private fun performPhysicalTap(
         name: String,
@@ -1656,6 +1760,7 @@ class BotController(
             BotStage.RELIC_CLAIM,
             BotStage.PARTY_RUN,
             BotStage.PARTY_RUN_SEASON_REWARDS,
+            BotStage.TIME_DEAL,
             BotStage.GAME_SETTINGS,
         )
         private val PRE_GAME = listOf(
@@ -1663,7 +1768,8 @@ class BotController(
             BotStage.RELIC_CLAIM, BotStage.DAILY_CHECKIN, BotStage.DAILY_CHECKIN_BOOST_SET,
             BotStage.DAILY_TREASURE, BotStage.DAILY_NEW, BotStage.ENTER_LEAGUE,
             BotStage.LEAGUE_RESULTS, BotStage.PREVIOUS_RANK_RESULTS,
-            BotStage.TOO_MANY_TREASURES, BotStage.PARTY_RUN, BotStage.PARTY_RUN_SEASON_REWARDS, BotStage.GAME_SETTINGS,
+            BotStage.TOO_MANY_TREASURES, BotStage.PARTY_RUN, BotStage.PARTY_RUN_SEASON_REWARDS,
+            BotStage.TIME_DEAL, BotStage.GAME_SETTINGS,
             BotStage.MAINMENU, BotStage.PURCHASE_ITEM,
         )
         private val IN_GAME = listOf(BotStage.GAME_RELAY, BotStage.GAME_COMPLETE, BotStage.GAME_START)
@@ -1690,6 +1796,7 @@ class BotController(
             BotStage.PURCHASE_ITEM,
             BotStage.PARTY_RUN,
             BotStage.PARTY_RUN_SEASON_REWARDS,
+            BotStage.TIME_DEAL,
             BotStage.GAME_SETTINGS,
             BotStage.DAILY_CHECKIN,
             BotStage.DAILY_CHECKIN_BOOST_SET,
@@ -1708,7 +1815,8 @@ class BotController(
             BotStage.CONNECTION_LOST, BotStage.INACTIVE, BotStage.GAME_COMPLETE,
             BotStage.OVERTAKE_BREAK_SCORE, BotStage.MYSTERY_BOX, BotStage.CONGRATULATIONS,
             BotStage.RELIC_COMPLETE, BotStage.RELIC_CLAIM, BotStage.TOO_MANY_TREASURES,
-            BotStage.MAINMENU, BotStage.PARTY_RUN, BotStage.PARTY_RUN_SEASON_REWARDS, BotStage.GAME_SETTINGS,
+            BotStage.MAINMENU, BotStage.PARTY_RUN, BotStage.PARTY_RUN_SEASON_REWARDS,
+            BotStage.TIME_DEAL, BotStage.GAME_SETTINGS,
             BotStage.PURCHASE_ITEM, BotStage.LEVEL_UP, BotStage.DAILY_CHECKIN,
             BotStage.DAILY_CHECKIN_BOOST_SET, BotStage.DAILY_TREASURE,
             BotStage.DAILY_NEW, BotStage.ENTER_LEAGUE, BotStage.LEAGUE_RESULTS,
