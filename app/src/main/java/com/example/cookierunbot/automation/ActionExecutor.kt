@@ -37,6 +37,32 @@ class ActionExecutor(private val context: Context? = null) {
         onGestureCompleted,
     )
 
+    /** Dispatches an already-physical phone coordinate without content mapping or scaling. */
+    fun tapPhysical(
+        actionName: String,
+        point: PhysicalPoint,
+        onGestureCompleted: ((completedAtNanos: Long, success: Boolean) -> Unit)? = null,
+    ): ActionResult {
+        val requestedAt = SystemClock.elapsedRealtimeNanos()
+        if (!logActionReadiness(actionName) || !GestureArbiter.acquire(GesturePriority.NORMAL)) {
+            return ActionResult(actionName, false, point.x, point.y, point, requestedAt, SystemClock.elapsedRealtimeNanos())
+        }
+        val dispatch = try {
+            BotAccessibilityService.dispatchPhysicalPoint(
+                point.x,
+                point.y,
+                "[ACTION] $actionName",
+            ) { completedAt, success ->
+                GestureArbiter.release()
+                onGestureCompleted?.invoke(completedAt, success)
+            }.also { if (!it.accepted) GestureArbiter.release() }
+        } catch (error: Exception) {
+            GestureArbiter.release()
+            throw error
+        }
+        return ActionResult(actionName, dispatch.accepted, point.x, point.y, dispatch.physical, requestedAt, dispatch.dispatchedAtNanos)
+    }
+
     fun tapDetectedPoint(
         actionName: String,
         point: LogicalPoint,
