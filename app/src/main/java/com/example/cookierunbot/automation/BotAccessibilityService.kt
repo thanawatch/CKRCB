@@ -251,6 +251,7 @@ class BotAccessibilityService : AccessibilityService() {
             x: Int,
             y: Int,
             logPrefix: String,
+            onCompleted: ((completedAtNanos: Long, success: Boolean) -> Unit)? = null,
         ): GestureDispatchResult {
             val requestedAtNanos = SystemClock.elapsedRealtimeNanos()
             val service = instance
@@ -268,7 +269,7 @@ class BotAccessibilityService : AccessibilityService() {
             }
             Log.i(CookieRunBotApplication.TAG, "$logPrefix dispatch start")
             return GestureDispatchResult(
-                service.dispatchPhysicalTap(x, y, logPrefix),
+                service.dispatchPhysicalTap(x, y, logPrefix, onCompleted),
                 PhysicalPoint(x, y),
                 requestedAtNanos,
                 SystemClock.elapsedRealtimeNanos(),

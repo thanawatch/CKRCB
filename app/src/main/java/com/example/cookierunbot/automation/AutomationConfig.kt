@@ -65,6 +65,8 @@ object AutomationConfig {
     val LEADERBOARD_TOP = LogicalPoint(435, 260)
     val LEADERBOARD_BOTTOM = LogicalPoint(435, 620)
     val PARTY_RUN_CLOSE = LogicalPoint(1214, 89)
+    // Already calibrated phone pixels; never pass this target through CoordinateMapper.
+    val PARTY_RUN_SEASON_REWARDS_CONFIRM_PHYSICAL = PhysicalPoint(1260, 980)
     val GAME_SETTINGS_CLOSE = LogicalPoint(1116, 98)
     val ANNOUNCEMENT_CLOSE = LogicalPoint(1127, 66)
 }

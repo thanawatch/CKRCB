@@ -17,6 +17,9 @@ import org.opencv.core.Rect
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.random.Random
 
 enum class DetectionGroup { PRE_GAME, IN_GAME, POST_GAME }
@@ -382,6 +385,7 @@ class BotController(
             BotStage.CONNECTION_LOST -> handleConnectionLost(sourceWidth, sourceHeight)
             BotStage.INACTIVE -> handleInactive(sourceWidth, sourceHeight)
             BotStage.PARTY_RUN -> rewardPopup(result.state, "PARTY_RUN", AutomationConfig.PARTY_RUN_CLOSE, sourceWidth, sourceHeight, frameGeneration)
+            BotStage.PARTY_RUN_SEASON_REWARDS -> handlePartyRunSeasonRewards(frameGeneration)
             BotStage.GAME_SETTINGS -> rewardPopup(result.state, "GAME_SETTINGS", AutomationConfig.GAME_SETTINGS_CLOSE, sourceWidth, sourceHeight, frameGeneration)
             BotStage.IN_GAME -> Unit
         }
@@ -846,6 +850,55 @@ class BotController(
         finishRewardPopupAction(stage, frameGeneration)
     }
 
+    private fun handlePartyRunSeasonRewards(frameGeneration: Long) {
+        val stage = BotStage.PARTY_RUN_SEASON_REWARDS
+        if (!allowRewardPopupAction(stage)) return
+        val retry = if (lastRewardPopupAction == stage) consecutiveRewardPopupActions + 1 else 1
+        if (retry > 1) {
+            logDiagnostic("[POPUP_RETRY] state=$stage retry=$retry/$MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS")
+        }
+        val point = AutomationConfig.PARTY_RUN_SEASON_REWARDS_CONFIRM_PHYSICAL
+        logDiagnostic("[ACTION] state=$stage action=CONFIRM")
+        logDiagnostic("[ACTION_MAP] state=$stage coordinateType=PHYSICAL physical=(${point.x},${point.y})")
+        val callback = CountDownLatch(1)
+        val callbackSuccess = AtomicBoolean(false)
+        val result = synchronized(lock) {
+            if (!running) {
+                actionSkippedBotStopped(stage.name)
+                return
+            }
+            actionExecutor.tapPhysical(stage.name, point) { _, success ->
+                callbackSuccess.set(success)
+                callback.countDown()
+            }
+        }
+        val dispatchAccepted = reportActionResult(result)
+        logDiagnostic("[GESTURE] state=$stage dispatchAccepted=${result.accepted}")
+        if (!dispatchAccepted) {
+            logDiagnostic("[GESTURE] state=$stage dispatch=REJECTED; state re-armed")
+            return
+        }
+        val callbackArrived = callback.await(
+            GESTURE_CALLBACK_TIMEOUT_MS,
+            TimeUnit.MILLISECONDS,
+        )
+        if (!callbackArrived) {
+            Log.w(CookieRunBotApplication.TAG, "[GESTURE] state=$stage callback=TIMEOUT")
+            DebugLogStore.log("[GESTURE] state=$stage callback=TIMEOUT")
+            actionExecutor.releaseGestureLease()
+            lastStage = null
+            return
+        }
+        if (!callbackSuccess.get()) {
+            Log.w(CookieRunBotApplication.TAG, "[GESTURE] state=$stage callbackSuccess=false")
+            DebugLogStore.log("[GESTURE] state=$stage callbackSuccess=false")
+            lastStage = null
+            return
+        }
+        recordRewardPopupAction(stage)
+        finishRewardPopupAction(stage, frameGeneration)
+    }
+
     private fun allowRewardPopupAction(stage: BotStage): Boolean {
         val nextCount = if (lastRewardPopupAction == stage) {
             consecutiveRewardPopupActions + 1
@@ -894,6 +947,9 @@ class BotController(
                 )
                 DebugLogStore.log(
                     "[POPUP] state=$stage freshFrame=${fresh.generation} next=GENERIC_PRE_GAME_SCAN",
+                )
+                logDiagnostic(
+                    "[STATE_REDETECT] previous=$stage frameSequence=${fresh.generation}",
                 )
             } finally {
                 fresh.mat.release()
@@ -1133,6 +1189,11 @@ class BotController(
     private fun randomMs(min: Int, max: Int): Long = Random.nextLong(min.toLong(), max.toLong() + 1L)
 
     private fun logDetection(result: DetectionResult) {
+        if (result.state == BotStage.PARTY_RUN_SEASON_REWARDS) {
+            logDiagnostic(
+                "[STATE_MATCH] state=${result.state} score=${format(result.score)}",
+            )
+        }
         DebugLogStore.log(
             "[DETECT] state=${result.state} score=${format(result.score)} matched=${result.matched}",
         )
@@ -1279,6 +1340,7 @@ class BotController(
             BotStage.RELIC_COMPLETE,
             BotStage.RELIC_CLAIM,
             BotStage.PARTY_RUN,
+            BotStage.PARTY_RUN_SEASON_REWARDS,
             BotStage.GAME_SETTINGS,
         )
         private val PRE_GAME = listOf(
@@ -1286,7 +1348,8 @@ class BotController(
             BotStage.RELIC_CLAIM, BotStage.DAILY_CHECKIN, BotStage.DAILY_CHECKIN_BOOST_SET,
             BotStage.DAILY_TREASURE, BotStage.DAILY_NEW, BotStage.ENTER_LEAGUE,
             BotStage.LEAGUE_RESULTS, BotStage.PREVIOUS_RANK_RESULTS,
-            BotStage.TOO_MANY_TREASURES, BotStage.PARTY_RUN, BotStage.GAME_SETTINGS,
+            BotStage.TOO_MANY_TREASURES, BotStage.PARTY_RUN_SEASON_REWARDS,
+            BotStage.PARTY_RUN, BotStage.GAME_SETTINGS,
             BotStage.MAINMENU, BotStage.PURCHASE_ITEM,
         )
         private val IN_GAME = listOf(BotStage.GAME_RELAY, BotStage.GAME_COMPLETE, BotStage.GAME_START)
@@ -1307,11 +1370,13 @@ class BotController(
         private const val DETECT_FRAME_LOG_INTERVAL_MS = 2_000L
         private const val NO_MATCH_CONTINUITY_GAP_MS = 1_000L
         private const val POPUP_FRESH_FRAME_TIMEOUT_MS = 2_500L
+        private const val GESTURE_CALLBACK_TIMEOUT_MS = 2_000L
         private const val MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS = 3
         private val PRE_GAME_DIAGNOSTIC_STAGES = listOf(
             BotStage.MAINMENU,
             BotStage.PURCHASE_ITEM,
             BotStage.PARTY_RUN,
+            BotStage.PARTY_RUN_SEASON_REWARDS,
             BotStage.GAME_SETTINGS,
             BotStage.DAILY_CHECKIN,
             BotStage.DAILY_CHECKIN_BOOST_SET,
@@ -1329,7 +1394,8 @@ class BotController(
             BotStage.CONNECTION_LOST, BotStage.INACTIVE, BotStage.GAME_COMPLETE,
             BotStage.OVERTAKE_BREAK_SCORE, BotStage.MYSTERY_BOX, BotStage.CONGRATULATIONS,
             BotStage.RELIC_COMPLETE, BotStage.RELIC_CLAIM, BotStage.TOO_MANY_TREASURES,
-            BotStage.MAINMENU, BotStage.PARTY_RUN, BotStage.GAME_SETTINGS,
+            BotStage.MAINMENU, BotStage.PARTY_RUN_SEASON_REWARDS,
+            BotStage.PARTY_RUN, BotStage.GAME_SETTINGS,
             BotStage.PURCHASE_ITEM, BotStage.LEVEL_UP, BotStage.DAILY_CHECKIN,
             BotStage.DAILY_CHECKIN_BOOST_SET, BotStage.DAILY_TREASURE,
             BotStage.DAILY_NEW, BotStage.ENTER_LEAGUE, BotStage.LEAGUE_RESULTS,
