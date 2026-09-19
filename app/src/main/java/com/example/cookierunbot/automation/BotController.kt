@@ -119,6 +119,7 @@ class BotController(
             resetRewardPopupGuard()
             minimumFreshFrameGeneration = -1L
             pendingDailyNewTapGeneration = -1L
+            pendingPartyRunSeasonRewardsTapGeneration = -1L
             resetNoMatchEpisode()
             executor = Executors.newSingleThreadExecutor { runnable ->
                 Thread(runnable, "cookierun-bot-loop").apply { priority = Thread.NORM_PRIORITY - 1 }
@@ -138,7 +139,10 @@ class BotController(
         val worker = synchronized(lock) {
             if (!running && executor == null) return
             running = false
-            executor.also { executor = null }
+            val currentExecutor = executor
+            executor = null
+            pendingPartyRunSeasonRewardsTapGeneration = -1L
+            currentExecutor
         }
         autoTapper.stop("BOT_EXIT")
         worker?.shutdownNow()
@@ -473,36 +477,19 @@ class BotController(
             return
         }
 
-        val callbackCompleted = java.util.concurrent.atomic.AtomicBoolean(false)
-        val timeoutRunnable = Runnable {
-            if (callbackCompleted.compareAndSet(false, true)) {
-                logDiagnostic("[GESTURE] state=PARTY_RUN_SEASON_REWARDS callbackTimeout=true")
-                GestureArbiter.release()
-                // Do not record reward popup success
-                lastStage = null
-                pendingPartyRunSeasonRewardsTapGeneration = -1L
-                minimumFreshFrameGeneration = frameGeneration
-            }
-        }
-        val handler = android.os.Handler(android.os.Looper.getMainLooper())
-        handler.postDelayed(timeoutRunnable, PARTY_RUN_SEASON_REWARDS_CALLBACK_TIMEOUT_MS)
-
         val accepted = performPhysicalTap(
             "PARTY_RUN_SEASON_REWARDS",
             physicalPoint,
             sourceWidth,
             sourceHeight,
             frameGeneration,
+            callbackTimeoutMs = PARTY_RUN_SEASON_REWARDS_CALLBACK_TIMEOUT_MS,
             onCallback = { success ->
-                if (callbackCompleted.compareAndSet(false, true)) {
-                    handler.removeCallbacks(timeoutRunnable)
-                    handlePartyRunSeasonRewardsCallback(success, frameGeneration)
-                }
+                handlePartyRunSeasonRewardsCallback(success, frameGeneration)
             },
         )
         logDiagnostic("[GESTURE] state=PARTY_RUN_SEASON_REWARDS dispatchAccepted=$accepted")
         if (!accepted) {
-            handler.removeCallbacks(timeoutRunnable)
             // dispatch rejected - re-arm state, don't record action
             minimumFreshFrameGeneration = frameGeneration
             lastStage = null
@@ -573,6 +560,7 @@ class BotController(
         sourceWidth: Int,
         sourceHeight: Int,
         frameGeneration: Long,
+        callbackTimeoutMs: Long = 0L,
         onCallback: ((Boolean) -> Unit)? = null,
     ): Boolean {
         logBotActionRequest(name)
@@ -585,6 +573,7 @@ class BotController(
                 0.0, // no radius jitter - tap exact physical coordinate
                 sourceWidth,
                 sourceHeight,
+                callbackTimeoutMs,
                 onGestureCompleted = if (name == "PARTY_RUN_SEASON_REWARDS") {
                     { _, success ->
                         logDiagnostic("[GESTURE] state=PARTY_RUN_SEASON_REWARDS callbackSuccess=$success")

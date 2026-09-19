@@ -164,6 +164,7 @@ class ActionExecutor(private val context: Context? = null) {
         physicalRadius: Double,
         sourceWidth: Int,
         sourceHeight: Int,
+        callbackTimeoutMs: Long = 0L,
         onGestureCompleted: ((completedAtNanos: Long, success: Boolean) -> Unit)? = null,
     ): ActionResult {
         val angle = Random.nextDouble(0.0, 2.0 * PI)
@@ -214,20 +215,43 @@ class ActionExecutor(private val context: Context? = null) {
         }
         Log.i(CookieRunBotApplication.TAG, "[ACTION] dispatch start state=$actionName")
         DebugLogStore.log("[ACTION] state=$actionName dispatch=start")
+
+        val completionGuard = java.util.concurrent.atomic.AtomicBoolean(false)
+        val timeoutRunnable = if (callbackTimeoutMs > 0) Runnable {
+            if (completionGuard.compareAndSet(false, true)) {
+                Log.i(CookieRunBotApplication.TAG, "[ACTION] $actionName callback timeout; releasing lease")
+                GestureArbiter.release()
+                onGestureCompleted?.invoke(SystemClock.elapsedRealtimeNanos(), false)
+            }
+        } else null
+        val handler = if (timeoutRunnable != null) android.os.Handler(android.os.Looper.getMainLooper()) else null
+        timeoutRunnable?.let { handler?.postDelayed(it, callbackTimeoutMs) }
+
         val dispatch = try {
             BotAccessibilityService.dispatchPhysicalPoint(
                 x,
                 y,
                 "[ACTION]",
                 onCompleted = { completedAtNanos, success ->
-                    GestureArbiter.release()
-                    onGestureCompleted?.invoke(completedAtNanos, success)
+                    if (completionGuard.compareAndSet(false, true)) {
+                        handler?.removeCallbacks(timeoutRunnable!!)
+                        GestureArbiter.release()
+                        onGestureCompleted?.invoke(completedAtNanos, success)
+                    }
                 },
             ).also {
-                if (!it.accepted) GestureArbiter.release()
+                if (!it.accepted) {
+                    if (completionGuard.compareAndSet(false, true)) {
+                        handler?.removeCallbacks(timeoutRunnable!!)
+                        GestureArbiter.release()
+                    }
+                }
             }
         } catch (error: Exception) {
-            GestureArbiter.release()
+            if (completionGuard.compareAndSet(false, true)) {
+                handler?.removeCallbacks(timeoutRunnable!!)
+                GestureArbiter.release()
+            }
             throw error
         }
         return ActionResult(
