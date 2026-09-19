@@ -21,6 +21,8 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.random.Random
 
+private const val PARTY_RUN_SEASON_REWARDS_CALLBACK_TIMEOUT_MS = 3_000L
+
 enum class DetectionGroup { PRE_GAME, IN_GAME, POST_GAME }
 
 class BotController(
@@ -471,6 +473,20 @@ class BotController(
             return
         }
 
+        val callbackCompleted = java.util.concurrent.atomic.AtomicBoolean(false)
+        val timeoutRunnable = Runnable {
+            if (callbackCompleted.compareAndSet(false, true)) {
+                logDiagnostic("[GESTURE] state=PARTY_RUN_SEASON_REWARDS callbackTimeout=true")
+                GestureArbiter.release()
+                // Do not record reward popup success
+                lastStage = null
+                pendingPartyRunSeasonRewardsTapGeneration = -1L
+                minimumFreshFrameGeneration = frameGeneration
+            }
+        }
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        handler.postDelayed(timeoutRunnable, PARTY_RUN_SEASON_REWARDS_CALLBACK_TIMEOUT_MS)
+
         val accepted = performPhysicalTap(
             "PARTY_RUN_SEASON_REWARDS",
             physicalPoint,
@@ -478,11 +494,15 @@ class BotController(
             sourceHeight,
             frameGeneration,
             onCallback = { success ->
-                handlePartyRunSeasonRewardsCallback(success, frameGeneration)
+                if (callbackCompleted.compareAndSet(false, true)) {
+                    handler.removeCallbacks(timeoutRunnable)
+                    handlePartyRunSeasonRewardsCallback(success, frameGeneration)
+                }
             },
         )
         logDiagnostic("[GESTURE] state=PARTY_RUN_SEASON_REWARDS dispatchAccepted=$accepted")
         if (!accepted) {
+            handler.removeCallbacks(timeoutRunnable)
             // dispatch rejected - re-arm state, don't record action
             minimumFreshFrameGeneration = frameGeneration
             lastStage = null
@@ -490,8 +510,10 @@ class BotController(
                 "[PARTY_RUN_SEASON_REWARDS] dispatch rejected; re-armed and waiting for fresh frame " +
                     "generation>$frameGeneration"
             )
+        } else {
+            // dispatch accepted - arm pending generation for post-tap diagnostic
+            pendingPartyRunSeasonRewardsTapGeneration = frameGeneration
         }
-        // If accepted, callback will handle the rest
     }
 
     private fun handlePartyRunSeasonRewardsCallback(success: Boolean, detectionFrameGeneration: Long) {

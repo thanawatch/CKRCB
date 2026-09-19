@@ -409,7 +409,7 @@ data class ActionResult(
 enum class GesturePriority { NORMAL, BACKGROUND, CRITICAL }
 
 /** Gives state-transition taps precedence over the background jump worker. */
-private object GestureArbiter {
+internal object GestureArbiter {
     private const val MAX_GESTURE_LEASE_MS = 500L
     private const val CRITICAL_WAIT_MS = 300L
     private val monitor = Object()
