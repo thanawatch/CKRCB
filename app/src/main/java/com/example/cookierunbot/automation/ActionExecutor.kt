@@ -165,7 +165,7 @@ class ActionExecutor(private val context: Context? = null) {
         sourceWidth: Int,
         sourceHeight: Int,
         callbackTimeoutMs: Long = 0L,
-        onGestureCompleted: ((completedAtNanos: Long, success: Boolean) -> Unit)? = null,
+        onGestureCompleted: ((completedAtNanos: Long, success: Boolean, timedOut: Boolean) -> Unit)? = null,
     ): ActionResult {
         val angle = Random.nextDouble(0.0, 2.0 * PI)
         val distance = physicalRadius * sqrt(Random.nextDouble())
@@ -185,7 +185,7 @@ class ActionExecutor(private val context: Context? = null) {
                 PhysicalPoint(x, y),
             )
         }
-        if (!GestureArbiter.acquire(GesturePriority.NORMAL)) {
+        val lease = GestureArbiter.acquire(GesturePriority.NORMAL) ?: run {
             Log.w(
                 CookieRunBotApplication.TAG,
                 "[ACTION] SKIPPED state=$actionName reason=ACTION_IN_PROGRESS",
@@ -216,16 +216,8 @@ class ActionExecutor(private val context: Context? = null) {
         Log.i(CookieRunBotApplication.TAG, "[ACTION] dispatch start state=$actionName")
         DebugLogStore.log("[ACTION] state=$actionName dispatch=start")
 
-        val completionGuard = java.util.concurrent.atomic.AtomicBoolean(false)
-        val timeoutRunnable = if (callbackTimeoutMs > 0) Runnable {
-            if (completionGuard.compareAndSet(false, true)) {
-                Log.i(CookieRunBotApplication.TAG, "[ACTION] $actionName callback timeout; releasing lease")
-                GestureArbiter.release()
-                onGestureCompleted?.invoke(SystemClock.elapsedRealtimeNanos(), false)
-            }
-        } else null
-        val handler = if (timeoutRunnable != null) android.os.Handler(android.os.Looper.getMainLooper()) else null
-        timeoutRunnable?.let { handler?.postDelayed(it, callbackTimeoutMs) }
+        val completion = GestureCompletionContext(lease, callbackTimeoutMs, onGestureCompleted)
+        completion.armTimeout(actionName)
 
         val dispatch = try {
             BotAccessibilityService.dispatchPhysicalPoint(
@@ -233,25 +225,15 @@ class ActionExecutor(private val context: Context? = null) {
                 y,
                 "[ACTION]",
                 onCompleted = { completedAtNanos, success ->
-                    if (completionGuard.compareAndSet(false, true)) {
-                        handler?.removeCallbacks(timeoutRunnable!!)
-                        GestureArbiter.release()
-                        onGestureCompleted?.invoke(completedAtNanos, success)
-                    }
+                    completion.complete(completedAtNanos, success)
                 },
             ).also {
                 if (!it.accepted) {
-                    if (completionGuard.compareAndSet(false, true)) {
-                        handler?.removeCallbacks(timeoutRunnable!!)
-                        GestureArbiter.release()
-                    }
+                    completion.cancel()
                 }
             }
         } catch (error: Exception) {
-            if (completionGuard.compareAndSet(false, true)) {
-                handler?.removeCallbacks(timeoutRunnable!!)
-                GestureArbiter.release()
-            }
+            completion.cancel()
             throw error
         }
         return ActionResult(
@@ -262,6 +244,7 @@ class ActionExecutor(private val context: Context? = null) {
             dispatch.physical,
             dispatch.requestedAtNanos,
             dispatch.dispatchedAtNanos,
+            completion,
         )
     }
 
@@ -297,7 +280,7 @@ class ActionExecutor(private val context: Context? = null) {
                 SystemClock.elapsedRealtimeNanos(),
             )
         }
-        if (!GestureArbiter.acquire(priority)) {
+        val lease = GestureArbiter.acquire(priority) ?: run {
             Log.w(
                 CookieRunBotApplication.TAG,
                 "[ACTION] SKIPPED state=$actionName reason=ACTION_IN_PROGRESS",
@@ -331,14 +314,14 @@ class ActionExecutor(private val context: Context? = null) {
                 logPrefix = "[ACTION]",
                 calibratedCoordinates = calibratedCoordinates,
                 onCompleted = { completedAtNanos, success ->
-                    GestureArbiter.release()
+                    GestureArbiter.release(lease)
                     onGestureCompleted?.invoke(completedAtNanos, success)
                 },
             ).also {
-                if (!it.accepted) GestureArbiter.release()
+                if (!it.accepted) GestureArbiter.release(lease)
             }
         } catch (error: Exception) {
-            GestureArbiter.release()
+            GestureArbiter.release(lease)
             throw error
         }
         return ActionResult(
@@ -428,7 +411,52 @@ data class ActionResult(
     val physical: PhysicalPoint?,
     val actionRequestedAtNanos: Long = 0L,
     val gestureDispatchedAtNanos: Long = 0L,
+    val pendingGesture: GestureCancellation? = null,
 )
+
+/** A pending callback/timeout pair that a controller may invalidate on stop. */
+interface GestureCancellation {
+    val isCompleted: Boolean
+    fun cancel()
+}
+
+private class GestureCompletionContext(
+    private val lease: GestureLease,
+    private val timeoutMs: Long,
+    private val callback: ((Long, Boolean, Boolean) -> Unit)?,
+) : GestureCancellation {
+    private val completed = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val handler = if (timeoutMs > 0L) android.os.Handler(android.os.Looper.getMainLooper()) else null
+    private var timeoutRunnable: Runnable? = null
+
+    override val isCompleted: Boolean get() = completed.get()
+
+    fun armTimeout(actionName: String) {
+        if (timeoutMs <= 0L) return
+        val runnable = Runnable {
+            if (completed.compareAndSet(false, true)) {
+                GestureArbiter.release(lease)
+                Log.i(CookieRunBotApplication.TAG, "[ACTION] $actionName callback timeout; releasing own lease")
+                callback?.invoke(SystemClock.elapsedRealtimeNanos(), false, true)
+            }
+        }
+        timeoutRunnable = runnable
+        handler?.postDelayed(runnable, timeoutMs)
+    }
+
+    fun complete(completedAtNanos: Long, success: Boolean) {
+        if (!completed.compareAndSet(false, true)) return
+        timeoutRunnable?.let { handler?.removeCallbacks(it) }
+        GestureArbiter.release(lease)
+        callback?.invoke(completedAtNanos, success, false)
+    }
+
+    override fun cancel() {
+        if (!completed.compareAndSet(false, true)) return
+        timeoutRunnable?.let { handler?.removeCallbacks(it) }
+        GestureArbiter.release(lease)
+    }
+}
 
 enum class GesturePriority { NORMAL, BACKGROUND, CRITICAL }
 
@@ -437,55 +465,61 @@ internal object GestureArbiter {
     private const val MAX_GESTURE_LEASE_MS = 500L
     private const val CRITICAL_WAIT_MS = 300L
     private val monitor = Object()
-    private var busy = false
+    private var activeLease: GestureLease? = null
     private var busySinceNanos = 0L
     private var criticalWaiting = false
+    private var nextLeaseId = 1L
 
-    fun acquire(priority: GesturePriority): Boolean = synchronized(monitor) {
+    fun acquire(priority: GesturePriority): GestureLease? = synchronized(monitor) {
         expireStaleLease()
         if (priority == GesturePriority.BACKGROUND) {
-            if (busy || criticalWaiting) return false
-            markBusy()
-            return true
+            if (activeLease != null || criticalWaiting) return null
+            return markBusy()
         }
 
         if (priority == GesturePriority.CRITICAL) criticalWaiting = true
         try {
             val deadline = SystemClock.elapsedRealtimeNanos() + CRITICAL_WAIT_MS * 1_000_000L
-            while (busy) {
+            while (activeLease != null) {
                 val remaining = deadline - SystemClock.elapsedRealtimeNanos()
-                if (remaining <= 0L) return false
+                if (remaining <= 0L) return null
                 monitor.wait(remaining / 1_000_000L, (remaining % 1_000_000L).toInt())
                 expireStaleLease()
             }
             markBusy()
-            true
         } finally {
             if (priority == GesturePriority.CRITICAL) criticalWaiting = false
         }
     }
 
-    fun release() = synchronized(monitor) {
-        busy = false
+    /** Only the current owner may release a lease. Stale callbacks are harmless. */
+    fun release(lease: GestureLease): Boolean = synchronized(monitor) {
+        if (activeLease != lease) return false
+        activeLease = null
         busySinceNanos = 0L
         monitor.notifyAll()
+        true
     }
 
     fun isBusy(): Boolean = synchronized(monitor) {
         expireStaleLease()
-        busy
+        activeLease != null
     }
 
-    private fun markBusy() {
-        busy = true
+    private fun markBusy(): GestureLease {
+        val lease = GestureLease(nextLeaseId++)
+        activeLease = lease
         busySinceNanos = SystemClock.elapsedRealtimeNanos()
+        return lease
     }
 
     private fun expireStaleLease() {
-        if (busy && SystemClock.elapsedRealtimeNanos() - busySinceNanos > MAX_GESTURE_LEASE_MS * 1_000_000L) {
-            busy = false
+        if (activeLease != null && SystemClock.elapsedRealtimeNanos() - busySinceNanos > MAX_GESTURE_LEASE_MS * 1_000_000L) {
+            activeLease = null
             busySinceNanos = 0L
             monitor.notifyAll()
         }
     }
 }
+
+internal class GestureLease internal constructor(val id: Long)
