@@ -872,9 +872,12 @@ class BotController(
                 callback.countDown()
             }
         }
-        listener.onAction(result)
+        val dispatchAccepted = reportActionResult(result)
         logDiagnostic("[GESTURE] state=$stage dispatchAccepted=${result.accepted}")
-        if (!result.accepted) return
+        if (!dispatchAccepted) {
+            logDiagnostic("[GESTURE] state=$stage dispatch=REJECTED; state re-armed")
+            return
+        }
         val callbackArrived = callback.await(
             GESTURE_CALLBACK_TIMEOUT_MS,
             TimeUnit.MILLISECONDS,
