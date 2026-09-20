@@ -16,7 +16,6 @@ import com.example.cookierunbot.diagnostics.PersistentTrace
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import org.opencv.core.Mat
 import org.opencv.core.Rect
-import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
 import java.util.Locale
 import java.util.concurrent.ExecutorService
@@ -76,9 +75,7 @@ class BotController(
     private var noMatchDebugFrameRequested = false
     private var lastRewardPopupAction: BotStage? = null
     private var consecutiveRewardPopupActions = 0
-    private var visualPopupStage: BotStage? = null
-    private var visualPopupFingerprint: PopupFingerprint? = null
-    private var sameVisualPopupAttempts = 0
+    private val popupInstanceGuard = PopupInstanceGuard(MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS)
     @Volatile private var minimumFreshFrameGeneration = -1L
     @Volatile private var currentHandler = "IDLE"
     @Volatile private var pendingPopupAction = "NONE"
@@ -1027,7 +1024,7 @@ class BotController(
     }
 
     private fun handleRelicClaim(sourceWidth: Int, sourceHeight: Int, frameGeneration: Long) {
-        val fingerprint = capturePopupFingerprint()
+        val fingerprint = capturePopupFingerprint(BotStage.RELIC_CLAIM)
         if (!allowVisualRewardPopupAction(BotStage.RELIC_CLAIM, fingerprint)) return
         if (!performTap("RELIC_CLAIM", AutomationConfig.RELIC_CLAIM, sourceWidth, sourceHeight)) return
         delayOrStop(randomMs(800, 1400))
@@ -1226,7 +1223,7 @@ class BotController(
         frameGeneration: Long,
         jitter: Int = AutomationConfig.DEFAULT_SAFE_JITTER,
     ) {
-        val fingerprint = capturePopupFingerprint()
+        val fingerprint = capturePopupFingerprint(stage)
         pendingPopupAction = stage.name
         try {
             if (!allowVisualRewardPopupAction(stage, fingerprint)) {
@@ -1263,23 +1260,19 @@ class BotController(
         stage: BotStage,
         fingerprint: PopupFingerprint?,
     ): Boolean {
-        val sameInstance = visualPopupStage == stage &&
-            fingerprint != null &&
-            visualPopupFingerprint != null &&
-            !hasMeaningfulPopupChange(visualPopupFingerprint!!, fingerprint)
-        val nextAttempt = if (sameInstance) sameVisualPopupAttempts + 1 else 1
-        if (sameInstance && nextAttempt > MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS) {
+        val decision = popupInstanceGuard.evaluate(stage, fingerprint)
+        if (!decision.allowed) {
             logDiagnostic(
                 "[POPUP_RETRY_LIMIT] state=$stage reason=same_popup_unchanged " +
-                    "retry=$sameVisualPopupAttempts/$MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS",
+                    "retry=$MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS/$MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS",
             )
             return false
         }
 
-        val result = if (sameInstance) "SAME_UNCHANGED_INSTANCE" else "NEW_INSTANCE"
+        val result = if (decision.sameInstance) "SAME_UNCHANGED_INSTANCE" else "NEW_INSTANCE"
         logDiagnostic(
             "[POPUP_INSTANCE] state=$stage result=$result " +
-                "retry=$nextAttempt/$MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS",
+                "retry=${decision.attempt}/$MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS",
         )
         return true
     }
@@ -1288,13 +1281,7 @@ class BotController(
         stage: BotStage,
         fingerprint: PopupFingerprint?,
     ) {
-        val sameInstance = visualPopupStage == stage &&
-            fingerprint != null &&
-            visualPopupFingerprint != null &&
-            !hasMeaningfulPopupChange(visualPopupFingerprint!!, fingerprint)
-        sameVisualPopupAttempts = if (sameInstance) sameVisualPopupAttempts + 1 else 1
-        visualPopupStage = stage
-        visualPopupFingerprint = fingerprint
+        popupInstanceGuard.record(stage, fingerprint)
     }
 
     private fun allowRewardPopupAction(stage: BotStage): Boolean {
@@ -1349,9 +1336,9 @@ class BotController(
         if (fresh != null) {
             try {
                 minimumFreshFrameGeneration = -1L
-                val afterAction = popupFingerprint(fresh.mat)
+                val afterAction = popupFingerprint(fresh.mat, stage)
                 if (beforeAction != null && afterAction != null &&
-                    hasMeaningfulPopupChange(beforeAction, afterAction)
+                    PopupFingerprinting.isMeaningfullyDifferent(beforeAction, afterAction)
                 ) {
                     resetVisualPopupGuard(
                         stage,
@@ -1389,61 +1376,38 @@ class BotController(
         if (reason != null) {
             logDiagnostic("[POPUP_GUARD_RESET] state=$stage reason=$reason")
         }
-        visualPopupStage = null
-        visualPopupFingerprint = null
-        sameVisualPopupAttempts = 0
+        popupInstanceGuard.reset()
     }
 
-    private fun capturePopupFingerprint(): PopupFingerprint? {
+    private fun capturePopupFingerprint(stage: BotStage): PopupFingerprint? {
         val snapshot = LatestFrameProvider.snapshot() ?: return null
         return try {
-            popupFingerprint(snapshot.mat)
+            popupFingerprint(snapshot.mat, stage)
         } finally {
             snapshot.mat.release()
         }
     }
 
-    private fun popupFingerprint(frame: Mat): PopupFingerprint? {
+    private fun popupFingerprint(frame: Mat, stage: BotStage): PopupFingerprint? {
         if (frame.empty()) return null
         val gray = Mat()
-        val reduced = Mat()
         return try {
             when (frame.channels()) {
                 1 -> frame.copyTo(gray)
                 4 -> Imgproc.cvtColor(frame, gray, Imgproc.COLOR_BGRA2GRAY)
                 else -> Imgproc.cvtColor(frame, gray, Imgproc.COLOR_BGR2GRAY)
             }
-            Imgproc.resize(
-                gray,
-                reduced,
-                Size(POPUP_FINGERPRINT_WIDTH.toDouble(), POPUP_FINGERPRINT_HEIGHT.toDouble()),
-                0.0,
-                0.0,
-                Imgproc.INTER_AREA,
+            val pixels = ByteArray(gray.cols() * gray.rows())
+            gray.get(0, 0, pixels)
+            PopupFingerprinting.sample(
+                pixels,
+                gray.cols(),
+                gray.rows(),
+                PopupFingerprinting.regionFor(stage),
             )
-            val pixels = ByteArray(POPUP_FINGERPRINT_WIDTH * POPUP_FINGERPRINT_HEIGHT)
-            reduced.get(0, 0, pixels)
-            PopupFingerprint(pixels)
         } finally {
             gray.release()
-            reduced.release()
         }
-    }
-
-    private fun hasMeaningfulPopupChange(
-        before: PopupFingerprint,
-        after: PopupFingerprint,
-    ): Boolean {
-        if (before.pixels.size != after.pixels.size || before.pixels.isEmpty()) return true
-        var changed = 0
-        for (index in before.pixels.indices) {
-            val delta = kotlin.math.abs(
-                (before.pixels[index].toInt() and 0xff) -
-                    (after.pixels[index].toInt() and 0xff),
-            )
-            if (delta >= POPUP_FINGERPRINT_PIXEL_DELTA) changed += 1
-        }
-        return changed.toDouble() / before.pixels.size >= POPUP_FINGERPRINT_CHANGE_RATIO
     }
 
     private fun saveLatestResult(stage: String) {
@@ -1955,10 +1919,6 @@ class BotController(
         private const val POPUP_FRESH_FRAME_TIMEOUT_MS = 2_500L
         private const val FRESH_FRAME_GATE_MAX_WAIT_MS = 7_500L
         private const val MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS = 3
-        private const val POPUP_FINGERPRINT_WIDTH = 64
-        private const val POPUP_FINGERPRINT_HEIGHT = 36
-        private const val POPUP_FINGERPRINT_PIXEL_DELTA = 24
-        private const val POPUP_FINGERPRINT_CHANGE_RATIO = 0.03
         private val PRE_GAME_DIAGNOSTIC_STAGES = listOf(
             BotStage.MAINMENU,
             BotStage.PURCHASE_ITEM,
@@ -2013,5 +1973,3 @@ private data class FastPathTiming(
     val detectionStartedAtNanos: Long,
     val detectionMatchedAtNanos: Long,
 )
-
-private data class PopupFingerprint(val pixels: ByteArray)
