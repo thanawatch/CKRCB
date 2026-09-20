@@ -16,6 +16,8 @@ import com.example.cookierunbot.diagnostics.PersistentTrace
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import org.opencv.core.Mat
 import org.opencv.core.Rect
+import org.opencv.core.Size
+import org.opencv.imgproc.Imgproc
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -74,7 +76,13 @@ class BotController(
     private var noMatchDebugFrameRequested = false
     private var lastRewardPopupAction: BotStage? = null
     private var consecutiveRewardPopupActions = 0
-    private var minimumFreshFrameGeneration = -1L
+    private var visualPopupStage: BotStage? = null
+    private var visualPopupFingerprint: PopupFingerprint? = null
+    private var sameVisualPopupAttempts = 0
+    @Volatile private var minimumFreshFrameGeneration = -1L
+    @Volatile private var currentHandler = "IDLE"
+    @Volatile private var pendingPopupAction = "NONE"
+    private var freshFrameGateWaitStartedAt = 0L
     private var pendingDailyNewTapGeneration = -1L
     private var pendingPartyRunSeasonRewardsGesture: GestureCancellation? = null
     private var partyRunSeasonRewardsCallbackFailures = 0
@@ -97,6 +105,14 @@ class BotController(
                 (SystemClock.elapsedRealtime() - it).coerceAtLeast(0L)
             },
             group = group.name,
+            currentHandler = currentHandler,
+            minimumFreshFrameGeneration = minimumFreshFrameGeneration,
+            gestureBusy = actionExecutor.isActionInProgress(),
+            pendingPopupAction = when {
+                pendingPartyRunSeasonRewardsGesture?.isCompleted == false -> "PARTY_RUN_SEASON_REWARDS"
+                pendingTimeDealGesture?.isCompleted == false -> "TIME_DEAL"
+                else -> pendingPopupAction
+            },
         )
     }
 
@@ -126,6 +142,9 @@ class BotController(
             lastDetectFrameLogAt = 0L
             resetRewardPopupGuard()
             minimumFreshFrameGeneration = -1L
+            freshFrameGateWaitStartedAt = 0L
+            currentHandler = "IDLE"
+            pendingPopupAction = "NONE"
             pendingDailyNewTapGeneration = -1L
             pendingPartyRunSeasonRewardsTapGeneration = -1L
             pendingPartyRunSeasonRewardsGesture = null
@@ -306,9 +325,21 @@ class BotController(
             return
         }
         if (frame.generation <= minimumFreshFrameGeneration) {
-            listener.onStateChanged("WAITING_FOR_FRESH_POPUP_FRAME")
-            frame.mat.release()
-            return
+            val now = SystemClock.elapsedRealtime()
+            if (freshFrameGateWaitStartedAt == 0L) freshFrameGateWaitStartedAt = now
+            if (now - freshFrameGateWaitStartedAt >= FRESH_FRAME_GATE_MAX_WAIT_MS) {
+                logDiagnostic(
+                    "[POPUP_FRESH_GATE] timeout=true frameGeneration=${frame.generation} " +
+                        "minimumFreshFrameGeneration=$minimumFreshFrameGeneration action=fail_open",
+                )
+                minimumFreshFrameGeneration = -1L
+                freshFrameGateWaitStartedAt = 0L
+                lastStage = null
+            } else {
+                listener.onStateChanged("WAITING_FOR_FRESH_POPUP_FRAME")
+                frame.mat.release()
+                return
+            }
         }
         if (minimumFreshFrameGeneration >= 0L) {
             Log.i(
@@ -318,6 +349,7 @@ class BotController(
             )
             minimumFreshFrameGeneration = -1L
         }
+        freshFrameGateWaitStartedAt = 0L
 
         try {
             autoTapper.updateDisplay(frame.sourceWidth, frame.sourceHeight)
@@ -325,6 +357,7 @@ class BotController(
             lastDetectionAttemptAt = SystemClock.elapsedRealtime()
             logDetectorFrame(frame)
             val detectionStartedAtNanos = SystemClock.elapsedRealtimeNanos()
+            currentHandler = "DETECTION"
             var result = detector.detectFirst(stagesFor(group), frame.mat)
             var detectionMatchedAtNanos = SystemClock.elapsedRealtimeNanos()
             val now = SystemClock.elapsedRealtime()
@@ -406,21 +439,27 @@ class BotController(
                 "[STATE] ${previousStage?.name ?: "NONE"} -> ${result.state.name}",
             )
             listener.onStateChanged(result.state.name)
-            handleStage(
-                detector,
-                result,
-                frame.sourceWidth,
-                frame.sourceHeight,
-                frame.mat,
-                frame.generation,
-                FastPathTiming(
-                    frameCapturedAtNanos = frame.capturedAtNanos,
-                    latestFramePublishedAtNanos = frame.publishedAtNanos,
-                    detectionStartedAtNanos = detectionStartedAtNanos,
-                    detectionMatchedAtNanos = detectionMatchedAtNanos,
-                ),
-            )
+            currentHandler = result.state.name
+            try {
+                handleStage(
+                    detector,
+                    result,
+                    frame.sourceWidth,
+                    frame.sourceHeight,
+                    frame.mat,
+                    frame.generation,
+                    FastPathTiming(
+                        frameCapturedAtNanos = frame.capturedAtNanos,
+                        latestFramePublishedAtNanos = frame.publishedAtNanos,
+                        detectionStartedAtNanos = detectionStartedAtNanos,
+                        detectionMatchedAtNanos = detectionMatchedAtNanos,
+                    ),
+                )
+            } finally {
+                currentHandler = "IDLE"
+            }
         } finally {
+            currentHandler = "IDLE"
             frame.mat.release()
         }
     }
@@ -988,13 +1027,14 @@ class BotController(
     }
 
     private fun handleRelicClaim(sourceWidth: Int, sourceHeight: Int, frameGeneration: Long) {
-        if (!allowRewardPopupAction(BotStage.RELIC_CLAIM)) return
+        val fingerprint = capturePopupFingerprint()
+        if (!allowVisualRewardPopupAction(BotStage.RELIC_CLAIM, fingerprint)) return
         if (!performTap("RELIC_CLAIM", AutomationConfig.RELIC_CLAIM, sourceWidth, sourceHeight)) return
         delayOrStop(randomMs(800, 1400))
         if (!performTap("RELIC_CLOSE", AutomationConfig.RELIC_CLOSE, sourceWidth, sourceHeight)) return
-        recordRewardPopupAction(BotStage.RELIC_CLAIM)
+        recordVisualRewardPopupAttempt(BotStage.RELIC_CLAIM, fingerprint)
         delayOrStop(randomMs(10_000, 15_000))
-        finishRewardPopupAction(BotStage.RELIC_CLAIM, frameGeneration)
+        finishRewardPopupAction(BotStage.RELIC_CLAIM, frameGeneration, fingerprint)
     }
 
     private fun handleConnectionLost(sourceWidth: Int, sourceHeight: Int) {
@@ -1186,27 +1226,75 @@ class BotController(
         frameGeneration: Long,
         jitter: Int = AutomationConfig.DEFAULT_SAFE_JITTER,
     ) {
-        if (!allowRewardPopupAction(stage)) {
-            if (stage == BotStage.DAILY_NEW) {
-                logDiagnostic("[DAILY_NEW_SKIP] reason=popup_retry_guard")
+        val fingerprint = capturePopupFingerprint()
+        pendingPopupAction = stage.name
+        try {
+            if (!allowVisualRewardPopupAction(stage, fingerprint)) {
+                if (stage == BotStage.DAILY_NEW) {
+                    logDiagnostic("[DAILY_NEW_SKIP] reason=popup_retry_guard")
+                }
+                return
             }
-            return
-        }
-        if (!performTap(name, point, sourceWidth, sourceHeight, jitter)) {
-            if (stage == BotStage.DAILY_NEW) {
-                minimumFreshFrameGeneration = frameGeneration
-                lastStage = null
-                logDiagnostic(
-                    "[DAILY_NEW] dispatch rejected; re-armed and waiting for fresh frame " +
-                        "generation>$frameGeneration",
-                )
+            if (!performTap(name, point, sourceWidth, sourceHeight, jitter)) {
+                if (stage == BotStage.DAILY_NEW) {
+                    minimumFreshFrameGeneration = frameGeneration
+                    lastStage = null
+                    logDiagnostic(
+                        "[DAILY_NEW] dispatch rejected; re-armed and waiting for fresh frame " +
+                            "generation>$frameGeneration",
+                    )
+                }
+                return
             }
-            return
+            if (stage == BotStage.DAILY_NEW) pendingDailyNewTapGeneration = frameGeneration
+            recordVisualRewardPopupAttempt(stage, fingerprint)
+            delayOrStop(randomMs(800, 1400))
+            finishRewardPopupAction(stage, frameGeneration, fingerprint)
+        } finally {
+            pendingPopupAction = "NONE"
         }
-        if (stage == BotStage.DAILY_NEW) pendingDailyNewTapGeneration = frameGeneration
-        recordRewardPopupAction(stage)
-        delayOrStop(randomMs(800, 1400))
-        finishRewardPopupAction(stage, frameGeneration)
+    }
+
+    /**
+     * Guards retries of one visually unchanged popup instance. A new visual
+     * instance starts at attempt one even when its BotStage is unchanged.
+     */
+    private fun allowVisualRewardPopupAction(
+        stage: BotStage,
+        fingerprint: PopupFingerprint?,
+    ): Boolean {
+        val sameInstance = visualPopupStage == stage &&
+            fingerprint != null &&
+            visualPopupFingerprint != null &&
+            !hasMeaningfulPopupChange(visualPopupFingerprint!!, fingerprint)
+        val nextAttempt = if (sameInstance) sameVisualPopupAttempts + 1 else 1
+        if (sameInstance && nextAttempt > MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS) {
+            logDiagnostic(
+                "[POPUP_RETRY_LIMIT] state=$stage reason=same_popup_unchanged " +
+                    "retry=$sameVisualPopupAttempts/$MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS",
+            )
+            return false
+        }
+
+        val result = if (sameInstance) "SAME_UNCHANGED_INSTANCE" else "NEW_INSTANCE"
+        logDiagnostic(
+            "[POPUP_INSTANCE] state=$stage result=$result " +
+                "retry=$nextAttempt/$MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS",
+        )
+        return true
+    }
+
+    private fun recordVisualRewardPopupAttempt(
+        stage: BotStage,
+        fingerprint: PopupFingerprint?,
+    ) {
+        val sameInstance = visualPopupStage == stage &&
+            fingerprint != null &&
+            visualPopupFingerprint != null &&
+            !hasMeaningfulPopupChange(visualPopupFingerprint!!, fingerprint)
+        sameVisualPopupAttempts = if (sameInstance) sameVisualPopupAttempts + 1 else 1
+        visualPopupStage = stage
+        visualPopupFingerprint = fingerprint
     }
 
     private fun allowRewardPopupAction(stage: BotStage): Boolean {
@@ -1245,7 +1333,11 @@ class BotController(
         lastRewardPopupAction = stage
     }
 
-    private fun finishRewardPopupAction(stage: BotStage, detectedFrameGeneration: Long) {
+    private fun finishRewardPopupAction(
+        stage: BotStage,
+        detectedFrameGeneration: Long,
+        beforeAction: PopupFingerprint?,
+    ) {
         // Every reward action returns to the same generic PRE_GAME scanner. No
         // expected-next-popup ordering is encoded here; the screen is authoritative.
         updateGroup(DetectionGroup.PRE_GAME)
@@ -1257,6 +1349,15 @@ class BotController(
         if (fresh != null) {
             try {
                 minimumFreshFrameGeneration = -1L
+                val afterAction = popupFingerprint(fresh.mat)
+                if (beforeAction != null && afterAction != null &&
+                    hasMeaningfulPopupChange(beforeAction, afterAction)
+                ) {
+                    resetVisualPopupGuard(
+                        stage,
+                        "screen_changed_after_successful_action",
+                    )
+                }
                 Log.i(
                     CookieRunBotApplication.TAG,
                     "[POPUP] Fresh frame ready after=$stage generation=${fresh.generation}; generic PRE_GAME redetect",
@@ -1281,6 +1382,68 @@ class BotController(
     private fun resetRewardPopupGuard() {
         lastRewardPopupAction = null
         consecutiveRewardPopupActions = 0
+        resetVisualPopupGuard(null, null)
+    }
+
+    private fun resetVisualPopupGuard(stage: BotStage?, reason: String?) {
+        if (reason != null) {
+            logDiagnostic("[POPUP_GUARD_RESET] state=$stage reason=$reason")
+        }
+        visualPopupStage = null
+        visualPopupFingerprint = null
+        sameVisualPopupAttempts = 0
+    }
+
+    private fun capturePopupFingerprint(): PopupFingerprint? {
+        val snapshot = LatestFrameProvider.snapshot() ?: return null
+        return try {
+            popupFingerprint(snapshot.mat)
+        } finally {
+            snapshot.mat.release()
+        }
+    }
+
+    private fun popupFingerprint(frame: Mat): PopupFingerprint? {
+        if (frame.empty()) return null
+        val gray = Mat()
+        val reduced = Mat()
+        return try {
+            when (frame.channels()) {
+                1 -> frame.copyTo(gray)
+                4 -> Imgproc.cvtColor(frame, gray, Imgproc.COLOR_BGRA2GRAY)
+                else -> Imgproc.cvtColor(frame, gray, Imgproc.COLOR_BGR2GRAY)
+            }
+            Imgproc.resize(
+                gray,
+                reduced,
+                Size(POPUP_FINGERPRINT_WIDTH.toDouble(), POPUP_FINGERPRINT_HEIGHT.toDouble()),
+                0.0,
+                0.0,
+                Imgproc.INTER_AREA,
+            )
+            val pixels = ByteArray(POPUP_FINGERPRINT_WIDTH * POPUP_FINGERPRINT_HEIGHT)
+            reduced.get(0, 0, pixels)
+            PopupFingerprint(pixels)
+        } finally {
+            gray.release()
+            reduced.release()
+        }
+    }
+
+    private fun hasMeaningfulPopupChange(
+        before: PopupFingerprint,
+        after: PopupFingerprint,
+    ): Boolean {
+        if (before.pixels.size != after.pixels.size || before.pixels.isEmpty()) return true
+        var changed = 0
+        for (index in before.pixels.indices) {
+            val delta = kotlin.math.abs(
+                (before.pixels[index].toInt() and 0xff) -
+                    (after.pixels[index].toInt() and 0xff),
+            )
+            if (delta >= POPUP_FINGERPRINT_PIXEL_DELTA) changed += 1
+        }
+        return changed.toDouble() / before.pixels.size >= POPUP_FINGERPRINT_CHANGE_RATIO
     }
 
     private fun saveLatestResult(stage: String) {
@@ -1790,7 +1953,12 @@ class BotController(
         private const val DETECT_FRAME_LOG_INTERVAL_MS = 2_000L
         private const val NO_MATCH_CONTINUITY_GAP_MS = 1_000L
         private const val POPUP_FRESH_FRAME_TIMEOUT_MS = 2_500L
+        private const val FRESH_FRAME_GATE_MAX_WAIT_MS = 7_500L
         private const val MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS = 3
+        private const val POPUP_FINGERPRINT_WIDTH = 64
+        private const val POPUP_FINGERPRINT_HEIGHT = 36
+        private const val POPUP_FINGERPRINT_PIXEL_DELTA = 24
+        private const val POPUP_FINGERPRINT_CHANGE_RATIO = 0.03
         private val PRE_GAME_DIAGNOSTIC_STAGES = listOf(
             BotStage.MAINMENU,
             BotStage.PURCHASE_ITEM,
@@ -1833,6 +2001,10 @@ data class BotControllerDiagnostics(
     val lastProcessedFrameSequence: Long,
     val lastDetectionAttemptAgeMs: Long?,
     val group: String,
+    val currentHandler: String,
+    val minimumFreshFrameGeneration: Long,
+    val gestureBusy: Boolean,
+    val pendingPopupAction: String,
 )
 
 private data class FastPathTiming(
@@ -1841,3 +2013,5 @@ private data class FastPathTiming(
     val detectionStartedAtNanos: Long,
     val detectionMatchedAtNanos: Long,
 )
+
+private data class PopupFingerprint(val pixels: ByteArray)

@@ -34,6 +34,10 @@ object BotRuntime : BotController.Listener {
             lastProcessedFrameSequence = -1L,
             lastDetectionAttemptAgeMs = null,
             group = "NONE",
+            currentHandler = "NONE",
+            minimumFreshFrameGeneration = -1L,
+            gestureBusy = false,
+            pendingPopupAction = "NONE",
         )
 
     override fun onRunningChanged(running: Boolean) = listener?.onRunningChanged(running) ?: Unit

@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.BatteryManager
 import android.os.PowerManager
 import android.os.Process
+import android.os.SystemClock
 import android.util.Log
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.capture.LatestFrameProvider
@@ -100,6 +101,37 @@ object RuntimeDiagnosticsLogger {
                 "lastDetectionAttemptAgeMs=${bot.lastDetectionAttemptAgeMs ?: "none"} " +
                 "group=${bot.group}",
         )
+        logDetectionStall(capture, bot)
+    }
+
+    private fun logDetectionStall(
+        capture: com.example.cookierunbot.capture.Diagnostics,
+        bot: BotControllerDiagnostics,
+    ) = synchronized(stallLock) {
+        val now = SystemClock.elapsedRealtime()
+        val captureAdvanced = capture.frameSequence > previousCaptureFrameSequence
+        val detectorUnchanged = bot.lastProcessedFrameSequence == previousProcessedFrameSequence
+        if (bot.workerAlive && captureAdvanced && detectorUnchanged) {
+            if (stallStartedAt == 0L) stallStartedAt = now
+            if (now - stallStartedAt >= DETECT_STALL_THRESHOLD_MS &&
+                now - lastStallLogAt >= DETECT_STALL_LOG_INTERVAL_MS
+            ) {
+                emit(
+                    "[DETECT_STALL] workerAlive=${bot.workerAlive} " +
+                        "captureFrameSequence=${capture.frameSequence} " +
+                        "lastProcessedFrameSequence=${bot.lastProcessedFrameSequence} " +
+                        "lastDetectionAttemptAgeMs=${bot.lastDetectionAttemptAgeMs ?: "none"} " +
+                        "group=${bot.group} currentHandler=${bot.currentHandler} " +
+                        "minimumFreshFrameGeneration=${bot.minimumFreshFrameGeneration} " +
+                        "gestureBusy=${bot.gestureBusy} pendingPopupAction=${bot.pendingPopupAction}",
+                )
+                lastStallLogAt = now
+            }
+        } else {
+            stallStartedAt = 0L
+        }
+        previousCaptureFrameSequence = capture.frameSequence
+        previousProcessedFrameSequence = bot.lastProcessedFrameSequence
     }
 
     private fun emit(message: String) {
@@ -110,4 +142,12 @@ object RuntimeDiagnosticsLogger {
 
     private fun formatAge(value: Double?): String =
         value?.let { String.format(Locale.US, "%.1f", it) } ?: "none"
+
+    private val stallLock = Any()
+    private var previousCaptureFrameSequence = -1L
+    private var previousProcessedFrameSequence = -1L
+    private var stallStartedAt = 0L
+    private var lastStallLogAt = 0L
+    private const val DETECT_STALL_THRESHOLD_MS = 7_500L
+    private const val DETECT_STALL_LOG_INTERVAL_MS = 10_000L
 }
