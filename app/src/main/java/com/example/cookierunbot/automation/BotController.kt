@@ -88,6 +88,8 @@ class BotController(
     private var pendingTimeDealGesture: GestureCancellation? = null
     private var timeDealCallbackFailures = 0
     private var pendingPreviousResultsGesture: GestureCancellation? = null
+    @Volatile private var previousResultsSettleUntilElapsedRealtime = 0L
+    @Volatile private var pendingPreviousResultsRedetectBaseline = -1L
     /** Invalidates late accessibility callbacks and delayed timeout runnables across runs. */
     private var botRunGeneration = 0L
 
@@ -154,6 +156,8 @@ class BotController(
             pendingTimeDealGesture = null
             timeDealCallbackFailures = 0
             pendingPreviousResultsGesture = null
+            previousResultsSettleUntilElapsedRealtime = 0L
+            pendingPreviousResultsRedetectBaseline = -1L
             resetNoMatchEpisode()
             executor = Executors.newSingleThreadExecutor { runnable ->
                 Thread(runnable, "cookierun-bot-loop").apply { priority = Thread.NORM_PRIORITY - 1 }
@@ -331,6 +335,17 @@ class BotController(
             frame.mat.release()
             return
         }
+        val previousResultsSettleUntil = previousResultsSettleUntilElapsedRealtime
+        if (previousResultsSettleUntil > 0L) {
+            val now = SystemClock.elapsedRealtime()
+            if (now < previousResultsSettleUntil) {
+                listener.onStateChanged("WAITING_FOR_PREVIOUS_RESULTS_TRANSITION")
+                frame.mat.release()
+                return
+            }
+            previousResultsSettleUntilElapsedRealtime = 0L
+            logDiagnostic("[PREVIOUS_RESULTS_SETTLE] completed=true waitMs=$PREVIOUS_RESULTS_SETTLE_MS")
+        }
         if (frame.generation <= minimumFreshFrameGeneration) {
             val now = SystemClock.elapsedRealtime()
             if (freshFrameGateWaitStartedAt == 0L) freshFrameGateWaitStartedAt = now
@@ -355,6 +370,14 @@ class BotController(
                     "after=$minimumFreshFrameGeneration",
             )
             minimumFreshFrameGeneration = -1L
+            val previousResultsBaseline = pendingPreviousResultsRedetectBaseline
+            if (previousResultsBaseline >= 0L) {
+                logDiagnostic(
+                    "[STATE_REDETECT] previous=PREVIOUS_RESULTS " +
+                        "baselineGeneration=$previousResultsBaseline freshFrameSequence=${frame.generation}",
+                )
+                pendingPreviousResultsRedetectBaseline = -1L
+            }
         }
         freshFrameGateWaitStartedAt = 0L
 
@@ -765,7 +788,10 @@ class BotController(
         val fingerprint = capturePopupFingerprint(BotStage.PREVIOUS_RESULTS)
         if (!allowVisualRewardPopupAction(BotStage.PREVIOUS_RESULTS, fingerprint)) return
 
-        val logicalCenter = LogicalPoint(636, 455)
+        val logicalCenter = LogicalPoint(
+            result.x + PREVIOUS_RESULTS_CONFIRM_OFFSET_X,
+            result.y + PREVIOUS_RESULTS_CONFIRM_OFFSET_Y,
+        )
         val mappedPhysical = CoordinateMapper.logicalToPhysical(
             logicalCenter.x,
             logicalCenter.y,
@@ -783,7 +809,10 @@ class BotController(
         logDiagnostic("[STATE_MATCH] state=PREVIOUS_RESULTS score=${format(result.score)}")
         logDiagnostic("[ACTION] state=PREVIOUS_RESULTS action=CONFIRM")
         logDiagnostic(
-            "[PREVIOUS_RESULTS_ACTION_MAP] logicalCenter=(636,455) " +
+            "[PREVIOUS_RESULTS_ACTION_MAP] " +
+                "templateMatch=(${result.x},${result.y}) " +
+                "confirmOffset=($PREVIOUS_RESULTS_CONFIRM_OFFSET_X,$PREVIOUS_RESULTS_CONFIRM_OFFSET_Y) " +
+                "logicalConfirm=(${logicalCenter.x},${logicalCenter.y}) " +
                 "contentRect=${rectText(contentRect)} " +
                 "mappedPhysical=(${mappedPhysical.x},${mappedPhysical.y}) " +
                 "jitterPhysical=($jitterX,$jitterY) " +
@@ -811,7 +840,6 @@ class BotController(
                             runGeneration,
                             success,
                             timedOut,
-                            fingerprint,
                         )
                     },
                 )
@@ -837,7 +865,6 @@ class BotController(
         runGeneration: Long,
         success: Boolean,
         timedOut: Boolean,
-        beforeAction: PopupFingerprint?,
     ) {
         if (!synchronized(lock) { running && botRunGeneration == runGeneration }) return
         synchronized(lock) { pendingPreviousResultsGesture = null }
@@ -850,36 +877,15 @@ class BotController(
         }
 
         val postCallbackBaseline = LatestFrameProvider.currentGeneration()
+        minimumFreshFrameGeneration = postCallbackBaseline
+        pendingPreviousResultsRedetectBaseline = postCallbackBaseline
+        previousResultsSettleUntilElapsedRealtime =
+            SystemClock.elapsedRealtime() + PREVIOUS_RESULTS_SETTLE_MS
         logDiagnostic(
             "[POPUP] state=PREVIOUS_RESULTS " +
-                "postCallbackBaselineGeneration=$postCallbackBaseline",
+                "postCallbackBaselineGeneration=$postCallbackBaseline " +
+                "settlingMs=$PREVIOUS_RESULTS_SETTLE_MS",
         )
-        val fresh = LatestFrameProvider.awaitNextSnapshot(
-            postCallbackBaseline,
-            POPUP_FRESH_FRAME_TIMEOUT_MS,
-        )
-        if (fresh != null) {
-            try {
-                val afterAction = popupFingerprint(fresh.mat, BotStage.PREVIOUS_RESULTS)
-                if (beforeAction != null && afterAction != null &&
-                    PopupFingerprinting.isMeaningfullyDifferent(beforeAction, afterAction)
-                ) {
-                    resetVisualPopupGuard(
-                        BotStage.PREVIOUS_RESULTS,
-                        "screen_changed_after_successful_action",
-                    )
-                }
-                logDiagnostic(
-                    "[STATE_REDETECT] previous=PREVIOUS_RESULTS " +
-                        "baselineGeneration=$postCallbackBaseline freshFrameSequence=${fresh.generation}",
-                )
-                minimumFreshFrameGeneration = -1L
-            } finally {
-                fresh.mat.release()
-            }
-        } else {
-            minimumFreshFrameGeneration = postCallbackBaseline
-        }
         updateGroup(DetectionGroup.PRE_GAME)
         lastStage = null
     }
@@ -926,16 +932,21 @@ class BotController(
     private fun handleMainMenu(detector: StateDetector, sourceWidth: Int, sourceHeight: Int) {
         Log.i(CookieRunBotApplication.TAG, "[BOT] MAINMENU reached; waiting 5 seconds for screen refresh")
         delayOrStop(5000L)
+        if (!revalidateMainMenu(detector, "AFTER_INITIAL_WAIT")) return
         if (options.sendFriendLife && !sendFriendCheckedForMainMenu) {
+            if (!revalidateMainMenu(detector, "BEFORE_FRIEND_LIFE")) return
             sendFriendCheckedForMainMenu = true
             handleMainMenuFriendLife(detector, sourceWidth, sourceHeight)
+            if (!revalidateMainMenu(detector, "AFTER_FRIEND_LIFE")) return
         }
         if (options.receiveSendLivesAfterEachGame && livesPendingAfterGame && !livesDoneForRound) {
+            if (!revalidateMainMenu(detector, "BEFORE_LIVES_WAIT")) return
             val wait = Random.nextLong(5000L, 6001L)
             Log.i(CookieRunBotApplication.TAG, "[LIVES] MAINMENU reached")
             Log.i(CookieRunBotApplication.TAG, "[LIVES] Waiting ${wait / 1000.0}s before opening Mail Box")
             delayOrStop(wait)
-            handleQuickLives(detector, sourceWidth, sourceHeight)
+            if (!revalidateMainMenu(detector, "AFTER_LIVES_WAIT")) return
+            if (!handleQuickLives(detector, sourceWidth, sourceHeight)) return
             livesDoneForRound = true
             livesPendingAfterGame = false
             Log.i(CookieRunBotApplication.TAG, "[LIVES] Workflow completed")
@@ -945,6 +956,7 @@ class BotController(
             Log.i(CookieRunBotApplication.TAG, "[BOT] Waiting ${wait / 1000.0}s before next game")
             delayOrStop(wait)
         }
+        if (!revalidateMainMenu(detector, "BEFORE_MAINMENU_START")) return
         isFirstGame = false
         livesDoneForRound = false
         livesPendingAfterGame = false
@@ -952,6 +964,43 @@ class BotController(
             return
         }
         delayOrStop(randomMs(800, 1400))
+        updateGroup(DetectionGroup.PRE_GAME)
+    }
+
+    private fun revalidateMainMenu(detector: StateDetector, checkpoint: String): Boolean {
+        val baseline = LatestFrameProvider.currentGeneration()
+        val snapshot = LatestFrameProvider.awaitNextSnapshot(
+            baseline,
+            MAINMENU_REVALIDATE_FRAME_TIMEOUT_MS,
+        )
+        if (snapshot == null) {
+            logDiagnostic(
+                "[MAINMENU_REVALIDATE] checkpoint=$checkpoint frameSequence=$baseline " +
+                    "detectedState=NO_FRESH_FRAME mainMenuValid=false",
+            )
+            abortMainMenuWorkflow(checkpoint, "NO_FRESH_FRAME")
+            return false
+        }
+        val detected = try {
+            detector.detectFirst(ALWAYS + PRE_GAME, snapshot.mat)?.state
+        } finally {
+            snapshot.mat.release()
+        }
+        val valid = MainMenuWorkflowPolicy.isMainMenuValid(detected)
+        logDiagnostic(
+            "[MAINMENU_REVALIDATE] checkpoint=$checkpoint frameSequence=${snapshot.generation} " +
+                "detectedState=${detected?.name ?: "NO_MATCH"} mainMenuValid=$valid",
+        )
+        if (!valid) abortMainMenuWorkflow(checkpoint, detected?.name ?: "NO_MATCH")
+        return valid
+    }
+
+    private fun abortMainMenuWorkflow(checkpoint: String, detectedState: String) {
+        logDiagnostic(
+            "[MAINMENU_ABORT] checkpoint=$checkpoint reason=state_changed " +
+                "detectedState=$detectedState",
+        )
+        lastStage = null
         updateGroup(DetectionGroup.PRE_GAME)
     }
 
@@ -1319,9 +1368,12 @@ class BotController(
         return match
     }
 
-    private fun handleQuickLives(detector: StateDetector, sourceWidth: Int, sourceHeight: Int) {
+    private fun handleQuickLives(detector: StateDetector, sourceWidth: Int, sourceHeight: Int): Boolean {
         Log.i(CookieRunBotApplication.TAG, "[LIVES] Safe tap jitter=10 canonical")
-        performTap("MAIL_BOX", AutomationConfig.MAIL_BOX, sourceWidth, sourceHeight, AutomationConfig.LIVES_JITTER)
+        if (!revalidateMainMenu(detector, "BEFORE_MAIL_BOX")) return false
+        if (!performTap("MAIL_BOX", AutomationConfig.MAIL_BOX, sourceWidth, sourceHeight, AutomationConfig.LIVES_JITTER)) {
+            return false
+        }
         delayOrStop(randomMs(800, 1400))
         performTap("MAIL_LIVES_TAB", AutomationConfig.MAIL_LIVES_TAB, sourceWidth, sourceHeight, AutomationConfig.LIVES_JITTER)
         delayOrStop(randomMs(800, 1400))
@@ -1332,7 +1384,7 @@ class BotController(
             } finally { snapshot.mat.release() }
             if (noLives) {
                 performTap("MAIL_CLOSE", AutomationConfig.MAIL_CLOSE, sourceWidth, sourceHeight, AutomationConfig.LIVES_JITTER)
-                return
+                return true
             }
         }
         performTap("QUICK_RECEIVE_SEND", AutomationConfig.QUICK_LIVES, sourceWidth, sourceHeight, AutomationConfig.LIVES_JITTER)
@@ -1351,13 +1403,14 @@ class BotController(
                 delayOrStop(randomMs(800, 1400))
                 performTap("MAIL_CLOSE", AutomationConfig.MAIL_CLOSE, sourceWidth, sourceHeight, AutomationConfig.LIVES_JITTER)
                 delayOrStop(randomMs(800, 1400))
-                return
+                return true
             }
             if (confirm) {
                 performTap("SEND_LIFE_CONFIRM", AutomationConfig.SEND_LIFE_CONFIRM, sourceWidth, sourceHeight, AutomationConfig.LIVES_JITTER)
                 delayOrStop(randomMs(800, 1400))
             } else delayOrStop(120L)
         }
+        return false
     }
 
     private fun popup(name: String, point: LogicalPoint, sourceWidth: Int, sourceHeight: Int, nextGroup: DetectionGroup, rearm: Boolean = false) {
@@ -2072,6 +2125,10 @@ class BotController(
         private const val DETECT_FRAME_LOG_INTERVAL_MS = 2_000L
         private const val NO_MATCH_CONTINUITY_GAP_MS = 1_000L
         private const val POPUP_FRESH_FRAME_TIMEOUT_MS = 2_500L
+        private const val PREVIOUS_RESULTS_SETTLE_MS = 500L
+        private const val PREVIOUS_RESULTS_CONFIRM_OFFSET_X = 153
+        private const val PREVIOUS_RESULTS_CONFIRM_OFFSET_Y = 236
+        private const val MAINMENU_REVALIDATE_FRAME_TIMEOUT_MS = 1_000L
         private const val FRESH_FRAME_GATE_MAX_WAIT_MS = 7_500L
         private const val MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS = 3
         private val PRE_GAME_DIAGNOSTIC_STAGES = listOf(
