@@ -69,6 +69,7 @@ internal object PopupFingerprinting {
         BotStage.RELIC_CLAIM -> FingerprintRegion(275, 30, 1005, 680)
         BotStage.PARTY_RUN -> FingerprintRegion(260, 20, 1020, 680)
         BotStage.GAME_SETTINGS -> FingerprintRegion(300, 25, 980, 680)
+        BotStage.PREVIOUS_RESULTS -> FingerprintRegion(260, 120, 1020, 680)
         else -> fallbackRegion
     }
 

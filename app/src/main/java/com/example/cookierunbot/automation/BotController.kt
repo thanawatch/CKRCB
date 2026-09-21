@@ -24,6 +24,7 @@ import kotlin.random.Random
 
 private const val PARTY_RUN_SEASON_REWARDS_CALLBACK_TIMEOUT_MS = 3_000L
 private const val TIME_DEAL_CALLBACK_TIMEOUT_MS = 3_000L
+private const val PREVIOUS_RESULTS_CALLBACK_TIMEOUT_MS = 3_000L
 
 enum class DetectionGroup { PRE_GAME, IN_GAME, POST_GAME }
 
@@ -85,6 +86,7 @@ class BotController(
     private var partyRunSeasonRewardsCallbackFailures = 0
     private var pendingTimeDealGesture: GestureCancellation? = null
     private var timeDealCallbackFailures = 0
+    private var pendingPreviousResultsGesture: GestureCancellation? = null
     /** Invalidates late accessibility callbacks and delayed timeout runnables across runs. */
     private var botRunGeneration = 0L
 
@@ -108,6 +110,7 @@ class BotController(
             pendingPopupAction = when {
                 pendingPartyRunSeasonRewardsGesture?.isCompleted == false -> "PARTY_RUN_SEASON_REWARDS"
                 pendingTimeDealGesture?.isCompleted == false -> "TIME_DEAL"
+                pendingPreviousResultsGesture?.isCompleted == false -> "PREVIOUS_RESULTS"
                 else -> pendingPopupAction
             },
         )
@@ -148,6 +151,7 @@ class BotController(
             partyRunSeasonRewardsCallbackFailures = 0
             pendingTimeDealGesture = null
             timeDealCallbackFailures = 0
+            pendingPreviousResultsGesture = null
             resetNoMatchEpisode()
             executor = Executors.newSingleThreadExecutor { runnable ->
                 Thread(runnable, "cookierun-bot-loop").apply { priority = Thread.NORM_PRIORITY - 1 }
@@ -166,6 +170,7 @@ class BotController(
     fun stop() {
         val stoppedPartyGesture: GestureCancellation?
         val stoppedTimeDealGesture: GestureCancellation?
+        val stoppedPreviousResultsGesture: GestureCancellation?
         val worker = synchronized(lock) {
             if (!running && executor == null) return
             running = false
@@ -177,10 +182,13 @@ class BotController(
             pendingPartyRunSeasonRewardsGesture = null
             stoppedTimeDealGesture = pendingTimeDealGesture
             pendingTimeDealGesture = null
+            stoppedPreviousResultsGesture = pendingPreviousResultsGesture
+            pendingPreviousResultsGesture = null
             currentExecutor
         }
         stoppedPartyGesture?.cancel()
         stoppedTimeDealGesture?.cancel()
+        stoppedPreviousResultsGesture?.cancel()
         autoTapper.stop("BOT_EXIT")
         worker?.shutdownNow()
         Log.i(CookieRunBotApplication.TAG, "[BOT] Stopped")
@@ -508,6 +516,7 @@ class BotController(
             BotStage.PARTY_RUN -> rewardPopup(result.state, "PARTY_RUN", AutomationConfig.PARTY_RUN_CLOSE, sourceWidth, sourceHeight, frameGeneration)
             BotStage.PARTY_RUN_SEASON_REWARDS -> handlePartyRunSeasonRewards(result, sourceWidth, sourceHeight, frameGeneration)
             BotStage.TIME_DEAL -> handleTimeDeal(result, sourceWidth, sourceHeight, frameGeneration)
+            BotStage.PREVIOUS_RESULTS -> handlePreviousResults(result, sourceWidth, sourceHeight, frameGeneration)
             BotStage.GAME_SETTINGS -> rewardPopup(result.state, "GAME_SETTINGS", AutomationConfig.GAME_SETTINGS_CLOSE, sourceWidth, sourceHeight, frameGeneration)
             BotStage.IN_GAME -> Unit
         }
@@ -728,6 +737,124 @@ class BotController(
             updateGroup(DetectionGroup.PRE_GAME)
             lastStage = null
         }
+    }
+
+    private fun handlePreviousResults(
+        result: DetectionResult,
+        sourceWidth: Int,
+        sourceHeight: Int,
+        frameGeneration: Long,
+    ) {
+        if (synchronized(lock) { pendingPreviousResultsGesture?.isCompleted == false }) {
+            logDiagnostic("[PREVIOUS_RESULTS_SKIP] reason=callback_pending")
+            return
+        }
+        val fingerprint = capturePopupFingerprint(BotStage.PREVIOUS_RESULTS)
+        if (!allowVisualRewardPopupAction(BotStage.PREVIOUS_RESULTS, fingerprint)) return
+
+        val physicalPoint = PhysicalPoint(
+            Random.nextInt(1244, 1255),
+            Random.nextInt(677, 688),
+        )
+        logDiagnostic("[STATE_MATCH] state=PREVIOUS_RESULTS score=${format(result.score)}")
+        logDiagnostic("[ACTION] state=PREVIOUS_RESULTS action=CONFIRM")
+        logDiagnostic(
+            "[ACTION_MAP] state=PREVIOUS_RESULTS coordinateType=PHYSICAL " +
+                "physical=(${physicalPoint.x},${physicalPoint.y}) center=(1249,682) jitter=5",
+        )
+
+        val runGeneration = synchronized(lock) { botRunGeneration }
+        logBotActionRequest("PREVIOUS_RESULTS")
+        val action = synchronized(lock) {
+            if (!running) {
+                actionSkippedBotStopped("PREVIOUS_RESULTS")
+                ActionResult("PREVIOUS_RESULTS", false, 0, 0, null)
+            } else {
+                actionExecutor.tapAbsolutePhysicalCircle(
+                    actionName = "PREVIOUS_RESULTS",
+                    logicalReference = LogicalPoint(0, 0),
+                    physicalPoint = physicalPoint,
+                    physicalRadius = 0.0,
+                    sourceWidth = sourceWidth,
+                    sourceHeight = sourceHeight,
+                    callbackTimeoutMs = PREVIOUS_RESULTS_CALLBACK_TIMEOUT_MS,
+                    onGestureCompleted = { _, success, timedOut ->
+                        logDiagnostic("[GESTURE] state=PREVIOUS_RESULTS callbackSuccess=$success")
+                        handlePreviousResultsCallback(
+                            runGeneration,
+                            success,
+                            timedOut,
+                            fingerprint,
+                        )
+                    },
+                )
+            }
+        }
+        reportActionResult(action)
+        logDiagnostic("[GESTURE] state=PREVIOUS_RESULTS dispatchAccepted=${action.accepted}")
+        if (!action.accepted) {
+            minimumFreshFrameGeneration = frameGeneration
+            lastStage = null
+            return
+        }
+
+        recordVisualRewardPopupAttempt(BotStage.PREVIOUS_RESULTS, fingerprint)
+        synchronized(lock) {
+            if (running && botRunGeneration == runGeneration && action.pendingGesture?.isCompleted == false) {
+                pendingPreviousResultsGesture = action.pendingGesture
+            }
+        }
+    }
+
+    private fun handlePreviousResultsCallback(
+        runGeneration: Long,
+        success: Boolean,
+        timedOut: Boolean,
+        beforeAction: PopupFingerprint?,
+    ) {
+        if (!synchronized(lock) { running && botRunGeneration == runGeneration }) return
+        synchronized(lock) { pendingPreviousResultsGesture = null }
+        if (timedOut) logDiagnostic("[GESTURE] state=PREVIOUS_RESULTS callback=TIMEOUT")
+        if (!success) {
+            lastStage = null
+            minimumFreshFrameGeneration = LatestFrameProvider.currentGeneration()
+            updateGroup(DetectionGroup.PRE_GAME)
+            return
+        }
+
+        val postCallbackBaseline = LatestFrameProvider.currentGeneration()
+        logDiagnostic(
+            "[POPUP] state=PREVIOUS_RESULTS " +
+                "postCallbackBaselineGeneration=$postCallbackBaseline",
+        )
+        val fresh = LatestFrameProvider.awaitNextSnapshot(
+            postCallbackBaseline,
+            POPUP_FRESH_FRAME_TIMEOUT_MS,
+        )
+        if (fresh != null) {
+            try {
+                val afterAction = popupFingerprint(fresh.mat, BotStage.PREVIOUS_RESULTS)
+                if (beforeAction != null && afterAction != null &&
+                    PopupFingerprinting.isMeaningfullyDifferent(beforeAction, afterAction)
+                ) {
+                    resetVisualPopupGuard(
+                        BotStage.PREVIOUS_RESULTS,
+                        "screen_changed_after_successful_action",
+                    )
+                }
+                logDiagnostic(
+                    "[STATE_REDETECT] previous=PREVIOUS_RESULTS " +
+                        "baselineGeneration=$postCallbackBaseline freshFrameSequence=${fresh.generation}",
+                )
+                minimumFreshFrameGeneration = -1L
+            } finally {
+                fresh.mat.release()
+            }
+        } else {
+            minimumFreshFrameGeneration = postCallbackBaseline
+        }
+        updateGroup(DetectionGroup.PRE_GAME)
+        lastStage = null
     }
 
     private fun performPhysicalTap(
@@ -1888,6 +2015,7 @@ class BotController(
             BotStage.PARTY_RUN,
             BotStage.PARTY_RUN_SEASON_REWARDS,
             BotStage.TIME_DEAL,
+            BotStage.PREVIOUS_RESULTS,
             BotStage.GAME_SETTINGS,
         )
         private val PRE_GAME = listOf(
@@ -1896,7 +2024,7 @@ class BotController(
             BotStage.DAILY_TREASURE, BotStage.DAILY_NEW, BotStage.ENTER_LEAGUE,
             BotStage.LEAGUE_RESULTS, BotStage.PREVIOUS_RANK_RESULTS,
             BotStage.TOO_MANY_TREASURES, BotStage.PARTY_RUN, BotStage.PARTY_RUN_SEASON_REWARDS,
-            BotStage.TIME_DEAL, BotStage.GAME_SETTINGS,
+            BotStage.TIME_DEAL, BotStage.PREVIOUS_RESULTS, BotStage.GAME_SETTINGS,
             BotStage.MAINMENU, BotStage.PURCHASE_ITEM,
         )
         private val IN_GAME = listOf(BotStage.GAME_RELAY, BotStage.GAME_COMPLETE, BotStage.GAME_START)
@@ -1925,6 +2053,7 @@ class BotController(
             BotStage.PARTY_RUN,
             BotStage.PARTY_RUN_SEASON_REWARDS,
             BotStage.TIME_DEAL,
+            BotStage.PREVIOUS_RESULTS,
             BotStage.GAME_SETTINGS,
             BotStage.DAILY_CHECKIN,
             BotStage.DAILY_CHECKIN_BOOST_SET,
@@ -1944,7 +2073,7 @@ class BotController(
             BotStage.OVERTAKE_BREAK_SCORE, BotStage.MYSTERY_BOX, BotStage.CONGRATULATIONS,
             BotStage.RELIC_COMPLETE, BotStage.RELIC_CLAIM, BotStage.TOO_MANY_TREASURES,
             BotStage.MAINMENU, BotStage.PARTY_RUN, BotStage.PARTY_RUN_SEASON_REWARDS,
-            BotStage.TIME_DEAL, BotStage.GAME_SETTINGS,
+            BotStage.TIME_DEAL, BotStage.PREVIOUS_RESULTS, BotStage.GAME_SETTINGS,
             BotStage.PURCHASE_ITEM, BotStage.LEVEL_UP, BotStage.DAILY_CHECKIN,
             BotStage.DAILY_CHECKIN_BOOST_SET, BotStage.DAILY_TREASURE,
             BotStage.DAILY_NEW, BotStage.ENTER_LEAGUE, BotStage.LEAGUE_RESULTS,

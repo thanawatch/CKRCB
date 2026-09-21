@@ -26,6 +26,7 @@ enum class BotStage {
     PARTY_RUN,
     PARTY_RUN_SEASON_REWARDS,
     TIME_DEAL,
+    PREVIOUS_RESULTS,
     GAME_SETTINGS,
     IN_GAME,
 }
