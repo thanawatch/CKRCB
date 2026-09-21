@@ -15,6 +15,7 @@ import com.example.cookierunbot.detection.TemplateMatch
 import com.example.cookierunbot.diagnostics.PersistentTrace
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.statistics.RoundResultCollector
+import com.example.cookierunbot.statistics.MysteryBoxPhasePolicy
 import org.opencv.core.Mat
 import org.opencv.core.Rect
 import org.opencv.imgproc.Imgproc
@@ -523,7 +524,7 @@ class BotController(
             BotStage.GAME_START -> handleGameStart(result, frame, sourceWidth, sourceHeight, timing)
             BotStage.GAME_RELAY -> handleGameRelay(result, frame, sourceWidth, sourceHeight, timing)
             BotStage.GAME_COMPLETE -> handleGameComplete(sourceWidth, sourceHeight)
-            BotStage.MYSTERY_BOX -> handleMysteryBox(sourceWidth, sourceHeight)
+            BotStage.MYSTERY_BOX -> handleMysteryBox(sourceWidth, sourceHeight, frame)
             BotStage.CONGRATULATIONS -> rewardPopup(result.state, "CONGRATULATIONS", AutomationConfig.CONGRATULATIONS_ACCEPT, sourceWidth, sourceHeight, frameGeneration)
             BotStage.LEVEL_UP -> rewardPopup(result.state, "LEVEL_UP", AutomationConfig.LEVEL_UP_ACCEPT, sourceWidth, sourceHeight, frameGeneration)
             BotStage.DAILY_CHECKIN -> rewardPopup(result.state, "DAILY_CHECKIN", AutomationConfig.DAILY_CHECKIN_ACCEPT, sourceWidth, sourceHeight, frameGeneration)
@@ -1251,13 +1252,16 @@ class BotController(
         updateGroup(DetectionGroup.POST_GAME)
     }
 
-    private fun handleMysteryBox(sourceWidth: Int, sourceHeight: Int) {
+    private fun handleMysteryBox(sourceWidth: Int, sourceHeight: Int, detectedFrame: Mat) {
         mysteryBoxCount += 1
         Log.i(CookieRunBotApplication.TAG, "[RESULT] MYSTERY_BOX count=$mysteryBoxCount")
-        LatestFrameProvider.snapshot()?.let { snapshot ->
-            try {
-                roundResultCollector.classifyMysteryBox(roundNumber, mysteryBoxCount, snapshot.mat)
-            } finally { snapshot.mat.release() }
+        if (MysteryBoxPhasePolicy.shouldClassify(mysteryBoxCount)) {
+            roundResultCollector.classifyMysteryBoxes(roundNumber, detectedFrame)
+        } else {
+            logDiagnostic(
+                "[BOX_SCAN_SKIPPED] round=$roundNumber phase=$mysteryBoxCount " +
+                    "reason=OPENED_REWARD_PHASE",
+            )
         }
         if (mysteryBoxCount == 2 && !mysteryBoxImageSaved) {
             delayOrStop(3000L)

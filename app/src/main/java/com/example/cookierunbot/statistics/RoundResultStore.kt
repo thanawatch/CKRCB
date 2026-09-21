@@ -46,6 +46,10 @@ object RoundResultStore {
             totalCoins = history.mapNotNull { it.coins }.sum(),
             totalXp = history.mapNotNull { it.xp }.sum(),
             totalBoxes = history.sumOf { it.boxCount },
+            woodBoxes = history.sumOf { result -> result.boxes.count { it == "wood" } },
+            silverBoxes = history.sumOf { result -> result.boxes.count { it == "silver" } },
+            goldBoxes = history.sumOf { result -> result.boxes.count { it == "gold" } },
+            rainbowBoxes = history.sumOf { result -> result.boxes.count { it == "rainbow" } },
             lastRound = history.firstOrNull(),
             history = history,
             sessionRuntimeMs = if (sessionStartedAt == 0L) 0L else

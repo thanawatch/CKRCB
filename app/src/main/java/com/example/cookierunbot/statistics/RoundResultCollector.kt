@@ -112,26 +112,40 @@ class RoundResultCollector(context: Context) {
         logResult(round)
     }
 
-    fun classifyMysteryBox(round: Int, index: Int, frame: Mat) {
+    fun classifyMysteryBoxes(round: Int, frame: Mat) {
         val ownedFrame = frame.clone()
         val analysisGeneration = synchronized(lock) { sessionGeneration }
         executor.execute {
-            val grade = try { boxClassifier.classify(ownedFrame).first } catch (_: Exception) { "unknown" }
-            finally { ownedFrame.release() }
-            if (!RoundResultStore.isCurrentGeneration(analysisGeneration)) {
-                logStaleBox(round, index, analysisGeneration)
-                return@execute
-            }
-            val updated = synchronized(lock) {
-                if (sessionGeneration != analysisGeneration) null
-                else boxes.getOrPut(round) { mutableListOf() }.apply { add(grade) }.toList()
-            }
-            if (updated == null || !RoundResultStore.updateBoxes(round, updated, analysisGeneration)) {
-                logStaleBox(round, index, analysisGeneration)
-                return@execute
-            }
-            log("[BOX_RESULT] round=$round index=$index grade=$grade")
-            logResult(round)
+            try {
+                val scan = try { boxClassifier.scan(ownedFrame) } catch (error: Exception) {
+                    Log.e(CookieRunBotApplication.TAG, "[BOX_SCAN] round=$round phase=1 failed", error)
+                    BoxScanResult(0, emptyList())
+                }
+                val detections = scan.detections
+                log("[BOX_SCAN] round=$round phase=1 candidateCount=${scan.candidateCount} acceptedCount=${detections.size}")
+                detections.forEachIndexed { index, detection ->
+                    log(
+                        "[BOX_DETECTION] round=$round index=${index + 1} grade=${detection.grade} " +
+                            "score=${format(detection.score)} x=${detection.rect.x} y=${detection.rect.y} " +
+                            "width=${detection.rect.width} height=${detection.rect.height}",
+                    )
+                }
+                if (!RoundResultStore.isCurrentGeneration(analysisGeneration)) {
+                    logStaleBox(round, 1, analysisGeneration)
+                    return@execute
+                }
+                val grades = detections.map { it.grade }
+                val updated = synchronized(lock) {
+                    if (sessionGeneration != analysisGeneration) null
+                    else grades.also { boxes[round] = it.toMutableList() }
+                }
+                if (updated == null || !RoundResultStore.updateBoxes(round, updated, analysisGeneration)) {
+                    logStaleBox(round, 1, analysisGeneration)
+                    return@execute
+                }
+                log("[BOX_RESULT] round=$round boxes=$grades boxCount=${grades.size}")
+                logResult(round)
+            } finally { ownedFrame.release() }
         }
     }
 

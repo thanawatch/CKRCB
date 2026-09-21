@@ -18,6 +18,7 @@ import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
@@ -27,8 +28,11 @@ import android.widget.TextView
 import android.widget.Toast
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.capture.LatestFrameProvider
+import com.example.cookierunbot.statistics.RoundResultStore
 import android.util.Log
 import android.util.DisplayMetrics
+import java.text.NumberFormat
+import java.util.Locale
 import kotlin.math.abs
 
 /** Draggable control bubble shown above the game while screen capture is active. */
@@ -40,6 +44,11 @@ class BotControlOverlay(private val context: Context) {
     private val panel = LinearLayout(context)
     private val panelScroll = ScrollView(context)
     private val panelStatus = TextView(context)
+    private val statsRounds = TextView(context)
+    private val statsCoins = TextView(context)
+    private val statsXp = TextView(context)
+    private val statsTime = TextView(context)
+    private val statsBoxCounts = linkedMapOf<String, TextView>()
     private val fastStart = Switch(context)
     private val cookieRelay = Switch(context)
     private val postRelay = Switch(context)
@@ -140,6 +149,7 @@ class BotControlOverlay(private val context: Context) {
         panelStatus.setTextColor(Color.WHITE)
         panelStatus.textSize = 14f
         panel.addView(panelStatus, matchWidth())
+        panel.addView(buildStatisticsSummary(), matchWidth())
 
         val options = BotOptionsStore.load(context)
         addSwitch(fastStart, "Use owned Fast Start", options.useFastStart)
@@ -342,6 +352,67 @@ class BotControlOverlay(private val context: Context) {
             !accessibilityConnected -> "Waiting: Accessibility service disconnected"
             else -> "Status: Running"
         }
+        updateStatisticsSummary()
+    }
+
+    private fun buildStatisticsSummary() = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(8), dp(6), dp(8), dp(7))
+        background = roundedBackground(Color.argb(180, 52, 55, 64), dp(8).toFloat())
+        addView(TextView(context).apply {
+            text = "Session"
+            textSize = 14f
+            setTextColor(Color.WHITE)
+        }, matchWidth())
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(statsRounds.apply { compactStatStyle() }, LinearLayout.LayoutParams(0, dp(22), 1f))
+            addView(statsCoins.apply { compactStatStyle() }, LinearLayout.LayoutParams(0, dp(22), 1f))
+        }, matchWidth())
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(statsXp.apply { compactStatStyle() }, LinearLayout.LayoutParams(0, dp(22), 1f))
+            addView(statsTime.apply { compactStatStyle() }, LinearLayout.LayoutParams(0, dp(22), 1f))
+        }, matchWidth())
+        addView(LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            listOf("wood", "silver", "gold", "rainbow").forEach { grade ->
+                val count = TextView(context).apply { compactStatStyle() }
+                statsBoxCounts[grade] = count
+                addView(LinearLayout(context).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER
+                    val bitmap = context.assets.open("templates/BOX_${grade.uppercase()}.png")
+                        .use(android.graphics.BitmapFactory::decodeStream)
+                    addView(ImageView(context).apply {
+                        setImageBitmap(bitmap)
+                        scaleType = ImageView.ScaleType.CENTER_INSIDE
+                        contentDescription = grade
+                    }, LinearLayout.LayoutParams(dp(24), dp(24)))
+                    addView(count, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(24)))
+                }, LinearLayout.LayoutParams(0, dp(26), 1f))
+            }
+        }, matchWidth())
+    }
+
+    private fun TextView.compactStatStyle() {
+        textSize = 12f
+        setTextColor(Color.WHITE)
+        gravity = Gravity.CENTER_VERTICAL
+    }
+
+    private fun updateStatisticsSummary() {
+        val stats = RoundResultStore.snapshot()
+        val formatter = NumberFormat.getIntegerInstance(Locale.US)
+        statsRounds.text = "Rounds: ${stats.rounds}"
+        statsCoins.text = "Coins: ${formatter.format(stats.totalCoins)}"
+        statsXp.text = "XP: ${formatter.format(stats.totalXp)}"
+        val totalSeconds = stats.sessionRuntimeMs / 1000
+        statsTime.text = "Time: %02d:%02d".format(totalSeconds / 60, totalSeconds % 60)
+        statsBoxCounts["wood"]?.text = stats.woodBoxes.toString()
+        statsBoxCounts["silver"]?.text = stats.silverBoxes.toString()
+        statsBoxCounts["gold"]?.text = stats.goldBoxes.toString()
+        statsBoxCounts["rainbow"]?.text = stats.rainbowBoxes.toString()
     }
 
     private fun setExpanded(value: Boolean) {

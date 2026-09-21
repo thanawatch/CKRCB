@@ -6,6 +6,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.opencv.core.Rect
 
 class RoundStatisticsTest {
     @After fun clean() = RoundResultStore.clearForTests()
@@ -102,6 +103,78 @@ class RoundStatisticsTest {
         assertTrue(RoundResultStore.updateBoxes(1, listOf("rainbow"), generation))
         assertEquals(listOf("rainbow"), RoundResultStore.snapshot().lastRound?.boxes)
     }
+
+    @Test fun sessionBoxTotalsCountRepeatedGradesSeparately() {
+        val generation = RoundResultStore.startNewSession()
+        RoundResultStore.upsert(result(1, 1, 2).copy(boxes = listOf("wood", "rainbow"), boxCount = 2), generation)
+        RoundResultStore.upsert(result(2, 3, 4).copy(boxes = listOf("wood", "wood", "gold"), boxCount = 3), generation)
+        val stats = RoundResultStore.snapshot()
+        assertEquals(3, stats.woodBoxes)
+        assertEquals(0, stats.silverBoxes)
+        assertEquals(1, stats.goldBoxes)
+        assertEquals(1, stats.rainbowBoxes)
+        assertEquals(5, stats.totalBoxes)
+        assertEquals(4, stats.totalCoins)
+        assertEquals(6, stats.totalXp)
+    }
+
+    @Test fun nmsKeepsDistinctBoxesAndOrdersThemLeftToRight() {
+        val selected = MysteryBoxClassifier.suppressOverlaps(
+            listOf(
+                detection("rainbow", .93, 500),
+                detection("wood", .94, 100),
+                detection("silver", .92, 300),
+                detection("gold", .91, 400),
+            ),
+        )
+        assertEquals(listOf("wood", "silver", "gold", "rainbow"), selected.map { it.grade })
+    }
+
+    @Test fun nmsPreservesRepeatedGradeAtDifferentLocations() {
+        val selected = MysteryBoxClassifier.suppressOverlaps(
+            listOf(detection("wood", .95, 100), detection("wood", .94, 350)),
+        )
+        assertEquals(listOf("wood", "wood"), selected.map { it.grade })
+    }
+
+    @Test fun nmsCollapsesScaleAndGradeCompetitionAtSameLocation() {
+        val selected = MysteryBoxClassifier.suppressOverlaps(
+            listOf(
+                detection("gold", .91, 200, 100),
+                detection("gold", .87, 203, 105),
+                detection("silver", .72, 201, 98),
+            ),
+        )
+        assertEquals(1, selected.size)
+        assertEquals("gold", selected.single().grade)
+        assertEquals(.91, selected.single().score, .0001)
+    }
+
+    @Test fun nmsLimitsOutputToFourBoxes() {
+        val selected = MysteryBoxClassifier.suppressOverlaps(
+            (0..5).map { detection("wood", .99 - it * .01, it * 140) },
+        )
+        assertEquals(4, selected.size)
+    }
+
+    @Test fun closedScreenBoxListReplacesRatherThanAppends() {
+        val generation = RoundResultStore.startNewSession()
+        RoundResultStore.upsert(result(1, 10, 20), generation)
+        RoundResultStore.updateBoxes(1, listOf("wood", "rainbow"), generation)
+        RoundResultStore.updateBoxes(1, listOf("silver"), generation)
+        val result = RoundResultStore.snapshot().lastRound
+        assertEquals(listOf("silver"), result?.boxes)
+        assertEquals(1, result?.boxCount)
+    }
+
+    @Test fun onlyFirstMysteryBoxPhaseIsClassified() {
+        assertTrue(MysteryBoxPhasePolicy.shouldClassify(1))
+        assertFalse(MysteryBoxPhasePolicy.shouldClassify(2))
+        assertFalse(MysteryBoxPhasePolicy.shouldClassify(3))
+    }
+
+    private fun detection(grade: String, score: Double, x: Int, size: Int = 100) =
+        BoxDetection(grade, score, Rect(x, 20, size, size))
 
     private fun result(round: Int, coins: Int?, xp: Int?) = RoundResult(
         round = round,
