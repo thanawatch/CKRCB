@@ -373,7 +373,7 @@ class StateDetector(context: Context) : AutoCloseable {
             BotStage.PARTY_RUN to Rect(359, 44, 922 - 359, 138 - 44),
             BotStage.PARTY_RUN_SEASON_REWARDS to Rect(350, 0, 590, 140),
             BotStage.TIME_DEAL to Rect(160, 0, 420 - 160, 90),
-            BotStage.PREVIOUS_RESULTS to Rect(520, 190, 950 - 520, 300 - 190),
+            BotStage.PREVIOUS_RESULTS to Rect(430, 170, 900 - 430, 320 - 170),
             BotStage.GAME_SETTINGS to Rect(484, 62, 769 - 484, 122 - 62),
         )
 private val TEMPLATE_PATHS_BY_STAGE = mapOf(

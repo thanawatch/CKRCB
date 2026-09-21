@@ -58,6 +58,7 @@ class BotController(
     private var lastSafetyLogAt = 0L
     private var lastTraceHeartbeatAt = 0L
     private var lastDetectFrameLogAt = 0L
+    private var lastPreviousResultsDiagnosticAt = 0L
     private var isFirstGame = true
     private var roundNumber = 0
     private var gameStartDetectedForRound = false
@@ -140,6 +141,7 @@ class BotController(
             lastProcessedFrameSequence = -1L
             lastDetectionAttemptAt = 0L
             lastDetectFrameLogAt = 0L
+            lastPreviousResultsDiagnosticAt = 0L
             resetRewardPopupGuard()
             minimumFreshFrameGeneration = -1L
             freshFrameGateWaitStartedAt = 0L
@@ -399,6 +401,17 @@ class BotController(
                             "templateSize=${partyRunRewardsResult.width}x${partyRunRewardsResult.height} " +
                             "roiSize=590x140"
                     )
+                }
+                val previousResultsResult = detector.detect(BotStage.PREVIOUS_RESULTS, frame.mat)
+                if (previousResultsResult.score >= 0 &&
+                    (previousResultsResult.matched || now - lastPreviousResultsDiagnosticAt >= 1_500L)
+                ) {
+                    logDiagnostic(
+                        "[PREVIOUS_RESULTS_DIAG] score=${format(previousResultsResult.score)} " +
+                            "threshold=0.8 roi=(430,170,900,320) " +
+                            "templateSize=${previousResultsResult.width}x${previousResultsResult.height}",
+                    )
+                    lastPreviousResultsDiagnosticAt = now
                 }
             }
             // Check if DAILY_NEW was detected in recovery scan but group is not PRE_GAME
@@ -752,15 +765,29 @@ class BotController(
         val fingerprint = capturePopupFingerprint(BotStage.PREVIOUS_RESULTS)
         if (!allowVisualRewardPopupAction(BotStage.PREVIOUS_RESULTS, fingerprint)) return
 
-        val physicalPoint = PhysicalPoint(
-            Random.nextInt(1244, 1255),
-            Random.nextInt(677, 688),
+        val logicalCenter = LogicalPoint(636, 455)
+        val mappedPhysical = CoordinateMapper.logicalToPhysical(
+            logicalCenter.x,
+            logicalCenter.y,
+            sourceWidth,
+            sourceHeight,
         )
+        val jitterX = Random.nextInt(-5, 6)
+        val jitterY = Random.nextInt(-5, 6)
+        val physicalPoint = PhysicalPoint(
+            (mappedPhysical.x + jitterX).coerceIn(0, sourceWidth - 1),
+            (mappedPhysical.y + jitterY).coerceIn(0, sourceHeight - 1),
+        )
+        val contentRect = ContentGeometryRegistry.current(sourceWidth, sourceHeight)?.contentRect
+            ?: FrameNormalizer.contentTransform(sourceWidth, sourceHeight).contentRect
         logDiagnostic("[STATE_MATCH] state=PREVIOUS_RESULTS score=${format(result.score)}")
         logDiagnostic("[ACTION] state=PREVIOUS_RESULTS action=CONFIRM")
         logDiagnostic(
-            "[ACTION_MAP] state=PREVIOUS_RESULTS coordinateType=PHYSICAL " +
-                "physical=(${physicalPoint.x},${physicalPoint.y}) center=(1249,682) jitter=5",
+            "[PREVIOUS_RESULTS_ACTION_MAP] logicalCenter=(636,455) " +
+                "contentRect=${rectText(contentRect)} " +
+                "mappedPhysical=(${mappedPhysical.x},${mappedPhysical.y}) " +
+                "jitterPhysical=($jitterX,$jitterY) " +
+                "finalPhysical=(${physicalPoint.x},${physicalPoint.y})",
         )
 
         val runGeneration = synchronized(lock) { botRunGeneration }
@@ -772,7 +799,7 @@ class BotController(
             } else {
                 actionExecutor.tapAbsolutePhysicalCircle(
                     actionName = "PREVIOUS_RESULTS",
-                    logicalReference = LogicalPoint(0, 0),
+                    logicalReference = logicalCenter,
                     physicalPoint = physicalPoint,
                     physicalRadius = 0.0,
                     sourceWidth = sourceWidth,
