@@ -17,9 +17,19 @@ class RoundResultCollector(context: Context) {
     private val lock = Any()
     private val starts = mutableMapOf<Int, Long>()
     private val boxes = mutableMapOf<Int, MutableList<String>>()
+    private var sessionGeneration = 0L
+
+    fun startNewSession() {
+        val generation = RoundResultStore.startNewSession()
+        synchronized(lock) {
+            starts.clear()
+            boxes.clear()
+            sessionGeneration = generation
+        }
+        log("[STATS_SESSION_START] generation=$generation")
+    }
 
     fun beginRound(round: Int, elapsedRealtime: Long = SystemClock.elapsedRealtime()) {
-        RoundResultStore.markSessionStarted()
         synchronized(lock) { starts[round] = elapsedRealtime; boxes[round] = mutableListOf() }
         log("[ROUND_START] round=$round elapsedRealtime=$elapsedRealtime")
     }
@@ -33,12 +43,18 @@ class RoundResultCollector(context: Context) {
         finishedAt: Long = System.currentTimeMillis(),
     ) {
         val ownedFrame = settledFrame.clone()
-        val duration = synchronized(lock) { starts[round]?.let { completedElapsedRealtime - it } }
+        val (analysisGeneration, duration) = synchronized(lock) {
+            sessionGeneration to starts[round]?.let { completedElapsedRealtime - it }
+        }
         log("[ROUND_COMPLETE] round=$round durationMs=${duration ?: "unknown"}")
         log("[RESULT_ANALYSIS_ENQUEUED] round=$round frameSequence=$frameSequence")
         executor.execute {
             try {
                 val reading = numberDetector.read(ownedFrame)
+                if (!RoundResultStore.isCurrentGeneration(analysisGeneration)) {
+                    logStaleResult(round, analysisGeneration)
+                    return@execute
+                }
                 if (reading.coins.value == null) log("[RESULT_READ_FAILED] field=COINS reason=${reading.coins.reason}")
                 if (reading.xp.value == null) log("[RESULT_READ_FAILED] field=XP reason=${reading.xp.reason}")
                 log(
@@ -47,8 +63,11 @@ class RoundResultCollector(context: Context) {
                         "coinsConfidence=${format(reading.coins.confidence)} " +
                         "xpConfidence=${format(reading.xp.confidence)}",
                 )
-                val roundBoxes = synchronized(lock) { boxes[round]?.toList().orEmpty() }
-                RoundResultStore.upsert(
+                val roundBoxes = synchronized(lock) {
+                    if (sessionGeneration == analysisGeneration) boxes[round]?.toList().orEmpty()
+                    else emptyList()
+                }
+                val stored = RoundResultStore.upsert(
                     RoundResult(
                         round = round,
                         finishedAt = finishedAt,
@@ -59,14 +78,16 @@ class RoundResultCollector(context: Context) {
                         boxCount = roundBoxes.size,
                         screenshotPath = screenshotPath,
                         hasScreenshot = screenshotPath != null,
-                    ),
+                    ), analysisGeneration,
                 )
-                logResult(round)
+                if (stored) logResult(round) else logStaleResult(round, analysisGeneration)
             } catch (error: Exception) {
                 Log.e(CookieRunBotApplication.TAG, "[RESULT_READ_FAILED] round=$round reason=${error.message}", error)
-                RoundResultStore.upsert(
+                val stored = RoundResultStore.upsert(
                     RoundResult(round, finishedAt, duration, null, null, screenshotPath = screenshotPath),
+                    analysisGeneration,
                 )
+                if (!stored) logStaleResult(round, analysisGeneration)
             } finally { ownedFrame.release() }
         }
     }
@@ -76,22 +97,39 @@ class RoundResultCollector(context: Context) {
         completedElapsedRealtime: Long = SystemClock.elapsedRealtime(),
         finishedAt: Long = System.currentTimeMillis(),
     ) {
-        val duration = synchronized(lock) { starts[round]?.let { completedElapsedRealtime - it } }
-        val roundBoxes = synchronized(lock) { boxes[round]?.toList().orEmpty() }
-        RoundResultStore.upsert(
-            RoundResult(round, finishedAt, duration, null, null, roundBoxes, roundBoxes.size),
+        val (generation, state) = synchronized(lock) {
+            sessionGeneration to Pair(
+                starts[round]?.let { completedElapsedRealtime - it },
+                boxes[round]?.toList().orEmpty(),
+            )
+        }
+        val stored = RoundResultStore.upsert(
+            RoundResult(round, finishedAt, state.first, null, null, state.second, state.second.size),
+            generation,
         )
+        if (!stored) { logStaleResult(round, generation); return }
         log("[RESULT_READ_FAILED] field=FRAME reason=no_latest_frame")
         logResult(round)
     }
 
     fun classifyMysteryBox(round: Int, index: Int, frame: Mat) {
         val ownedFrame = frame.clone()
+        val analysisGeneration = synchronized(lock) { sessionGeneration }
         executor.execute {
             val grade = try { boxClassifier.classify(ownedFrame).first } catch (_: Exception) { "unknown" }
             finally { ownedFrame.release() }
-            val updated = synchronized(lock) { boxes.getOrPut(round) { mutableListOf() }.apply { add(grade) }.toList() }
-            RoundResultStore.updateBoxes(round, updated)
+            if (!RoundResultStore.isCurrentGeneration(analysisGeneration)) {
+                logStaleBox(round, index, analysisGeneration)
+                return@execute
+            }
+            val updated = synchronized(lock) {
+                if (sessionGeneration != analysisGeneration) null
+                else boxes.getOrPut(round) { mutableListOf() }.apply { add(grade) }.toList()
+            }
+            if (updated == null || !RoundResultStore.updateBoxes(round, updated, analysisGeneration)) {
+                logStaleBox(round, index, analysisGeneration)
+                return@execute
+            }
             log("[BOX_RESULT] round=$round index=$index grade=$grade")
             logResult(round)
         }
@@ -105,6 +143,16 @@ class RoundResultCollector(context: Context) {
                 "boxes=${result.boxes} hasScreenshot=${result.hasScreenshot}",
         )
     }
+
+    private fun logStaleResult(round: Int, analysisGeneration: Long) = log(
+        "[RESULT_DISCARDED] reason=STALE_SESSION round=$round " +
+            "analysisGeneration=$analysisGeneration currentGeneration=${RoundResultStore.currentGeneration()}",
+    )
+
+    private fun logStaleBox(round: Int, index: Int, analysisGeneration: Long) = log(
+        "[BOX_RESULT_DISCARDED] reason=STALE_SESSION round=$round index=$index " +
+            "analysisGeneration=$analysisGeneration currentGeneration=${RoundResultStore.currentGeneration()}",
+    )
 
     private fun log(message: String) {
         Log.i(CookieRunBotApplication.TAG, message)

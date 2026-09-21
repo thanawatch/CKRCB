@@ -126,6 +126,7 @@ class BotController(
             if (running) return
             this.options = options
             botRunGeneration += 1L
+            roundResultCollector.startNewSession()
             running = true
             group = DetectionGroup.PRE_GAME
             lastStage = null

@@ -2,11 +2,13 @@ package com.example.cookierunbot.statistics
 
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RoundStatisticsTest {
-    @After fun clean() = RoundResultStore.clear()
+    @After fun clean() = RoundResultStore.clearForTests()
 
     @Test fun digitOrderingConstructsExpectedValue() {
         assertEquals(84_302, ResultNumberDetector.constructNumber(listOf(8, 4, 3, 0, 2)))
@@ -17,15 +19,17 @@ class RoundStatisticsTest {
     }
 
     @Test fun storeKeepsLatestFiftyRounds() {
-        (1..55).forEach { RoundResultStore.upsert(result(it, coins = it, xp = it * 2)) }
+        val generation = RoundResultStore.startNewSession()
+        (1..55).forEach { RoundResultStore.upsert(result(it, coins = it, xp = it * 2), generation) }
         val snapshot = RoundResultStore.snapshot()
         assertEquals(50, snapshot.rounds)
         assertEquals(55, snapshot.lastRound?.round)
     }
 
     @Test fun boxUpdatesAndSessionTotalsAreThreadSafeValues() {
-        RoundResultStore.upsert(result(1, coins = 10, xp = 20))
-        RoundResultStore.updateBoxes(1, listOf("gold", "silver"))
+        val generation = RoundResultStore.startNewSession()
+        RoundResultStore.upsert(result(1, coins = 10, xp = 20), generation)
+        RoundResultStore.updateBoxes(1, listOf("gold", "silver"), generation)
         val snapshot = RoundResultStore.snapshot()
         assertEquals(10, snapshot.totalCoins)
         assertEquals(20, snapshot.totalXp)
@@ -34,12 +38,69 @@ class RoundStatisticsTest {
     }
 
     @Test fun nullCoinsAndXpAreNotInventedOrAdded() {
-        RoundResultStore.upsert(result(1, coins = null, xp = null))
+        val generation = RoundResultStore.startNewSession()
+        RoundResultStore.upsert(result(1, coins = null, xp = null), generation)
         val snapshot = RoundResultStore.snapshot()
         assertNull(snapshot.lastRound?.coins)
         assertNull(snapshot.lastRound?.xp)
         assertEquals(0, snapshot.totalCoins)
         assertEquals(0, snapshot.totalXp)
+    }
+
+    @Test fun newSessionClearsPreviousRoundsAndTotals() {
+        val first = RoundResultStore.startNewSession()
+        RoundResultStore.upsert(result(1, 100, 10), first)
+        RoundResultStore.upsert(result(2, 200, 20).copy(boxes = listOf("gold"), boxCount = 1), first)
+
+        RoundResultStore.startNewSession()
+        val snapshot = RoundResultStore.snapshot()
+        assertEquals(0, snapshot.rounds)
+        assertEquals(0, snapshot.totalCoins)
+        assertEquals(0, snapshot.totalXp)
+        assertEquals(0, snapshot.totalBoxes)
+        assertEquals(emptyList<RoundResult>(), snapshot.history)
+        assertNull(snapshot.lastRound)
+    }
+
+    @Test fun roundNumbersCanRestartWithoutRetainingOldRound() {
+        val first = RoundResultStore.startNewSession()
+        RoundResultStore.upsert(result(1, 100, 10), first)
+        val second = RoundResultStore.startNewSession()
+        RoundResultStore.upsert(result(1, 200, 20), second)
+        val snapshot = RoundResultStore.snapshot()
+        assertEquals(1, snapshot.rounds)
+        assertEquals(200, snapshot.lastRound?.coins)
+    }
+
+    @Test fun sessionRuntimeResets() {
+        RoundResultStore.startNewSession(System.currentTimeMillis() - 10_000L)
+        assertTrue(RoundResultStore.snapshot().sessionRuntimeMs >= 9_000L)
+        RoundResultStore.startNewSession(System.currentTimeMillis())
+        assertTrue(RoundResultStore.snapshot().sessionRuntimeMs < 1_000L)
+    }
+
+    @Test fun staleResultGenerationIsRejected() {
+        val stale = RoundResultStore.startNewSession()
+        val current = RoundResultStore.startNewSession()
+        assertFalse(RoundResultStore.upsert(result(1, 100, 10), stale))
+        assertTrue(RoundResultStore.upsert(result(1, 200, 20), current))
+        assertEquals(200, RoundResultStore.snapshot().lastRound?.coins)
+    }
+
+    @Test fun staleMysteryBoxGenerationIsRejected() {
+        val stale = RoundResultStore.startNewSession()
+        RoundResultStore.upsert(result(1, 100, 10), stale)
+        val current = RoundResultStore.startNewSession()
+        RoundResultStore.upsert(result(1, 200, 20), current)
+        assertFalse(RoundResultStore.updateBoxes(1, listOf("gold"), stale))
+        assertEquals(0, RoundResultStore.snapshot().totalBoxes)
+    }
+
+    @Test fun currentGenerationBoxUpdateStillWorks() {
+        val generation = RoundResultStore.startNewSession()
+        RoundResultStore.upsert(result(1, 100, 10), generation)
+        assertTrue(RoundResultStore.updateBoxes(1, listOf("rainbow"), generation))
+        assertEquals(listOf("rainbow"), RoundResultStore.snapshot().lastRound?.boxes)
     }
 
     private fun result(round: Int, coins: Int?, xp: Int?) = RoundResult(
