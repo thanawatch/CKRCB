@@ -7,17 +7,27 @@ import org.junit.Test
 class MainMenuWorkflowPolicyTest {
     @Test
     fun mainMenuRemainingVisibleAllowsMailBoxWorkflow() {
-        assertTrue(MainMenuWorkflowPolicy.isMainMenuValid(BotStage.MAINMENU))
+        assertTrue(MainMenuWorkflowPolicy.isMainMenuValid(alwaysState = null, mainMenuMatched = true))
     }
 
     @Test
-    fun previousResultsDuringWaitBlocksMailBoxWorkflow() {
-        assertFalse(MainMenuWorkflowPolicy.isMainMenuValid(BotStage.PREVIOUS_RESULTS))
+    fun missingMainMenuBlocksMailBoxWorkflow() {
+        assertFalse(MainMenuWorkflowPolicy.isMainMenuValid(alwaysState = null, mainMenuMatched = false))
     }
 
     @Test
     fun connectionLostDuringWaitBlocksMailBoxWorkflow() {
-        assertFalse(MainMenuWorkflowPolicy.isMainMenuValid(BotStage.CONNECTION_LOST))
+        assertFalse(
+            MainMenuWorkflowPolicy.isMainMenuValid(
+                alwaysState = BotStage.CONNECTION_LOST,
+                mainMenuMatched = true,
+            ),
+        )
+    }
+
+    @Test
+    fun strongMainMenuMatchWinsOverNonAlwaysPopupFalsePositive() {
+        assertTrue(MainMenuWorkflowPolicy.isMainMenuValid(alwaysState = null, mainMenuMatched = true))
     }
 
     @Test
@@ -32,7 +42,7 @@ class MainMenuWorkflowPolicyTest {
 
     @Test
     fun genuineMainMenuCanCompletePendingLivesWorkflow() {
-        assertTrue(MainMenuWorkflowPolicy.isMainMenuValid(BotStage.MAINMENU))
+        assertTrue(MainMenuWorkflowPolicy.isMainMenuValid(alwaysState = null, mainMenuMatched = true))
         assertFalse(
             MainMenuWorkflowPolicy.livesPendingAfterCheckpoint(
                 currentlyPending = true,

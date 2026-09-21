@@ -981,17 +981,53 @@ class BotController(
             abortMainMenuWorkflow(checkpoint, "NO_FRESH_FRAME")
             return false
         }
-        val detected = try {
-            detector.detectFirst(ALWAYS + PRE_GAME, snapshot.mat)?.state
+        val validation = try {
+            val alwaysResult = detector.detectFirst(ALWAYS, snapshot.mat)
+            val mainMenuResult = detector.detect(BotStage.MAINMENU, snapshot.mat)
+            val blockingResults = detector.scoreStages(
+                PRE_GAME
+                    .filterNot { it == BotStage.MAINMENU }
+                    .filterNot { !options.detectRelic && it in RELIC_STAGES },
+                snapshot.mat,
+            )
+            val blockingCandidate = blockingResults.maxByOrNull { it.score }
+            MainMenuRevalidation(
+                alwaysState = alwaysResult?.state,
+                mainMenuScore = mainMenuResult.score,
+                mainMenuMatched = mainMenuResult.matched,
+                blockingCandidate = blockingCandidate?.state,
+                blockingScore = blockingCandidate?.score ?: -1.0,
+                blockingMatched = blockingCandidate?.matched == true,
+            )
         } finally {
             snapshot.mat.release()
         }
-        val valid = MainMenuWorkflowPolicy.isMainMenuValid(detected)
+        val valid = MainMenuWorkflowPolicy.isMainMenuValid(
+            alwaysState = validation.alwaysState,
+            mainMenuMatched = validation.mainMenuMatched,
+        )
         logDiagnostic(
             "[MAINMENU_REVALIDATE] checkpoint=$checkpoint frameSequence=${snapshot.generation} " +
-                "detectedState=${detected?.name ?: "NO_MATCH"} mainMenuValid=$valid",
+                "mainMenuScore=${format(validation.mainMenuScore)} " +
+                "mainMenuMatched=${validation.mainMenuMatched} " +
+                "alwaysState=${validation.alwaysState?.name ?: "NONE"} " +
+                "blockingCandidate=${validation.blockingCandidate?.name ?: "NONE"} " +
+                "blockingScore=${format(validation.blockingScore)} mainMenuValid=$valid",
         )
-        if (!valid) abortMainMenuWorkflow(checkpoint, detected?.name ?: "NO_MATCH")
+        if (valid && validation.blockingMatched) {
+            logDiagnostic(
+                "[MAINMENU_REVALIDATE_CONFLICT] " +
+                    "mainMenuScore=${format(validation.mainMenuScore)} " +
+                    "candidate=${validation.blockingCandidate?.name ?: "NONE"} " +
+                    "candidateScore=${format(validation.blockingScore)} decision=MAINMENU",
+            )
+        }
+        if (!valid) {
+            val detectedState = validation.alwaysState?.name
+                ?: validation.blockingCandidate?.takeIf { validation.blockingMatched }?.name
+                ?: "NO_MATCH"
+            abortMainMenuWorkflow(checkpoint, detectedState)
+        }
         return valid
     }
 
@@ -2178,6 +2214,15 @@ data class BotControllerDiagnostics(
     val minimumFreshFrameGeneration: Long,
     val gestureBusy: Boolean,
     val pendingPopupAction: String,
+)
+
+private data class MainMenuRevalidation(
+    val alwaysState: BotStage?,
+    val mainMenuScore: Double,
+    val mainMenuMatched: Boolean,
+    val blockingCandidate: BotStage?,
+    val blockingScore: Double,
+    val blockingMatched: Boolean,
 )
 
 private data class FastPathTiming(
