@@ -32,6 +32,10 @@
             android:name=".DebugLogActivity"
             android:exported="false" />
 
+        <activity
+            android:name=".StatisticsActivity"
+            android:exported="false" />
+
         <service
             android:name=".capture.ScreenCaptureService"
             android:exported="false"

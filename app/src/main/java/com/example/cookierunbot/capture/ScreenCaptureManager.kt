@@ -332,7 +332,7 @@ class ScreenCaptureManager(
                 )
                 ContentInsets(insets.left, insets.top, insets.right, insets.bottom)
             }
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.P -> {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> {
                 val cutout = windowManager.defaultDisplay.cutout
                 ContentInsets(
                     cutout?.safeInsetLeft ?: 0,

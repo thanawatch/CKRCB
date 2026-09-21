@@ -14,6 +14,7 @@ import com.example.cookierunbot.detection.StateDetector
 import com.example.cookierunbot.detection.TemplateMatch
 import com.example.cookierunbot.diagnostics.PersistentTrace
 import com.example.cookierunbot.diagnostics.DebugLogStore
+import com.example.cookierunbot.statistics.RoundResultCollector
 import org.opencv.core.Mat
 import org.opencv.core.Rect
 import org.opencv.imgproc.Imgproc
@@ -45,6 +46,7 @@ class BotController(
     private val autoTapper = GameAutoTapper(actionExecutor)
     private val resultSaver = ResultImageSaver(context.applicationContext)
     private val noMatchDebugFrameSaver = NoMatchDebugFrameSaver(context.applicationContext)
+    private val roundResultCollector = RoundResultCollector(context.applicationContext)
     private var executor: ExecutorService? = null
     private var running = false
     @Volatile private var workerAlive = false
@@ -1060,7 +1062,8 @@ class BotController(
                 "[BOOST_FLOW] desired=${boostLogName()} ready=$ready next=PLAY_GAME",
             )
         }
-        performTap("PLAY_GAME", LogicalPoint(895, 620), sourceWidth, sourceHeight)
+        val playAccepted = performTap("PLAY_GAME", LogicalPoint(895, 620), sourceWidth, sourceHeight)
+        if (playAccepted) roundResultCollector.beginRound(roundNumber)
         if (options.useFastStart) {
             // Python uses a dedicated short GAME_START poll immediately after Play.
             // Give that transient state first priority until detected or timed out.
@@ -1238,7 +1241,7 @@ class BotController(
                 "[RESULT] Waiting ${waitMs / 1000.0}s before save",
             )
             delayOrStop(waitMs)
-            saveLatestResult("game_complete")
+            captureGameCompleteResult()
             gameCompleteImageSaved = true
         }
         performTap("GAME_COMPLETE_FINISH", AutomationConfig.COMPLETE_FINISH, sourceWidth, sourceHeight)
@@ -1250,6 +1253,11 @@ class BotController(
     private fun handleMysteryBox(sourceWidth: Int, sourceHeight: Int) {
         mysteryBoxCount += 1
         Log.i(CookieRunBotApplication.TAG, "[RESULT] MYSTERY_BOX count=$mysteryBoxCount")
+        LatestFrameProvider.snapshot()?.let { snapshot ->
+            try {
+                roundResultCollector.classifyMysteryBox(roundNumber, mysteryBoxCount, snapshot.mat)
+            } finally { snapshot.mat.release() }
+        }
         if (mysteryBoxCount == 2 && !mysteryBoxImageSaved) {
             delayOrStop(3000L)
             saveLatestResult("mystery_box")
@@ -1658,6 +1666,32 @@ class BotController(
         try {
             val file = resultSaver.save(snapshot.mat, roundNumber, stage)
             Log.i(CookieRunBotApplication.TAG, "[RESULT] Saved $file")
+        } finally { snapshot.mat.release() }
+    }
+
+    private fun captureGameCompleteResult() {
+        val snapshot = LatestFrameProvider.snapshot()
+        if (snapshot == null) {
+            roundResultCollector.completeRoundWithoutFrame(roundNumber)
+            return
+        }
+        try {
+            val screenshotPath = try {
+                resultSaver.save(snapshot.mat, roundNumber, "game_complete").also {
+                    Log.i(CookieRunBotApplication.TAG, "[RESULT] Saved $it")
+                }
+            } catch (error: Exception) {
+                Log.e(CookieRunBotApplication.TAG, "[RESULT] Screenshot save failed", error)
+                null
+            }
+            roundResultCollector.completeRound(
+                round = roundNumber,
+                frameSequence = snapshot.generation,
+                settledFrame = snapshot.mat,
+                screenshotPath = screenshotPath,
+            )
+        } catch (error: Exception) {
+            Log.e(CookieRunBotApplication.TAG, "[RESULT_READ_FAILED] enqueue reason=${error.message}", error)
         } finally { snapshot.mat.release() }
     }
 

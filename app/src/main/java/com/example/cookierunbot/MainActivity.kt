@@ -300,6 +300,13 @@ class MainActivity : ComponentActivity() {
             }
         }, matchWidth())
 
+        content.addView(Button(this).apply {
+            text = "Statistics / Round History"
+            setOnClickListener {
+                startActivity(Intent(this@MainActivity, StatisticsActivity::class.java))
+            }
+        }, matchWidth())
+
         botStatus = diagnosticLine(content)
         botState = diagnosticLine(content)
         botDetectionGroup = diagnosticLine(content)
