@@ -111,4 +111,64 @@ class FriendLifeSchedulerTest {
             friendLifeTraversalDecision(false, false, 30, 30),
         )
     }
+
+    @Test fun scheduledPendingValidationFailureDoesNotBeginTransaction() {
+        val scheduler = FriendLifeScheduler()
+        scheduler.start(true, 0L)
+        scheduler.observeTime(FRIEND_LIFE_INTERVAL_MS)
+        assertTrue(scheduler.hasPendingWork(FRIEND_LIFE_INTERVAL_MS))
+        // MAINMENU validation fails, so beginIfReady is deliberately not called.
+        assertFalse(scheduler.inProgress())
+        assertTrue(scheduler.scheduledPending())
+        assertEquals(FriendLifeTrigger.SCHEDULED, scheduler.beginIfReady(FRIEND_LIFE_INTERVAL_MS + 1L))
+    }
+
+    @Test fun manualPendingValidationFailureDoesNotBeginTransaction() {
+        val scheduler = FriendLifeScheduler()
+        scheduler.start(false, 0L)
+        assertEquals(FriendLifeTestRequest.QUEUED, scheduler.requestTest(true))
+        assertTrue(scheduler.hasPendingWork(0L))
+        assertFalse(scheduler.inProgress())
+        assertTrue(scheduler.testPending())
+        assertEquals(FriendLifeTrigger.TEST, scheduler.beginIfReady(1L))
+    }
+
+    @Test fun combinedPendingValidationFailurePreservesOneCombinedTransaction() {
+        val scheduler = FriendLifeScheduler()
+        scheduler.start(true, 0L)
+        scheduler.observeTime(FRIEND_LIFE_INTERVAL_MS)
+        scheduler.requestTest(true)
+        assertTrue(scheduler.hasPendingWork(FRIEND_LIFE_INTERVAL_MS))
+        assertFalse(scheduler.inProgress())
+        assertTrue(scheduler.scheduledPending())
+        assertTrue(scheduler.testPending())
+        assertEquals(FriendLifeTrigger.SCHEDULED_AND_TEST, scheduler.beginIfReady(FRIEND_LIFE_INTERVAL_MS + 1L))
+        assertNull(scheduler.beginIfReady(FRIEND_LIFE_INTERVAL_MS + 2L))
+    }
+
+    @Test fun relicInterruptPolicyMatchesDetectRelicOption() {
+        val always = listOf(BotStage.CONNECTION_LOST, BotStage.INACTIVE)
+        val preGame = listOf(
+            BotStage.RELIC_COMPLETE,
+            BotStage.RELIC_CLAIM,
+            BotStage.CONGRATULATIONS,
+            BotStage.MAINMENU,
+        )
+        val relic = setOf(BotStage.RELIC_COMPLETE, BotStage.RELIC_CLAIM)
+        val disabled = friendLifeInterruptStages(always, preGame, false, relic)
+        assertFalse(BotStage.RELIC_COMPLETE in disabled)
+        assertFalse(BotStage.RELIC_CLAIM in disabled)
+        assertTrue(BotStage.CONGRATULATIONS in disabled)
+        val enabled = friendLifeInterruptStages(always, preGame, true, relic)
+        assertTrue(BotStage.RELIC_COMPLETE in enabled)
+        assertTrue(BotStage.RELIC_CLAIM in enabled)
+    }
+
+    @Test fun onlyFrameNewerThanPostGestureBaselineIsAccepted() {
+        val duringGestureFrame = 101L
+        val postGestureBaseline = 102L
+        assertFalse(isGenuinelyPostGestureFrame(duringGestureFrame, postGestureBaseline))
+        assertFalse(isGenuinelyPostGestureFrame(postGestureBaseline, postGestureBaseline))
+        assertTrue(isGenuinelyPostGestureFrame(103L, postGestureBaseline))
+    }
 }

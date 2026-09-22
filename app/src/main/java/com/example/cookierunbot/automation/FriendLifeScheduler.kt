@@ -37,6 +37,10 @@ class FriendLifeScheduler(private val intervalMs: Long = FRIEND_LIFE_INTERVAL_MS
         else -> { testPending = true; FriendLifeTestRequest.QUEUED }
     }
 
+    /** Read-only readiness check. It deliberately does not begin a transaction. */
+    @Synchronized fun hasPendingWork(nowMs: Long): Boolean =
+        !inProgress && nowMs >= retryNotBefore && (scheduledPending || testPending)
+
     @Synchronized fun beginIfReady(nowMs: Long): FriendLifeTrigger? {
         if (inProgress || nowMs < retryNotBefore || (!scheduledPending && !testPending)) return null
         inProgress = true
@@ -68,7 +72,19 @@ class FriendLifeScheduler(private val intervalMs: Long = FRIEND_LIFE_INTERVAL_MS
     @Synchronized fun nextDueAt(): Long = nextDueAt
     @Synchronized fun scheduledPending(): Boolean = scheduledPending
     @Synchronized fun testPending(): Boolean = testPending
+    @Synchronized fun inProgress(): Boolean = inProgress
 }
+
+internal fun friendLifeInterruptStages(
+    always: List<BotStage>,
+    preGame: List<BotStage>,
+    detectRelic: Boolean,
+    relicStages: Set<BotStage>,
+): List<BotStage> = (always + preGame.filterNot { it == BotStage.MAINMENU })
+    .filterNot { !detectRelic && it in relicStages }
+
+internal fun isGenuinelyPostGestureFrame(frameGeneration: Long, postGestureBaseline: Long): Boolean =
+    frameGeneration > postGestureBaseline
 
 internal fun friendLifeTraversalDecision(
     sendButtonMatched: Boolean,

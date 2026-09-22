@@ -140,6 +140,8 @@ class ActionExecutor(private val context: Context? = null) {
         physicalRadius: Double,
         sourceWidth: Int,
         sourceHeight: Int,
+        callbackTimeoutMs: Long = 0L,
+        onGestureCompleted: ((success: Boolean, timedOut: Boolean) -> Unit)? = null,
     ): ActionResult {
         val base = CoordinateMapper.calibratedLogicalToPhysical(
             logicalPoint.x, logicalPoint.y, sourceWidth, sourceHeight,
@@ -160,12 +162,16 @@ class ActionExecutor(private val context: Context? = null) {
         val lease = GestureArbiter.acquire(GesturePriority.NORMAL)
             ?: return ActionResult(actionName, false, logicalPoint.x, logicalPoint.y, PhysicalPoint(x, y))
         Log.i(CookieRunBotApplication.TAG, "[ACTION] dispatch start state=$actionName")
+        val completion = GestureCompletionContext(lease, callbackTimeoutMs) { _, success, timedOut ->
+            onGestureCompleted?.invoke(success, timedOut)
+        }
+        completion.armTimeout(actionName)
         val dispatch = BotAccessibilityService.dispatchPhysicalPoint(
             x,
             y,
             "[ACTION] $actionName",
-        ) { _, _ -> GestureArbiter.release(lease) }.also {
-            if (!it.accepted) GestureArbiter.release(lease)
+        ) { completedAt, success -> completion.complete(completedAt, success) }.also {
+            if (!it.accepted) completion.cancel()
         }
         return ActionResult(
             actionName,
@@ -175,6 +181,7 @@ class ActionExecutor(private val context: Context? = null) {
             dispatch.physical,
             dispatch.requestedAtNanos,
             dispatch.dispatchedAtNanos,
+            completion,
         )
     }
 
@@ -184,6 +191,8 @@ class ActionExecutor(private val context: Context? = null) {
         physicalRadius: Double,
         sourceWidth: Int,
         sourceHeight: Int,
+        callbackTimeoutMs: Long = 0L,
+        onGestureCompleted: ((success: Boolean, timedOut: Boolean) -> Unit)? = null,
     ): ActionResult {
         val base = CoordinateMapper.detectorLogicalToPhysical(
             detectorPoint.x, detectorPoint.y, sourceWidth, sourceHeight,
@@ -198,12 +207,16 @@ class ActionExecutor(private val context: Context? = null) {
         val lease = GestureArbiter.acquire(GesturePriority.NORMAL)
             ?: return ActionResult(actionName, false, detectorPoint.x, detectorPoint.y, PhysicalPoint(x, y))
         Log.i(CookieRunBotApplication.TAG, "[ACTION] dispatch start state=$actionName mapping=DETECTOR_CONTENT")
+        val completion = GestureCompletionContext(lease, callbackTimeoutMs) { _, success, timedOut ->
+            onGestureCompleted?.invoke(success, timedOut)
+        }
+        completion.armTimeout(actionName)
         val dispatch = BotAccessibilityService.dispatchPhysicalPoint(
             x,
             y,
             "[ACTION] $actionName",
-        ) { _, _ -> GestureArbiter.release(lease) }.also {
-            if (!it.accepted) GestureArbiter.release(lease)
+        ) { completedAt, success -> completion.complete(completedAt, success) }.also {
+            if (!it.accepted) completion.cancel()
         }
         return ActionResult(
             actionName,
@@ -213,6 +226,7 @@ class ActionExecutor(private val context: Context? = null) {
             dispatch.physical,
             dispatch.requestedAtNanos,
             dispatch.dispatchedAtNanos,
+            completion,
         )
     }
 
