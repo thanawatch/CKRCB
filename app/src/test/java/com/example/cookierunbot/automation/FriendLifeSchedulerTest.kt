@@ -101,15 +101,19 @@ class FriendLifeSchedulerTest {
     @Test fun traversalDoesNotFinishUntilBottomIsVisible() {
         assertEquals(
             FriendLifeTraversalDecision.SCROLL_DOWN,
-            friendLifeTraversalDecision(false, false, 1, 30),
+            friendLifeTraversalDecision(false, false, 59_999L),
         )
         assertEquals(
             FriendLifeTraversalDecision.COMPLETE,
-            friendLifeTraversalDecision(false, true, 1, 30),
+            friendLifeTraversalDecision(false, true, 60_000L),
         )
         assertEquals(
-            FriendLifeTraversalDecision.ABORT_SCROLL_LIMIT,
-            friendLifeTraversalDecision(false, false, 30, 30),
+            FriendLifeTraversalDecision.ABORT_TIMEOUT,
+            friendLifeTraversalDecision(false, false, 60_000L),
+        )
+        assertEquals(
+            FriendLifeTraversalDecision.SEND,
+            friendLifeTraversalDecision(true, false, 60_000L),
         )
     }
 
@@ -286,8 +290,10 @@ class FriendLifeSchedulerTest {
 
     @Test fun friendLifeTimingConstantsMatchPolicy() {
         assertEquals(60_000L, FRIEND_FIND_TOP_TIMEOUT_MS)
-        assertEquals(300L, FRIEND_FIND_TOP_SWIPE_DURATION_MS)
-        assertEquals(1_600L, FRIEND_TRAVERSE_SWIPE_DURATION_MS)
+        assertEquals(2_000L, FRIEND_FIND_TOP_SWIPE_DURATION_MS)
+        assertEquals(2_600L, FRIEND_TRAVERSE_SWIPE_DURATION_MS)
+        assertEquals(3_500L, FRIEND_GESTURE_TIMEOUT_MS)
+        assertEquals(60_000L, FRIEND_TRAVERSE_TIMEOUT_MS)
         assertEquals(1_000, FRIEND_TRAVERSE_SETTLE_MIN_MS)
         assertEquals(1_600, FRIEND_TRAVERSE_SETTLE_MAX_MS)
         assertEquals(3_660_000L, FRIEND_LIFE_INTERVAL_MS)

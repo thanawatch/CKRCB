@@ -2,7 +2,7 @@ package com.example.cookierunbot.automation
 
 enum class FriendLifeTrigger { SCHEDULED, TEST, SCHEDULED_AND_TEST }
 enum class FriendLifeTestRequest { BOT_STOPPED, QUEUED, ALREADY_QUEUED, IN_PROGRESS }
-enum class FriendLifeTraversalDecision { SEND, COMPLETE, SCROLL_DOWN, ABORT_SCROLL_LIMIT }
+enum class FriendLifeTraversalDecision { SEND, COMPLETE, SCROLL_DOWN, ABORT_TIMEOUT }
 internal enum class FriendLifeTopSearchDecision { FOUND, SWIPE, FINAL_RECHECK }
 internal enum class FriendLifeFinalTopDecision { CONTINUE_TRAVERSAL, ABORT_TIMEOUT }
 internal enum class FriendLifeSendStep { SEND_BUTTON, CONFIRM_1, CONFIRM_2, COMPLETE }
@@ -118,12 +118,12 @@ internal fun friendLifeRoiContainsTemplate(
 internal fun friendLifeTraversalDecision(
     sendButtonMatched: Boolean,
     bottomMatched: Boolean,
-    noButtonScrollCount: Int,
-    maximumNoButtonScrolls: Int,
+    elapsedMs: Long,
+    timeoutMs: Long = FRIEND_TRAVERSE_TIMEOUT_MS,
 ): FriendLifeTraversalDecision = when {
     sendButtonMatched -> FriendLifeTraversalDecision.SEND
     bottomMatched -> FriendLifeTraversalDecision.COMPLETE
-    noButtonScrollCount >= maximumNoButtonScrolls -> FriendLifeTraversalDecision.ABORT_SCROLL_LIMIT
+    elapsedMs >= timeoutMs -> FriendLifeTraversalDecision.ABORT_TIMEOUT
     else -> FriendLifeTraversalDecision.SCROLL_DOWN
 }
 
@@ -143,8 +143,10 @@ internal fun friendLifeFinalTopDecision(matched: Boolean): FriendLifeFinalTopDec
 
 const val FRIEND_LIFE_INTERVAL_MS = 61L * 60L * 1000L
 internal const val FRIEND_FIND_TOP_TIMEOUT_MS = 60_000L
-internal const val FRIEND_FIND_TOP_SWIPE_DURATION_MS = 300L
-internal const val FRIEND_TRAVERSE_SWIPE_DURATION_MS = 1_600L
+internal const val FRIEND_FIND_TOP_SWIPE_DURATION_MS = 2_000L
+internal const val FRIEND_TRAVERSE_SWIPE_DURATION_MS = 2_600L
+internal const val FRIEND_GESTURE_TIMEOUT_MS = 3_500L
+internal const val FRIEND_TRAVERSE_TIMEOUT_MS = 60_000L
 internal const val FRIEND_TOP_SETTLE_MS = 2_000L
 internal const val FRIEND_TRAVERSE_SETTLE_MIN_MS = 1_000
 internal const val FRIEND_TRAVERSE_SETTLE_MAX_MS = 1_600

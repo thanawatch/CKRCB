@@ -1458,9 +1458,10 @@ class BotController(
         }
 
         var sentCount = 0
-        var noButtonScrollCount = 0
+        var traverseSwipeCount = 0
+        val traverseStartedAt = SystemClock.elapsedRealtime()
         while (isRunning()) {
-            val snapshot = LatestFrameProvider.snapshot() ?: return friendLifeAbort("TRAVERSE", "no_frame", noButtonScrollCount)
+            val snapshot = LatestFrameProvider.snapshot() ?: return friendLifeAbort("TRAVERSE", "no_frame", traverseSwipeCount)
             val scan = scanFriendFrame(detector, snapshot)
             scan.interrupt?.let { return friendLifeInterrupt(it, "TRAVERSE") }
             if (scan.send.matched) {
@@ -1477,14 +1478,13 @@ class BotController(
                     snapshot.generation,
                 )
             }
+            val traverseElapsedMs = SystemClock.elapsedRealtime() - traverseStartedAt
             when (friendLifeTraversalDecision(
                 scan.send.matched,
                 scan.bottom.matched,
-                noButtonScrollCount,
-                MAX_NO_BUTTON_SCROLLS,
+                traverseElapsedMs,
             )) {
                 FriendLifeTraversalDecision.SEND -> {
-                    noButtonScrollCount = 0
                     val center = LogicalPoint(scan.send.x + scan.send.width / 2, scan.send.y + scan.send.height / 2)
                     logDiagnostic(
                         "[FRIEND_LIFE_SEND] buttonScore=${format(scan.send.score)} " +
@@ -1527,21 +1527,21 @@ class BotController(
                     return FriendLifeWorkflowResult.COMPLETED
                 }
                 FriendLifeTraversalDecision.SCROLL_DOWN -> {
-                    noButtonScrollCount += 1
+                    traverseSwipeCount += 1
                     logDiagnostic(
                         "[FRIEND_LIFE_SCAN] sendButtonMatched=false bottomMatched=false " +
-                            "noButtonScrollCount=$noButtonScrollCount",
+                            "traverseSwipeCount=$traverseSwipeCount elapsedMs=$traverseElapsedMs",
                     )
                     if (!performFriendScroll(
                             "SCROLL_DOWN",
-                            noButtonScrollCount,
+                            traverseSwipeCount,
                             "TOWARD_BOTTOM",
                             LogicalPoint(435, 550),
                             LogicalPoint(435, 330),
                             sourceWidth,
                             sourceHeight,
                             FRIEND_TRAVERSE_SWIPE_DURATION_MS,
-                        )) return friendLifeAbort("SCROLL_DOWN", "gesture_or_fresh_frame_timeout", noButtonScrollCount)
+                        )) return friendLifeAbort("SCROLL_DOWN", "gesture_or_fresh_frame_timeout", traverseSwipeCount)
                     val settleMs = randomMs(FRIEND_TRAVERSE_SETTLE_MIN_MS, FRIEND_TRAVERSE_SETTLE_MAX_MS)
                     logDiagnostic(
                         "[FRIEND_LIFE_SCROLL] phase=SCROLL_DOWN direction=TOWARD_BOTTOM " +
@@ -1549,11 +1549,11 @@ class BotController(
                     )
                     delayOrStop(settleMs)
                 }
-                FriendLifeTraversalDecision.ABORT_SCROLL_LIMIT ->
-                    return friendLifeAbort("SCROLL_DOWN", "scroll_limit", noButtonScrollCount)
+                FriendLifeTraversalDecision.ABORT_TIMEOUT ->
+                    return friendLifeAbort("TRAVERSE", "timeout", traverseSwipeCount)
             }
         }
-        return friendLifeAbort("TRAVERSE", "bot_stopped", noButtonScrollCount)
+        return friendLifeAbort("TRAVERSE", "bot_stopped", traverseSwipeCount)
     }
 
     private fun scanFriendFrame(detector: StateDetector, snapshot: FrameSnapshot): FriendLifeFrameScan = try {
@@ -2534,9 +2534,7 @@ class BotController(
         private const val FAST_START_PRIORITY_WINDOW_NANOS = 8_000_000_000L
         private const val FRIEND_RESCAN_TIMEOUT_MS = 2_500L
         private const val FRIEND_POST_TAP_SETTLE_MS = 300L
-        private const val FRIEND_GESTURE_TIMEOUT_MS = 2_000L
         private const val FRIEND_LIFE_RETRY_DELAY_MS = 15L * 60L * 1000L
-        private const val MAX_NO_BUTTON_SCROLLS = 30
         private val FRIEND_TOP_REGION = Rect(100, 230, 160, 390)
         private val FRIEND_BOTTOM_REGION = Rect(220, 500, 450, 170)
         private val FRIEND_SEND_REGION = Rect(550, 230, 240, 440)
