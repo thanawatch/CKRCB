@@ -12,6 +12,22 @@ internal data class FriendScrollVerification(
     val difference: Double,
 )
 
+internal fun verifiedFriendScrollProgressEvent(phase: String, changed: Boolean): String? = when {
+    !changed -> null
+    phase == "FIND_TOP" -> "TOP_SCROLL_CHANGED"
+    phase == "SCROLL_DOWN" -> "SCROLL_CHANGED"
+    else -> null
+}
+
+internal fun isMeaningfulFriendLifeProgressEvent(event: String): Boolean = event in setOf(
+    "TOP_SCROLL_CHANGED",
+    "TOP_DETECTED",
+    "SEND_DETECTED",
+    "SEND_COMPLETE",
+    "BOTTOM_DETECTED",
+    "SCROLL_CHANGED",
+)
+
 internal object FriendScrollVerifier {
     const val DIFFERENCE_THRESHOLD = 0.03
     private const val SAMPLE_WIDTH = 110

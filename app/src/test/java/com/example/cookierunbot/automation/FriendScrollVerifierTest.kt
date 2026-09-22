@@ -1,6 +1,8 @@
 package com.example.cookierunbot.automation
 
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -30,5 +32,21 @@ class FriendScrollVerifierTest {
         val result = FriendScrollVerifier.compare(FriendScrollSample(before), FriendScrollSample(after))
         assertTrue(result.changed)
         assertTrue(result.difference > FriendScrollVerifier.DIFFERENCE_THRESHOLD)
+    }
+
+    @Test fun unchangedFindTopGestureIsNotMeaningfulProgress() {
+        assertNull(verifiedFriendScrollProgressEvent("FIND_TOP", changed = false))
+        assertFalse(isMeaningfulFriendLifeProgressEvent("TOP_SCROLL_COMPLETE"))
+        assertFalse(isMeaningfulFriendLifeProgressEvent("TOP_SCROLL_UNCHANGED"))
+    }
+
+    @Test fun verifiedFindTopMovementBecomesMeaningfulProgress() {
+        val event = verifiedFriendScrollProgressEvent("FIND_TOP", changed = true)
+        assertEquals("TOP_SCROLL_CHANGED", event)
+        assertTrue(isMeaningfulFriendLifeProgressEvent(requireNotNull(event)))
+    }
+
+    @Test fun topDetectedRemainsMeaningfulProgress() {
+        assertTrue(isMeaningfulFriendLifeProgressEvent("TOP_DETECTED"))
     }
 }

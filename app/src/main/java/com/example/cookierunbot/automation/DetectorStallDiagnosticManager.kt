@@ -58,20 +58,29 @@ class DetectorStallDiagnosticManager(context: Context) {
         }
         if (!decision.notificationDue) return
 
+        val reservation = watchdog.reserveNotification() ?: return
+        emit(
+            "[STALL_DIAG] due=true stallDurationMs=${decision.stallDurationMs} " +
+                "notificationCandidate=${reservation.notificationIndex}/$TRUE_STALL_MAX_NOTIFICATIONS",
+        )
+        emit(
+            "[STALL_DIAG] inFlight=true " +
+                "notificationCandidate=${reservation.notificationIndex}/$TRUE_STALL_MAX_NOTIFICATIONS",
+        )
+
         if (telegramNotifier.isDebugImageEnabled() && !TelegramDiagnosticImageGate.tryAcquire(now)) {
             emit("[TELEGRAM_DIAG_SUPPRESS] reason=global_image_cooldown source=DETECT_STALL")
+            watchdog.releaseNotificationReservation(reservation, now)
+            emit("[STALL_DIAG] inFlight=false notificationNotConsumed=true")
             return
         }
         val snapshot = LatestFrameProvider.snapshot()
         if (snapshot == null) {
             emit("[STALL_DIAG_CAPTURE] skipped=true reason=no_latest_frame")
+            watchdog.releaseNotificationReservation(reservation, now)
+            emit("[STALL_DIAG] inFlight=false notificationNotConsumed=true")
             return
         }
-        watchdog.markNotificationQueued(now)
-        emit(
-            "[STALL_DIAG] due=true stallDurationMs=${decision.stallDurationMs} " +
-                "notification=${decision.notificationIndex}/$TRUE_STALL_MAX_NOTIFICATIONS",
-        )
         executor.execute {
             try {
                 val png = frameEncoder.encodeNormalizedPng(snapshot.mat)
@@ -85,14 +94,34 @@ class DetectorStallDiagnosticManager(context: Context) {
                     "detect_stall_normalized.png",
                     caption,
                 )
-                emit(
-                    "[STALL_DIAG_TELEGRAM] queued=$queued " +
-                        "notification=${decision.notificationIndex}/$TRUE_STALL_MAX_NOTIFICATIONS",
-                )
+                if (queued) {
+                    val committed = watchdog.commitNotificationQueued(
+                        reservation,
+                        SystemClock.elapsedRealtime(),
+                    )
+                    emit(
+                        "[STALL_DIAG_TELEGRAM] queued=true committed=$committed " +
+                            "notification=${reservation.notificationIndex}/$TRUE_STALL_MAX_NOTIFICATIONS",
+                    )
+                } else {
+                    watchdog.releaseNotificationReservation(
+                        reservation,
+                        SystemClock.elapsedRealtime(),
+                    )
+                    emit("[STALL_DIAG_TELEGRAM] queued=false notificationNotConsumed=true")
+                }
             } catch (error: Exception) {
-                emit("[STALL_DIAG_CAPTURE] failed=true type=${error.javaClass.simpleName}")
+                watchdog.releaseNotificationReservation(
+                    reservation,
+                    SystemClock.elapsedRealtime(),
+                )
+                emit(
+                    "[STALL_DIAG_CAPTURE] failed=true type=${error.javaClass.simpleName} " +
+                        "notificationNotConsumed=true",
+                )
             } finally {
                 snapshot.mat.release()
+                emit("[STALL_DIAG] inFlight=false")
             }
         }
     }

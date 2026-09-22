@@ -4,6 +4,12 @@ const val TRUE_STALL_NOTIFICATION_THRESHOLD_MS = 60_000L
 const val TRUE_STALL_REPEAT_INTERVAL_MS = 120_000L
 const val TRUE_STALL_MAX_NOTIFICATIONS = 5
 const val FRIEND_LIFE_HEALTHY_PROGRESS_WINDOW_MS = 30_000L
+const val TRUE_STALL_FAILED_ATTEMPT_RETRY_MS = 30_000L
+
+data class StallNotificationReservation(
+    val episodeGeneration: Long,
+    val notificationIndex: Int,
+)
 
 data class DetectorStallObservation(
     val nowMs: Long,
@@ -40,6 +46,9 @@ class DetectorStallWatchdog(
     private var episodeStartedAt = 0L
     private var notifications = 0
     private var lastNotificationAt = 0L
+    private var retryNotBefore = 0L
+    private var notificationInFlight = false
+    private var episodeGeneration = 0L
 
     @Synchronized
     fun observe(observation: DetectorStallObservation): DetectorStallDecision {
@@ -75,7 +84,10 @@ class DetectorStallWatchdog(
         }
 
         val started = episodeStartedAt == 0L
-        if (started) episodeStartedAt = observation.nowMs
+        if (started) {
+            episodeStartedAt = observation.nowMs
+            episodeGeneration += 1L
+        }
         val duration = (observation.nowMs - episodeStartedAt).coerceAtLeast(0L)
         val healthyFriendLife = observation.friendLifeActive &&
             observation.friendLifeLastProgressAgeMs != null &&
@@ -93,7 +105,8 @@ class DetectorStallWatchdog(
         val intervalElapsed = notifications == 0 ||
             observation.nowMs - lastNotificationAt >= repeatIntervalMs
         val due = detectionOldEnough && duration >= firstNotificationDelayMs &&
-            notifications < maximumNotifications && intervalElapsed
+            notifications < maximumNotifications && intervalElapsed &&
+            !notificationInFlight && observation.nowMs >= retryNotBefore
         return DetectorStallDecision(
             episodeStarted = started,
             notificationDue = due,
@@ -103,10 +116,32 @@ class DetectorStallWatchdog(
     }
 
     @Synchronized
-    fun markNotificationQueued(nowMs: Long) {
-        if (episodeStartedAt == 0L || notifications >= maximumNotifications) return
+    fun reserveNotification(): StallNotificationReservation? {
+        if (episodeStartedAt == 0L || notificationInFlight || notifications >= maximumNotifications) return null
+        notificationInFlight = true
+        return StallNotificationReservation(episodeGeneration, notifications + 1)
+    }
+
+    @Synchronized
+    fun commitNotificationQueued(reservation: StallNotificationReservation, nowMs: Long): Boolean {
+        if (!reservationIsCurrent(reservation)) return false
         notifications += 1
         lastNotificationAt = nowMs
+        retryNotBefore = 0L
+        notificationInFlight = false
+        return true
+    }
+
+    @Synchronized
+    fun releaseNotificationReservation(
+        reservation: StallNotificationReservation,
+        nowMs: Long,
+        retryDelayMs: Long = TRUE_STALL_FAILED_ATTEMPT_RETRY_MS,
+    ): Boolean {
+        if (!reservationIsCurrent(reservation)) return false
+        notificationInFlight = false
+        retryNotBefore = nowMs + retryDelayMs
+        return true
     }
 
     @Synchronized
@@ -120,10 +155,18 @@ class DetectorStallWatchdog(
     }
 
     @Synchronized fun notificationCount(): Int = notifications
+    @Synchronized fun notificationInFlight(): Boolean = notificationInFlight
+
+    private fun reservationIsCurrent(reservation: StallNotificationReservation): Boolean =
+        notificationInFlight && reservation.episodeGeneration == episodeGeneration &&
+            reservation.notificationIndex == notifications + 1
 
     private fun resetEpisode() {
+        episodeGeneration += 1L
         episodeStartedAt = 0L
         notifications = 0
         lastNotificationAt = 0L
+        retryNotBefore = 0L
+        notificationInFlight = false
     }
 }

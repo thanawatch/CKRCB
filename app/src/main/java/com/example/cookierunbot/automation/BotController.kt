@@ -1406,6 +1406,9 @@ class BotController(
         val startedAt = SystemClock.elapsedRealtime()
         var lastProgressElapsedRealtime = startedAt
         fun recordFriendLifeProgress(event: String, sentCount: Int, traverseSwipeCount: Int) {
+            check(isMeaningfulFriendLifeProgressEvent(event)) {
+                "Non-meaningful Friend Life event cannot refresh progress: $event"
+            }
             lastProgressElapsedRealtime = SystemClock.elapsedRealtime()
             friendLifeLastProgressAt = lastProgressElapsedRealtime
             logDiagnostic(
@@ -1425,7 +1428,15 @@ class BotController(
                         "action=SCROLL elapsedMs=$elapsedMs",
                 )
                 topSwipeCount += 1
-                if (performFriendScroll(
+                val beforeTopScroll = LatestFrameProvider.snapshot()
+                    ?: return friendLifeAbort("FIND_TOP", "no_frame", topSwipeCount)
+                val beforeTopGeneration = beforeTopScroll.generation
+                val beforeTopSample = try {
+                    FriendScrollVerifier.capture(beforeTopScroll.mat, FRIEND_SCROLL_VERIFY_REGION)
+                } finally {
+                    beforeTopScroll.mat.release()
+                }
+                val topScroll = performFriendScroll(
                         "FIND_TOP",
                         topSwipeCount,
                         "TOWARD_TOP",
@@ -1433,8 +1444,26 @@ class BotController(
                         LogicalPoint(435, 580),
                         sourceWidth,
                         sourceHeight,
-                    ) == null) return friendLifeAbort("FIND_TOP", "gesture_or_fresh_frame_timeout", topSwipeCount)
-                recordFriendLifeProgress("TOP_SCROLL_COMPLETE", 0, 0)
+                        beforeTopSample,
+                    ) ?: return friendLifeAbort("FIND_TOP", "gesture_or_fresh_frame_timeout", topSwipeCount)
+                val verification = requireNotNull(topScroll.verification)
+                logDiagnostic(
+                    "[FRIEND_SCROLL_VERIFY] phase=FIND_TOP attempt=$topSwipeCount " +
+                        "beforeGeneration=$beforeTopGeneration afterGeneration=${topScroll.afterGeneration} " +
+                        "diff=${format(verification.difference)} " +
+                        "threshold=${format(FriendScrollVerifier.DIFFERENCE_THRESHOLD)} " +
+                        "changed=${verification.changed}",
+                )
+                val progressEvent = verifiedFriendScrollProgressEvent("FIND_TOP", verification.changed)
+                if (progressEvent != null) {
+                    recordFriendLifeProgress(progressEvent, 0, 0)
+                } else {
+                    logDiagnostic(
+                        "[FRIEND_LIFE_PROGRESS] event=TOP_SCROLL_UNCHANGED " +
+                            "topSwipeCount=$topSwipeCount noProgressMs=" +
+                            "${SystemClock.elapsedRealtime() - lastProgressElapsedRealtime}",
+                    )
+                }
                 val interrupt = detectFriendLifeInterrupt(detector)
                 interrupt?.let { return friendLifeInterrupt(it, "FIND_TOP") }
             }
