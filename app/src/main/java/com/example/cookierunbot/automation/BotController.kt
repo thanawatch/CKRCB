@@ -1404,7 +1404,7 @@ class BotController(
                         "action=SCROLL elapsedMs=$elapsedMs",
                 )
                 topSwipeCount += 1
-                if (!performFriendScroll(
+                if (performFriendScroll(
                         "FIND_TOP",
                         topSwipeCount,
                         "TOWARD_TOP",
@@ -1413,7 +1413,7 @@ class BotController(
                         sourceWidth,
                         sourceHeight,
                         FRIEND_FIND_TOP_SWIPE_DURATION_MS,
-                    )) return friendLifeAbort("FIND_TOP", "gesture_or_fresh_frame_timeout", topSwipeCount)
+                    ) == null) return friendLifeAbort("FIND_TOP", "gesture_or_fresh_frame_timeout", topSwipeCount)
                 recordFriendLifeProgress("TOP_SCROLL_COMPLETE", 0, 0)
                 val interrupt = detectFriendLifeInterrupt(detector)
                 interrupt?.let { return friendLifeInterrupt(it, "FIND_TOP") }
@@ -1453,6 +1453,8 @@ class BotController(
         var lastWatchdogLogAt = 0L
         while (isRunning()) {
             val snapshot = LatestFrameProvider.snapshot() ?: return friendLifeAbort("TRAVERSE", "no_frame", traverseSwipeCount)
+            val beforeScrollGeneration = snapshot.generation
+            val beforeScrollSample = FriendScrollVerifier.capture(snapshot.mat, FRIEND_SCROLL_VERIFY_REGION)
             val scan = scanFriendFrame(detector, snapshot)
             scan.interrupt?.let { return friendLifeInterrupt(it, "TRAVERSE") }
             if (scan.send.matched) {
@@ -1538,7 +1540,7 @@ class BotController(
                         "[FRIEND_LIFE_SCAN] sendButtonMatched=false bottomMatched=false " +
                             "traverseSwipeCount=$traverseSwipeCount elapsedMs=$friendLifeElapsedMs",
                     )
-                    if (!performFriendScroll(
+                    val scroll = performFriendScroll(
                             "SCROLL_DOWN",
                             traverseSwipeCount,
                             "TOWARD_BOTTOM",
@@ -1547,8 +1549,26 @@ class BotController(
                             sourceWidth,
                             sourceHeight,
                             FRIEND_TRAVERSE_SWIPE_DURATION_MS,
-                        )) return friendLifeAbort("SCROLL_DOWN", "gesture_or_fresh_frame_timeout", traverseSwipeCount)
-                    recordFriendLifeProgress("SCROLL_COMPLETE", sentCount, traverseSwipeCount)
+                            beforeScrollSample,
+                        ) ?: return friendLifeAbort("SCROLL_DOWN", "gesture_or_fresh_frame_timeout", traverseSwipeCount)
+                    val verification = requireNotNull(scroll.verification)
+                    logDiagnostic(
+                        "[FRIEND_SCROLL_VERIFY] phase=SCROLL_DOWN attempt=$traverseSwipeCount " +
+                            "beforeGeneration=$beforeScrollGeneration afterGeneration=${scroll.afterGeneration} " +
+                            "diff=${format(verification.difference)} " +
+                            "threshold=${format(FriendScrollVerifier.DIFFERENCE_THRESHOLD)} " +
+                            "changed=${verification.changed} sentCount=$sentCount " +
+                            "traverseSwipeCount=$traverseSwipeCount",
+                    )
+                    if (verification.changed) {
+                        recordFriendLifeProgress("SCROLL_CHANGED", sentCount, traverseSwipeCount)
+                    } else {
+                        logDiagnostic(
+                            "[FRIEND_LIFE_PROGRESS] event=SCROLL_UNCHANGED sentCount=$sentCount " +
+                                "traverseSwipeCount=$traverseSwipeCount noProgressMs=" +
+                                "${SystemClock.elapsedRealtime() - lastProgressElapsedRealtime}",
+                        )
+                    }
                     val settleMs = randomMs(FRIEND_TRAVERSE_SETTLE_MIN_MS, FRIEND_TRAVERSE_SETTLE_MAX_MS)
                     logDiagnostic(
                         "[FRIEND_LIFE_SCROLL] phase=SCROLL_DOWN direction=TOWARD_BOTTOM " +
@@ -1646,7 +1666,8 @@ class BotController(
         sourceWidth: Int,
         sourceHeight: Int,
         durationMs: Long,
-    ): Boolean {
+        verificationBefore: FriendScrollSample? = null,
+    ): FriendScrollExecution? {
         val physicalStart = CoordinateMapper.logicalToPhysical(start.x, start.y, sourceWidth, sourceHeight)
         val physicalEnd = CoordinateMapper.logicalToPhysical(end.x, end.y, sourceWidth, sourceHeight)
         val contentRect = ContentGeometryRegistry.current(sourceWidth, sourceHeight)?.contentRect
@@ -1674,20 +1695,26 @@ class BotController(
             FRIEND_GESTURE_TIMEOUT_MS,
         ) { success, timedOut -> gestureSucceeded.set(success && !timedOut) }
         reportActionResult(action)
-        if (!action.accepted) return false
+        if (!action.accepted) return null
         val deadline = SystemClock.elapsedRealtime() + FRIEND_GESTURE_TIMEOUT_MS
         while (isRunning() && gestureSucceeded.get() == null && SystemClock.elapsedRealtime() < deadline) {
             delayOrStop(25L)
         }
-        if (gestureSucceeded.get() != true) return false
+        if (gestureSucceeded.get() != true) return null
         val postGestureBaseline = LatestFrameProvider.currentGeneration()
-        val fresh = LatestFrameProvider.awaitNextSnapshot(postGestureBaseline, FRIEND_RESCAN_TIMEOUT_MS) ?: return false
+        val fresh = LatestFrameProvider.awaitNextSnapshot(postGestureBaseline, FRIEND_RESCAN_TIMEOUT_MS) ?: return null
         logDiagnostic(
             "[FRIEND_LIFE_SCROLL] phase=$phase preGestureGeneration=$preGestureGeneration " +
                 "gestureComplete=true postGestureBaseline=$postGestureBaseline freshGeneration=${fresh.generation}",
         )
-        fresh.mat.release()
-        return true
+        val verification = try {
+            verificationBefore?.let {
+                FriendScrollVerifier.compare(it, FriendScrollVerifier.capture(fresh.mat, FRIEND_SCROLL_VERIFY_REGION))
+            }
+        } finally {
+            fresh.mat.release()
+        }
+        return FriendScrollExecution(fresh.generation, verification)
     }
 
     private fun friendLifeTapStep(
@@ -2568,6 +2595,7 @@ class BotController(
         private val FRIEND_TOP_REGION = Rect(100, 230, 160, 390)
         private val FRIEND_BOTTOM_REGION = Rect(220, 500, 450, 170)
         private val FRIEND_SEND_REGION = Rect(550, 230, 240, 440)
+        private val FRIEND_SCROLL_VERIFY_REGION = Rect(250, 300, 550, 300)
         private const val FRIEND_TOP_TEMPLATE_WIDTH = 53
         private const val FRIEND_TOP_TEMPLATE_HEIGHT = 301
         private const val FRIEND_BOTTOM_TEMPLATE_WIDTH = 340
@@ -2638,6 +2666,11 @@ private data class FriendLifeTapStepResult(
     val success: Boolean,
     val interrupt: BotStage?,
     val failureReason: String,
+)
+
+private data class FriendScrollExecution(
+    val afterGeneration: Long,
+    val verification: FriendScrollVerification?,
 )
 
 private data class FriendLifeFrameScan(

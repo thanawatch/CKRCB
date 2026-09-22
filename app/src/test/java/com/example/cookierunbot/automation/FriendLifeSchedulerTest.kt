@@ -146,7 +146,7 @@ class FriendLifeSchedulerTest {
     @Test fun bottomReachedCompletesInsteadOfTimingOut() {
         assertEquals(
             FriendLifeTraversalDecision.COMPLETE,
-            friendLifeTraversalDecision(false, true, 700_000L, 40_000L),
+            friendLifeTraversalDecision(false, true, FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS, 40_000L),
         )
     }
 
@@ -154,6 +154,24 @@ class FriendLifeSchedulerTest {
         assertEquals(
             FriendLifeTraversalDecision.ABORT_ABSOLUTE_TIMEOUT,
             friendLifeTraversalDecision(false, false, FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS, 1_000L),
+        )
+    }
+
+    @Test fun sendCannotBypassAbsoluteSafetyTimeout() {
+        assertEquals(
+            FriendLifeTraversalDecision.ABORT_ABSOLUTE_TIMEOUT,
+            friendLifeTraversalDecision(true, false, FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS, 1_000L),
+        )
+    }
+
+    @Test fun healthyProgressContinuesBeforeThirtyMinuteAbsoluteLimit() {
+        assertEquals(
+            FriendLifeTraversalDecision.SCROLL_DOWN,
+            friendLifeTraversalDecision(false, false, 20L * 60L * 1000L, 1_000L),
+        )
+        assertEquals(
+            FriendLifeTraversalDecision.SEND,
+            friendLifeTraversalDecision(true, false, FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS - 1L, 1_000L),
         )
     }
 
@@ -316,7 +334,7 @@ class FriendLifeSchedulerTest {
         assertEquals(800L, FRIEND_TRAVERSE_SWIPE_DURATION_MS)
         assertEquals(3_500L, FRIEND_GESTURE_TIMEOUT_MS)
         assertEquals(30_000L, FRIEND_LIFE_NO_PROGRESS_TIMEOUT_MS)
-        assertEquals(600_000L, FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS)
+        assertEquals(1_800_000L, FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS)
         assertEquals(60_000L, FRIEND_TOP_SCROLL_ROUND_MS)
         assertEquals(2_800L, FRIEND_TOP_CHECK_SETTLE_MS)
         assertEquals(2, FRIEND_TOP_SEARCH_ROUNDS)

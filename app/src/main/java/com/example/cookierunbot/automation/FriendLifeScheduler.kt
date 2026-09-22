@@ -124,9 +124,9 @@ internal fun friendLifeTraversalDecision(
     noProgressTimeoutMs: Long = FRIEND_LIFE_NO_PROGRESS_TIMEOUT_MS,
     absoluteTimeoutMs: Long = FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS,
 ): FriendLifeTraversalDecision = when {
-    sendButtonMatched -> FriendLifeTraversalDecision.SEND
     bottomMatched -> FriendLifeTraversalDecision.COMPLETE
     elapsedMs >= absoluteTimeoutMs -> FriendLifeTraversalDecision.ABORT_ABSOLUTE_TIMEOUT
+    sendButtonMatched -> FriendLifeTraversalDecision.SEND
     noProgressMs >= noProgressTimeoutMs -> FriendLifeTraversalDecision.ABORT_NO_PROGRESS
     else -> FriendLifeTraversalDecision.SCROLL_DOWN
 }
@@ -146,7 +146,7 @@ internal const val FRIEND_FIND_TOP_SWIPE_DURATION_MS = 360L
 internal const val FRIEND_TRAVERSE_SWIPE_DURATION_MS = 800L
 internal const val FRIEND_GESTURE_TIMEOUT_MS = 3_500L
 internal const val FRIEND_LIFE_NO_PROGRESS_TIMEOUT_MS = 30_000L
-internal const val FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS = 10L * 60L * 1000L
+internal const val FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS = 30L * 60L * 1000L
 internal const val FRIEND_LIFE_WATCHDOG_LOG_INTERVAL_MS = 10_000L
 internal const val FRIEND_TOP_SCROLL_ROUND_MS = 60_000L
 internal const val FRIEND_TOP_CHECK_SETTLE_MS = 2_800L
