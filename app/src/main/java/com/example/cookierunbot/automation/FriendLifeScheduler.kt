@@ -3,6 +3,8 @@ package com.example.cookierunbot.automation
 enum class FriendLifeTrigger { SCHEDULED, TEST, SCHEDULED_AND_TEST }
 enum class FriendLifeTestRequest { BOT_STOPPED, QUEUED, ALREADY_QUEUED, IN_PROGRESS }
 enum class FriendLifeTraversalDecision { SEND, COMPLETE, SCROLL_DOWN, ABORT_SCROLL_LIMIT }
+internal enum class FriendLifeTopSearchDecision { FOUND, SWIPE, FINAL_RECHECK }
+internal enum class FriendLifeFinalTopDecision { CONTINUE_TRAVERSAL, ABORT_TIMEOUT }
 internal enum class FriendLifeSendStep { SEND_BUTTON, CONFIRM_1, CONFIRM_2, COMPLETE }
 
 internal data class FriendLifeSendDecision(
@@ -43,7 +45,7 @@ class FriendLifeScheduler(private val intervalMs: Long = FRIEND_LIFE_INTERVAL_MS
 
     @Synchronized fun stop() = start(false, 0L)
 
-    /** Returns true only when the hourly request becomes newly pending. */
+    /** Returns true only when the scheduled request becomes newly pending. */
     @Synchronized fun observeTime(nowMs: Long): Boolean {
         if (!enabled || scheduledPending || nowMs < nextDueAt) return false
         scheduledPending = true
@@ -125,4 +127,25 @@ internal fun friendLifeTraversalDecision(
     else -> FriendLifeTraversalDecision.SCROLL_DOWN
 }
 
-const val FRIEND_LIFE_INTERVAL_MS = 60L * 60L * 1000L
+internal fun friendLifeTopSearchDecision(
+    matched: Boolean,
+    elapsedMs: Long,
+    timeoutMs: Long = FRIEND_FIND_TOP_TIMEOUT_MS,
+): FriendLifeTopSearchDecision = when {
+    matched -> FriendLifeTopSearchDecision.FOUND
+    elapsedMs >= timeoutMs -> FriendLifeTopSearchDecision.FINAL_RECHECK
+    else -> FriendLifeTopSearchDecision.SWIPE
+}
+
+internal fun friendLifeFinalTopDecision(matched: Boolean): FriendLifeFinalTopDecision =
+    if (matched) FriendLifeFinalTopDecision.CONTINUE_TRAVERSAL
+    else FriendLifeFinalTopDecision.ABORT_TIMEOUT
+
+const val FRIEND_LIFE_INTERVAL_MS = 61L * 60L * 1000L
+internal const val FRIEND_FIND_TOP_TIMEOUT_MS = 60_000L
+internal const val FRIEND_FIND_TOP_SWIPE_DURATION_MS = 300L
+internal const val FRIEND_TRAVERSE_SWIPE_DURATION_MS = 1_600L
+internal const val FRIEND_TOP_SETTLE_MS = 2_000L
+internal const val FRIEND_TRAVERSE_SETTLE_MIN_MS = 1_000
+internal const val FRIEND_TRAVERSE_SETTLE_MAX_MS = 1_600
+internal const val FRIEND_LIFE_MATCH_THRESHOLD = 0.70

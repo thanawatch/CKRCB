@@ -177,7 +177,7 @@ class BotControlOverlay(private val context: Context) {
         }
         panel.addView(boostGroup, matchWidth())
         addSwitch(detectRelic, "Detect Relic", options.detectRelic)
-        addSwitch(sendFriendLife, "Send Friend Life every 1 hour", options.sendFriendLife)
+        addSwitch(sendFriendLife, "Send Friend Life every 61 minutes", options.sendFriendLife)
         panel.addView(Button(context).apply {
             text = "Run Friend Life Now (Test)"
             setOnClickListener {

@@ -1,5 +1,6 @@
 package com.example.cookierunbot.automation
 
+import com.example.cookierunbot.detection.templateScoreMatches
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -14,7 +15,7 @@ class FriendLifeSchedulerTest {
         assertNull(scheduler.beginIfReady(FRIEND_LIFE_INTERVAL_MS * 2))
     }
 
-    @Test fun firstRunIsDueExactlyOneHourAfterStart() {
+    @Test fun firstRunIsDueExactlyAtScheduledIntervalAfterStart() {
         val scheduler = FriendLifeScheduler()
         scheduler.start(true, 1_000L)
         assertFalse(scheduler.observeTime(1_000L + FRIEND_LIFE_INTERVAL_MS - 1L))
@@ -228,14 +229,68 @@ class FriendLifeSchedulerTest {
     }
 
     @Test fun friendLifeRegionsContainTheirTemplates() {
-        assertTrue(friendLifeRoiContainsTemplate(100, 350, 53, 301))
-        assertTrue(friendLifeRoiContainsTemplate(390, 130, 340, 81))
-        assertTrue(friendLifeRoiContainsTemplate(180, 400, 111, 69))
+        assertTrue(friendLifeRoiContainsTemplate(160, 390, 53, 301))
+        assertTrue(friendLifeRoiContainsTemplate(450, 170, 340, 81))
+        assertTrue(friendLifeRoiContainsTemplate(240, 440, 111, 69))
     }
 
     @Test fun friendLifeRegionValidationRejectsSmallerRoi() {
         assertFalse(friendLifeRoiContainsTemplate(52, 301, 53, 301))
         assertFalse(friendLifeRoiContainsTemplate(340, 80, 340, 81))
+    }
+
+    @Test fun topSearchFoundImmediatelyDoesNotSwipe() {
+        assertEquals(
+            FriendLifeTopSearchDecision.FOUND,
+            friendLifeTopSearchDecision(matched = true, elapsedMs = 0L),
+        )
+        assertEquals(2_000L, FRIEND_TOP_SETTLE_MS)
+    }
+
+    @Test fun topSearchContinuesPastOldThirtySwipeLimitWhileUnderDeadline() {
+        // Swipe count is intentionally not part of the policy anymore.
+        assertEquals(
+            FriendLifeTopSearchDecision.SWIPE,
+            friendLifeTopSearchDecision(matched = false, elapsedMs = 59_999L),
+        )
+    }
+
+    @Test fun topSearchStopsSwipingAtDeadlineForOneFinalRecheck() {
+        assertEquals(
+            FriendLifeTopSearchDecision.FINAL_RECHECK,
+            friendLifeTopSearchDecision(matched = false, elapsedMs = 60_000L),
+        )
+        assertEquals(
+            FriendLifeTopSearchDecision.FOUND,
+            friendLifeTopSearchDecision(matched = true, elapsedMs = 60_000L),
+        )
+    }
+
+    @Test fun finalTopRecheckMatchedContinuesAndNotMatchedAborts() {
+        assertEquals(
+            FriendLifeFinalTopDecision.CONTINUE_TRAVERSAL,
+            friendLifeFinalTopDecision(matched = true),
+        )
+        assertEquals(
+            FriendLifeFinalTopDecision.ABORT_TIMEOUT,
+            friendLifeFinalTopDecision(matched = false),
+        )
+    }
+
+    @Test fun friendLifeUsesDedicatedThresholdWithoutChangingGlobalThreshold() {
+        assertTrue(templateScoreMatches(0.70, FRIEND_LIFE_MATCH_THRESHOLD))
+        assertFalse(templateScoreMatches(0.70, AutomationConfig.MATCH_THRESHOLD))
+        assertEquals(0.70, FRIEND_LIFE_MATCH_THRESHOLD, 0.0)
+        assertEquals(0.80, AutomationConfig.MATCH_THRESHOLD, 0.0)
+    }
+
+    @Test fun friendLifeTimingConstantsMatchPolicy() {
+        assertEquals(60_000L, FRIEND_FIND_TOP_TIMEOUT_MS)
+        assertEquals(300L, FRIEND_FIND_TOP_SWIPE_DURATION_MS)
+        assertEquals(1_600L, FRIEND_TRAVERSE_SWIPE_DURATION_MS)
+        assertEquals(1_000, FRIEND_TRAVERSE_SETTLE_MIN_MS)
+        assertEquals(1_600, FRIEND_TRAVERSE_SETTLE_MAX_MS)
+        assertEquals(3_660_000L, FRIEND_LIFE_INTERVAL_MS)
     }
 
 }

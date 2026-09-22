@@ -980,7 +980,10 @@ class BotController(
                     val completedAt = SystemClock.elapsedRealtime()
                     friendLifeScheduler.complete(friendTrigger, completedAt)
                     if (friendTrigger != FriendLifeTrigger.TEST) {
-                        logDiagnostic("[FRIEND_LIFE_TIMER] nextDueInMs=$FRIEND_LIFE_INTERVAL_MS")
+                        logDiagnostic(
+                            "[FRIEND_LIFE_TIMER] intervalMs=$FRIEND_LIFE_INTERVAL_MS " +
+                                "nextDueInMs=$FRIEND_LIFE_INTERVAL_MS",
+                        )
                     }
                     if (!revalidateMainMenu(detector, "AFTER_FRIEND_LIFE")) return
                 }
@@ -1382,28 +1385,76 @@ class BotController(
     ): FriendLifeWorkflowResult {
         val startedAt = SystemClock.elapsedRealtime()
         logDiagnostic("[FRIEND_LIFE_WORKFLOW] start trigger=${friendTriggerText(trigger)}")
-        for (attempt in 1..MAX_FRIEND_TOP_SCROLLS) {
-            val snapshot = LatestFrameProvider.snapshot() ?: return friendLifeAbort("FIND_TOP", "no_frame", attempt)
+        val findTopStartedAt = SystemClock.elapsedRealtime()
+        var topSwipeCount = 0
+        while (isRunning()) {
+            val snapshot = LatestFrameProvider.snapshot()
+                ?: return friendLifeAbort("FIND_TOP", "no_frame", topSwipeCount)
             val scan = scanFriendFrame(detector, snapshot)
             scan.interrupt?.let { return friendLifeInterrupt(it, "FIND_TOP") }
-            if (scan.top.matched || attempt in FRIEND_TOP_DIAGNOSTIC_ATTEMPTS) {
-                logFriendLifeMatch(
-                    "TOP", scan.top, FRIEND_TOP_REGION,
-                    FRIEND_TOP_TEMPLATE_WIDTH, FRIEND_TOP_TEMPLATE_HEIGHT,
-                    snapshot.generation, attempt,
-                )
+            val elapsedMs = SystemClock.elapsedRealtime() - findTopStartedAt
+            logDiagnostic(
+                "[FRIEND_LIFE_TOP_SEARCH] elapsedMs=$elapsedMs swipeCount=$topSwipeCount " +
+                    "score=${format(scan.top.score)} matched=${scan.top.matched} " +
+                    "threshold=${format(FRIEND_LIFE_MATCH_THRESHOLD)} frameSequence=${snapshot.generation}",
+            )
+            logFriendLifeMatch(
+                "TOP", scan.top, FRIEND_TOP_REGION,
+                FRIEND_TOP_TEMPLATE_WIDTH, FRIEND_TOP_TEMPLATE_HEIGHT,
+                snapshot.generation, topSwipeCount,
+            )
+            when (friendLifeTopSearchDecision(scan.top.matched, elapsedMs)) {
+                FriendLifeTopSearchDecision.FOUND -> {
+                    logDiagnostic(
+                        "[FRIEND_LIFE_TOP_FOUND] score=${format(scan.top.score)} elapsedMs=$elapsedMs " +
+                            "swipeCount=$topSwipeCount settleMs=$FRIEND_TOP_SETTLE_MS",
+                    )
+                    delayOrStop(FRIEND_TOP_SETTLE_MS)
+                    break
+                }
+                FriendLifeTopSearchDecision.SWIPE -> {
+                    topSwipeCount += 1
+                    if (!performFriendScroll(
+                            "FIND_TOP",
+                            topSwipeCount,
+                            "TOWARD_TOP",
+                            LogicalPoint(435, 350),
+                            LogicalPoint(435, 580),
+                            sourceWidth,
+                            sourceHeight,
+                            FRIEND_FIND_TOP_SWIPE_DURATION_MS,
+                        )) return friendLifeAbort("FIND_TOP", "gesture_or_fresh_frame_timeout", topSwipeCount)
+                }
+                FriendLifeTopSearchDecision.FINAL_RECHECK -> {
+                    logDiagnostic(
+                        "[FRIEND_LIFE_TOP_TIMEOUT] elapsedMs=$elapsedMs swipeCount=$topSwipeCount " +
+                            "action=WAIT_2S_AND_FINAL_RECHECK",
+                    )
+                    delayOrStop(FRIEND_TOP_SETTLE_MS)
+                    val baseline = LatestFrameProvider.currentGeneration()
+                    val finalFrame = LatestFrameProvider.awaitNextSnapshot(baseline, FRIEND_RESCAN_TIMEOUT_MS)
+                        ?: return friendLifeAbort("FIND_TOP", "final_fresh_frame_timeout", topSwipeCount)
+                    val finalScan = scanFriendFrame(detector, finalFrame)
+                    finalScan.interrupt?.let { return friendLifeInterrupt(it, "FIND_TOP_FINAL_RECHECK") }
+                    logDiagnostic(
+                        "[FRIEND_LIFE_TOP_FINAL_CHECK] score=${format(finalScan.top.score)} " +
+                            "matched=${finalScan.top.matched} threshold=${format(FRIEND_LIFE_MATCH_THRESHOLD)} " +
+                            "frameSequence=${finalFrame.generation}",
+                    )
+                    when (friendLifeFinalTopDecision(finalScan.top.matched)) {
+                        FriendLifeFinalTopDecision.ABORT_TIMEOUT ->
+                            return friendLifeAbort("FIND_TOP", "timeout_top_not_found", topSwipeCount)
+                        FriendLifeFinalTopDecision.CONTINUE_TRAVERSAL -> Unit
+                    }
+                    logDiagnostic(
+                        "[FRIEND_LIFE_TOP_FOUND] source=FINAL_RECHECK elapsedMs=" +
+                            "${SystemClock.elapsedRealtime() - findTopStartedAt} swipeCount=$topSwipeCount " +
+                            "settleMs=$FRIEND_TOP_SETTLE_MS",
+                    )
+                    delayOrStop(FRIEND_TOP_SETTLE_MS)
+                    break
+                }
             }
-            if (scan.top.matched) break
-            if (attempt == MAX_FRIEND_TOP_SCROLLS) return friendLifeAbort("FIND_TOP", "scroll_limit", attempt)
-            if (!performFriendScroll(
-                    "FIND_TOP",
-                    attempt,
-                    "TOWARD_TOP",
-                    LogicalPoint(435, 260),
-                    LogicalPoint(435, 620),
-                    sourceWidth,
-                    sourceHeight,
-                )) return friendLifeAbort("FIND_TOP", "gesture_or_fresh_frame_timeout", attempt)
         }
 
         var sentCount = 0
@@ -1485,11 +1536,18 @@ class BotController(
                             "SCROLL_DOWN",
                             noButtonScrollCount,
                             "TOWARD_BOTTOM",
+                            LogicalPoint(435, 550),
                             LogicalPoint(435, 330),
-                            LogicalPoint(435, 190),
                             sourceWidth,
                             sourceHeight,
+                            FRIEND_TRAVERSE_SWIPE_DURATION_MS,
                         )) return friendLifeAbort("SCROLL_DOWN", "gesture_or_fresh_frame_timeout", noButtonScrollCount)
+                    val settleMs = randomMs(FRIEND_TRAVERSE_SETTLE_MIN_MS, FRIEND_TRAVERSE_SETTLE_MAX_MS)
+                    logDiagnostic(
+                        "[FRIEND_LIFE_SCROLL] phase=SCROLL_DOWN direction=TOWARD_BOTTOM " +
+                            "durationMs=$FRIEND_TRAVERSE_SWIPE_DURATION_MS settleMs=$settleMs",
+                    )
+                    delayOrStop(settleMs)
                 }
                 FriendLifeTraversalDecision.ABORT_SCROLL_LIMIT ->
                     return friendLifeAbort("SCROLL_DOWN", "scroll_limit", noButtonScrollCount)
@@ -1505,9 +1563,15 @@ class BotController(
         val interrupt = detector.detectFirst(friendLifeInterruptStages(), snapshot.mat)?.state
         FriendLifeFrameScan(
             interrupt = interrupt,
-            top = detector.detectTemplate(snapshot.mat, "FRIEND_TOP_LEADERBOARD_1.png", FRIEND_TOP_REGION),
-            bottom = detector.detectTemplate(snapshot.mat, "FRIEND_BOTTOM_LEADERBOARD_1.png", FRIEND_BOTTOM_REGION),
-            send = detector.detectTemplate(snapshot.mat, "FRIEND_SEND_LIFE_1.png", FRIEND_SEND_REGION),
+            top = detector.detectTemplate(
+                snapshot.mat, "FRIEND_TOP_LEADERBOARD_1.png", FRIEND_TOP_REGION, FRIEND_LIFE_MATCH_THRESHOLD,
+            ),
+            bottom = detector.detectTemplate(
+                snapshot.mat, "FRIEND_BOTTOM_LEADERBOARD_1.png", FRIEND_BOTTOM_REGION, FRIEND_LIFE_MATCH_THRESHOLD,
+            ),
+            send = detector.detectTemplate(
+                snapshot.mat, "FRIEND_SEND_LIFE_1.png", FRIEND_SEND_REGION, FRIEND_LIFE_MATCH_THRESHOLD,
+            ),
         )
     } finally { snapshot.mat.release() }
 
@@ -1525,7 +1589,8 @@ class BotController(
             "[FRIEND_LIFE_MATCH] type=$type$attemptText score=${format(match.score)} " +
                 "matched=${match.matched} roi=(${roi.x},${roi.y},${roi.x + roi.width},${roi.y + roi.height}) " +
                 "roiSize=${roi.width}x${roi.height} templateSize=${templateWidth}x$templateHeight " +
-                "match=(${match.x},${match.y}) threshold=0.8 frameSequence=$frameSequence",
+                "match=(${match.x},${match.y}) threshold=${format(FRIEND_LIFE_MATCH_THRESHOLD)} " +
+                "frameSequence=$frameSequence",
         )
     }
 
@@ -1550,11 +1615,23 @@ class BotController(
         end: LogicalPoint,
         sourceWidth: Int,
         sourceHeight: Int,
+        durationMs: Long,
     ): Boolean {
+        val physicalStart = CoordinateMapper.logicalToPhysical(start.x, start.y, sourceWidth, sourceHeight)
+        val physicalEnd = CoordinateMapper.logicalToPhysical(end.x, end.y, sourceWidth, sourceHeight)
+        val contentRect = ContentGeometryRegistry.current(sourceWidth, sourceHeight)?.contentRect
+            ?: FrameNormalizer.contentTransform(sourceWidth, sourceHeight).contentRect
+        logDiagnostic(
+            "[FRIEND_LIFE_SCROLL_MAP] phase=$phase direction=$direction " +
+                "logicalStart=(${start.x},${start.y}) logicalEnd=(${end.x},${end.y}) " +
+                "physicalStart=(${physicalStart.x},${physicalStart.y}) " +
+                "physicalEnd=(${physicalEnd.x},${physicalEnd.y}) " +
+                "contentRect=${rectText(contentRect)} sourceSize=${sourceWidth}x$sourceHeight",
+        )
         val preGestureGeneration = LatestFrameProvider.currentGeneration()
         logDiagnostic(
             "[FRIEND_LIFE_SCROLL] phase=$phase attempt=$attempt direction=$direction " +
-                "preGestureGeneration=$preGestureGeneration",
+                "durationMs=$durationMs preGestureGeneration=$preGestureGeneration",
         )
         val gestureSucceeded = java.util.concurrent.atomic.AtomicReference<Boolean?>(null)
         val action = actionExecutor.swipeLogical(
@@ -1563,7 +1640,7 @@ class BotController(
             end,
             sourceWidth,
             sourceHeight,
-            FRIEND_SCROLL_DURATION_MS,
+            durationMs,
             FRIEND_GESTURE_TIMEOUT_MS,
         ) { success, timedOut -> gestureSucceeded.set(success && !timedOut) }
         reportActionResult(action)
@@ -2458,20 +2535,17 @@ class BotController(
         private const val FRIEND_RESCAN_TIMEOUT_MS = 2_500L
         private const val FRIEND_POST_TAP_SETTLE_MS = 300L
         private const val FRIEND_GESTURE_TIMEOUT_MS = 2_000L
-        private const val FRIEND_SCROLL_DURATION_MS = 150L
         private const val FRIEND_LIFE_RETRY_DELAY_MS = 15L * 60L * 1000L
-        private const val MAX_FRIEND_TOP_SCROLLS = 30
         private const val MAX_NO_BUTTON_SCROLLS = 30
-        private val FRIEND_TOP_REGION = Rect(130, 250, 100, 350)
-        private val FRIEND_BOTTOM_REGION = Rect(250, 520, 390, 130)
-        private val FRIEND_SEND_REGION = Rect(580, 250, 180, 400)
+        private val FRIEND_TOP_REGION = Rect(100, 230, 160, 390)
+        private val FRIEND_BOTTOM_REGION = Rect(220, 500, 450, 170)
+        private val FRIEND_SEND_REGION = Rect(550, 230, 240, 440)
         private const val FRIEND_TOP_TEMPLATE_WIDTH = 53
         private const val FRIEND_TOP_TEMPLATE_HEIGHT = 301
         private const val FRIEND_BOTTOM_TEMPLATE_WIDTH = 340
         private const val FRIEND_BOTTOM_TEMPLATE_HEIGHT = 81
         private const val FRIEND_SEND_TEMPLATE_WIDTH = 111
         private const val FRIEND_SEND_TEMPLATE_HEIGHT = 69
-        private val FRIEND_TOP_DIAGNOSTIC_ATTEMPTS = setOf(1, 5, 10, 20, 30)
         private const val READINESS_POLL_INTERVAL_MS = 100L
         private const val READINESS_LOG_INTERVAL_MS = 1_000L
         private const val NO_MATCH_DIAGNOSTIC_INTERVAL_MS = 1_500L

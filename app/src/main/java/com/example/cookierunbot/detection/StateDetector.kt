@@ -52,6 +52,7 @@ class StateDetector(context: Context) : AutoCloseable {
         normalizedRgba: Mat,
         assetName: String,
         roiRect: Rect,
+        threshold: Double = MATCH_THRESHOLD,
     ): TemplateMatch {
         val roiRgba = normalizedRgba.submat(roiRect)
         val roiGray = Mat()
@@ -69,7 +70,7 @@ class StateDetector(context: Context) : AutoCloseable {
                 val match = Core.minMaxLoc(result)
                 TemplateMatch(
                     match.maxVal,
-                    match.maxVal >= MATCH_THRESHOLD,
+                    templateScoreMatches(match.maxVal, threshold),
                     match.maxLoc.x.toInt() + roiRect.x,
                     match.maxLoc.y.toInt() + roiRect.y,
                     template.cols(),
@@ -467,3 +468,5 @@ data class TemplateMatch(
     val width: Int,
     val height: Int,
 )
+
+internal fun templateScoreMatches(score: Double, threshold: Double): Boolean = score >= threshold
