@@ -123,7 +123,7 @@ class DetectorStallWatchdog(
     }
 
     @Synchronized
-    fun commitNotificationQueued(reservation: StallNotificationReservation, nowMs: Long): Boolean {
+    fun commitNotificationConfirmed(reservation: StallNotificationReservation, nowMs: Long): Boolean {
         if (!reservationIsCurrent(reservation)) return false
         notifications += 1
         lastNotificationAt = nowMs

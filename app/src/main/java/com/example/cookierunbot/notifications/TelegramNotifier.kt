@@ -54,7 +54,12 @@ class TelegramNotifier(context: Context) {
     fun notifyNoMatch(normalizedPng: ByteArray, caption: String): Boolean =
         notifyDiagnosticImage(normalizedPng, "no_match_normalized.png", caption)
 
-    fun notifyDiagnosticImage(normalizedPng: ByteArray, filename: String, caption: String): Boolean {
+    fun notifyDiagnosticImage(
+        normalizedPng: ByteArray,
+        filename: String,
+        caption: String,
+        callback: (TelegramSendResult) -> Unit = {},
+    ): Boolean {
         val config = TelegramConfigStore.load(appContext)
         logConfig(config)
         if (!config.enabled) return false
@@ -63,18 +68,28 @@ class TelegramNotifier(context: Context) {
             return false
         }
         if (!config.sendDebugImages && !config.sendTextNotifications) return false
-        executor.execute {
-            runCatching {
+        return try {
+            executor.execute {
+                val result = runCatching {
                 if (config.sendDebugImages) {
                     sendPhotoBlocking(config, normalizedPng, filename, caption)
                 } else {
                     sendTextBlocking(config, caption, manualTest = false)
                 }
-            }.onFailure { error ->
-                log("[TELEGRAM_SEND] success=false reason=async_exception type=${error.javaClass.simpleName}")
+                }.getOrElse { error ->
+                    log("[TELEGRAM_SEND] success=false reason=async_exception type=${error.javaClass.simpleName}")
+                    TelegramSendResult(false, "exception:${error.javaClass.simpleName}")
+                }
+                runCatching { callback(result) }
+                    .onFailure { error ->
+                        log("[TELEGRAM_CALLBACK] success=false type=${error.javaClass.simpleName}")
+                    }
             }
+            true
+        } catch (error: Exception) {
+            log("[TELEGRAM_SEND] success=false reason=queue_rejected type=${error.javaClass.simpleName}")
+            false
         }
-        return true
     }
 
     fun isDebugImageEnabled(): Boolean = TelegramConfigStore.load(appContext).let { config ->
@@ -107,9 +122,14 @@ class TelegramNotifier(context: Context) {
         }
     }
 
-    private fun sendPhotoBlocking(config: TelegramConfig, png: ByteArray, filename: String, caption: String) {
+    private fun sendPhotoBlocking(
+        config: TelegramConfig,
+        png: ByteArray,
+        filename: String,
+        caption: String,
+    ): TelegramSendResult {
         val boundary = "RobotRunBoundary${System.nanoTime()}"
-        request(config, "sendPhoto", "multipart/form-data; boundary=$boundary") { output ->
+        return request(config, "sendPhoto", "multipart/form-data; boundary=$boundary") { output ->
             fun field(name: String, value: String) {
                 output.write("--$boundary\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n".toByteArray())
             }

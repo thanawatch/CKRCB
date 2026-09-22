@@ -10,6 +10,7 @@ import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.diagnostics.PersistentTrace
 import com.example.cookierunbot.notifications.TelegramDiagnosticImageGate
 import com.example.cookierunbot.notifications.TelegramNotifier
+import com.example.cookierunbot.notifications.TelegramSendResult
 import java.util.concurrent.Executors
 
 class DetectorStallDiagnosticManager(context: Context) {
@@ -89,26 +90,46 @@ class DetectorStallDiagnosticManager(context: Context) {
                         "normalizedSize=${snapshot.mat.cols()}x${snapshot.mat.rows()}",
                 )
                 val caption = buildCaption(bot, capture, decision)
-                val queued = telegramNotifier.notifyDiagnosticImage(
+                val queueAccepted = telegramNotifier.notifyDiagnosticImage(
                     png,
                     "detect_stall_normalized.png",
                     caption,
-                )
-                if (queued) {
-                    val committed = watchdog.commitNotificationQueued(
+                ) { result ->
+                    val completion = completeStallNotification(
+                        watchdog,
                         reservation,
                         SystemClock.elapsedRealtime(),
+                        result,
                     )
+                    when (completion) {
+                        StallNotificationCompletion.CONFIRMED -> emit(
+                            "[STALL_DIAG_TELEGRAM] sendConfirmed=true code=${result.httpCode} " +
+                                "notification=${reservation.notificationIndex}/$TRUE_STALL_MAX_NOTIFICATIONS",
+                        )
+                        StallNotificationCompletion.FAILED -> emit(
+                            "[STALL_DIAG_TELEGRAM] sendConfirmed=false " +
+                                "code=${result.httpCode ?: "none"} reason=${result.reason} " +
+                                "notificationNotConsumed=true",
+                        )
+                        StallNotificationCompletion.STALE -> emit(
+                            "[STALL_DIAG_TELEGRAM] staleCallback=true ignored=true " +
+                                "candidate=${reservation.notificationIndex}/$TRUE_STALL_MAX_NOTIFICATIONS",
+                        )
+                    }
+                    emit("[STALL_DIAG] inFlight=false completion=${completion.name}")
+                }
+                if (queueAccepted) {
                     emit(
-                        "[STALL_DIAG_TELEGRAM] queued=true committed=$committed " +
-                            "notification=${reservation.notificationIndex}/$TRUE_STALL_MAX_NOTIFICATIONS",
+                        "[STALL_DIAG_TELEGRAM] queueAccepted=true " +
+                            "candidate=${reservation.notificationIndex}/$TRUE_STALL_MAX_NOTIFICATIONS",
                     )
                 } else {
                     watchdog.releaseNotificationReservation(
                         reservation,
                         SystemClock.elapsedRealtime(),
                     )
-                    emit("[STALL_DIAG_TELEGRAM] queued=false notificationNotConsumed=true")
+                    emit("[STALL_DIAG_TELEGRAM] queueAccepted=false notificationNotConsumed=true")
+                    emit("[STALL_DIAG] inFlight=false completion=QUEUE_REJECTED")
                 }
             } catch (error: Exception) {
                 watchdog.releaseNotificationReservation(
@@ -121,7 +142,6 @@ class DetectorStallDiagnosticManager(context: Context) {
                 )
             } finally {
                 snapshot.mat.release()
-                emit("[STALL_DIAG] inFlight=false")
             }
         }
     }
@@ -158,5 +178,29 @@ class DetectorStallDiagnosticManager(context: Context) {
 
     private companion object {
         const val HEALTHY_SUPPRESSION_LOG_INTERVAL_MS = 30_000L
+    }
+}
+
+internal enum class StallNotificationCompletion { CONFIRMED, FAILED, STALE }
+
+internal fun completeStallNotification(
+    watchdog: DetectorStallWatchdog,
+    reservation: StallNotificationReservation,
+    nowMs: Long,
+    result: TelegramSendResult,
+): StallNotificationCompletion {
+    val confirmed = result.success && result.httpCode?.let { it in 200..299 } == true
+    return if (confirmed) {
+        if (watchdog.commitNotificationConfirmed(reservation, nowMs)) {
+            StallNotificationCompletion.CONFIRMED
+        } else {
+            StallNotificationCompletion.STALE
+        }
+    } else {
+        if (watchdog.releaseNotificationReservation(reservation, nowMs)) {
+            StallNotificationCompletion.FAILED
+        } else {
+            StallNotificationCompletion.STALE
+        }
     }
 }

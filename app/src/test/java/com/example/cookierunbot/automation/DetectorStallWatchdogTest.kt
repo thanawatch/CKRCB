@@ -45,7 +45,7 @@ class DetectorStallWatchdogTest {
         val first = watchdog.observe(stalled(62_000L, 12L, 61_000L))
         assertTrue(first.notificationDue)
         val firstReservation = requireNotNull(watchdog.reserveNotification())
-        assertTrue(watchdog.commitNotificationQueued(firstReservation, 62_000L))
+        assertTrue(watchdog.commitNotificationConfirmed(firstReservation, 62_000L))
         assertFalse(watchdog.observe(stalled(181_999L, 13L, 180_000L)).notificationDue)
         val second = watchdog.observe(stalled(182_000L, 14L, 181_000L))
         assertTrue(second.notificationDue)
@@ -62,7 +62,7 @@ class DetectorStallWatchdogTest {
             assertTrue(due.notificationDue)
             assertEquals(index + 1, due.notificationIndex)
             val reservation = requireNotNull(watchdog.reserveNotification())
-            assertTrue(watchdog.commitNotificationQueued(reservation, now))
+            assertTrue(watchdog.commitNotificationConfirmed(reservation, now))
             now += 20L
         }
         assertFalse(watchdog.observe(stalled(now, 30L, 90_000L)).notificationDue)
@@ -76,7 +76,7 @@ class DetectorStallWatchdogTest {
         val due = watchdog.observe(stalled(2_010L, 12L, 60_010L))
         assertTrue(due.notificationDue)
         val reservation = requireNotNull(watchdog.reserveNotification())
-        assertTrue(watchdog.commitNotificationQueued(reservation, 2_010L))
+        assertTrue(watchdog.commitNotificationConfirmed(reservation, 2_010L))
 
         val resumed = watchdog.observe(stalled(2_020L, 13L, 0L).copy(lastProcessedFrameSequence = 6L))
         assertEquals("detector_progress_resumed", resumed.resetReason)
@@ -92,7 +92,7 @@ class DetectorStallWatchdogTest {
         assertEquals("bot_stopped", watchdog.observe(stopped).resetReason)
     }
 
-    @Test fun telegramQueueFalseDoesNotConsumeNotification() {
+    @Test fun failedAttemptDoesNotConsumeNotification() {
         val watchdog = dueWatchdog()
         val reservation = requireNotNull(watchdog.reserveNotification())
         assertTrue(watchdog.releaseNotificationReservation(reservation, 62_000L))
@@ -100,10 +100,10 @@ class DetectorStallWatchdogTest {
         assertFalse(watchdog.notificationInFlight())
     }
 
-    @Test fun successfulTelegramQueueCommitsExactlyOneNotification() {
+    @Test fun confirmedTelegramSendCommitsExactlyOneNotification() {
         val watchdog = dueWatchdog()
         val reservation = requireNotNull(watchdog.reserveNotification())
-        assertTrue(watchdog.commitNotificationQueued(reservation, 62_000L))
+        assertTrue(watchdog.commitNotificationConfirmed(reservation, 62_000L))
         assertEquals(1, watchdog.notificationCount())
         assertFalse(watchdog.notificationInFlight())
     }
@@ -147,7 +147,7 @@ class DetectorStallWatchdogTest {
         repeat(TRUE_STALL_MAX_NOTIFICATIONS) { expected ->
             assertTrue(watchdog.observe(stalled(now, 13L + expected, 61_000L)).notificationDue)
             val reservation = requireNotNull(watchdog.reserveNotification())
-            assertTrue(watchdog.commitNotificationQueued(reservation, now))
+            assertTrue(watchdog.commitNotificationConfirmed(reservation, now))
             assertEquals(expected + 1, watchdog.notificationCount())
             now += 20L
         }
