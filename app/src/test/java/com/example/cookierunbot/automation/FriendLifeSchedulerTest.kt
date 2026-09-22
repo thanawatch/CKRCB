@@ -171,4 +171,59 @@ class FriendLifeSchedulerTest {
         assertFalse(isGenuinelyPostGestureFrame(postGestureBaseline, postGestureBaseline))
         assertTrue(isGenuinelyPostGestureFrame(103L, postGestureBaseline))
     }
+
+    @Test fun mainMenuWaitCrossingDueBoundaryCreatesExactlyOneScheduledRequest() {
+        val scheduler = FriendLifeScheduler()
+        scheduler.start(true, 0L)
+        val beforeWait = FRIEND_LIFE_INTERVAL_MS - 2_000L
+        val afterWait = FRIEND_LIFE_INTERVAL_MS + 3_000L
+        assertFalse(scheduler.observeTime(beforeWait))
+        assertFalse(scheduler.hasPendingWork(beforeWait))
+        assertTrue(scheduler.observeTime(afterWait))
+        assertTrue(scheduler.hasPendingWork(afterWait))
+        assertFalse(scheduler.observeTime(afterWait + 1L))
+        assertEquals(FriendLifeTrigger.SCHEDULED, scheduler.beginIfReady(afterWait))
+        assertNull(scheduler.beginIfReady(afterWait + 1L))
+    }
+
+    @Test fun connectionLostAfterSendButtonStopsBeforeBothConfirms() {
+        val decision = friendLifeSendDecision(FriendLifeSendStep.SEND_BUTTON, BotStage.CONNECTION_LOST)
+        assertEquals(BotStage.CONNECTION_LOST, decision.interrupt)
+        assertNull(decision.nextStep)
+    }
+
+    @Test fun connectionLostAfterConfirmOneStopsBeforeConfirmTwo() {
+        val afterSend = friendLifeSendDecision(FriendLifeSendStep.SEND_BUTTON, null)
+        assertEquals(FriendLifeSendStep.CONFIRM_1, afterSend.nextStep)
+        val decision = friendLifeSendDecision(FriendLifeSendStep.CONFIRM_1, BotStage.CONNECTION_LOST)
+        assertEquals(BotStage.CONNECTION_LOST, decision.interrupt)
+        assertNull(decision.nextStep)
+    }
+
+    @Test fun popupAfterConfirmOneStopsBeforeConfirmTwo() {
+        val decision = friendLifeSendDecision(FriendLifeSendStep.CONFIRM_1, BotStage.CONGRATULATIONS)
+        assertEquals(BotStage.CONGRATULATIONS, decision.interrupt)
+        assertNull(decision.nextStep)
+    }
+
+    @Test fun inactiveAfterSendButtonStopsBeforeConfirmOne() {
+        val decision = friendLifeSendDecision(FriendLifeSendStep.SEND_BUTTON, BotStage.INACTIVE)
+        assertEquals(BotStage.INACTIVE, decision.interrupt)
+        assertNull(decision.nextStep)
+    }
+
+    @Test fun uninterruptedSendSequenceAllowsEachNextStep() {
+        assertEquals(
+            FriendLifeSendStep.CONFIRM_1,
+            friendLifeSendDecision(FriendLifeSendStep.SEND_BUTTON, null).nextStep,
+        )
+        assertEquals(
+            FriendLifeSendStep.CONFIRM_2,
+            friendLifeSendDecision(FriendLifeSendStep.CONFIRM_1, null).nextStep,
+        )
+        assertEquals(
+            FriendLifeSendStep.COMPLETE,
+            friendLifeSendDecision(FriendLifeSendStep.CONFIRM_2, null).nextStep,
+        )
+    }
 }

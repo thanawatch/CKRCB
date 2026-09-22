@@ -961,6 +961,9 @@ class BotController(
         delayOrStop(5000L)
         if (!revalidateMainMenu(detector, "AFTER_INITIAL_WAIT")) return
         val friendNow = SystemClock.elapsedRealtime()
+        if (friendLifeScheduler.observeTime(friendNow)) {
+            logDiagnostic("[FRIEND_LIFE_DUE] source=MAINMENU_PRECHECK nowMs=$friendNow pending=true")
+        }
         if (friendLifeScheduler.hasPendingWork(friendNow)) {
             if (!revalidateMainMenu(detector, "BEFORE_FRIEND_LIFE")) {
                 logDiagnostic("[FRIEND_LIFE_PRECHECK] pending=true mainMenuValid=false action=defer")
@@ -1419,25 +1422,28 @@ class BotController(
                     friendLifeTapStep(
                         detector, "SEND_BUTTON", center, true, sourceWidth, sourceHeight, randomMs(1000, 2000),
                     ).let { step ->
-                        step.interrupt?.let { return friendLifeInterrupt(it, "AFTER_SEND_BUTTON") }
                         if (!step.success) return friendLifeAbort("SEND", step.failureReason, sentCount)
+                        val decision = friendLifeSendDecision(FriendLifeSendStep.SEND_BUTTON, step.interrupt)
+                        decision.interrupt?.let { return friendLifeInterrupt(it, "AFTER_SEND_BUTTON") }
                     }
                     friendLifeTapStep(
                         detector, "CONFIRM_1", AutomationConfig.MAINMENU_FRIEND_CONFIRM_1,
                         false, sourceWidth, sourceHeight, randomMs(1000, 2000),
                     ).let { step ->
-                        step.interrupt?.let {
+                        if (!step.success) return friendLifeAbort("SEND", step.failureReason, sentCount)
+                        val decision = friendLifeSendDecision(FriendLifeSendStep.CONFIRM_1, step.interrupt)
+                        decision.interrupt?.let {
                             logDiagnostic("[FRIEND_LIFE_SEND_STEP] step=CONFIRM_1 interrupt=${it.name} action=abort_before_confirm_2")
                             return friendLifeInterrupt(it, "AFTER_CONFIRM_1")
                         }
-                        if (!step.success) return friendLifeAbort("SEND", step.failureReason, sentCount)
                     }
                     friendLifeTapStep(
                         detector, "CONFIRM_2", AutomationConfig.MAINMENU_FRIEND_CONFIRM_2,
                         false, sourceWidth, sourceHeight, FRIEND_POST_TAP_SETTLE_MS,
                     ).let { step ->
-                        step.interrupt?.let { return friendLifeInterrupt(it, "AFTER_CONFIRM_2") }
                         if (!step.success) return friendLifeAbort("SEND", step.failureReason, sentCount)
+                        val decision = friendLifeSendDecision(FriendLifeSendStep.CONFIRM_2, step.interrupt)
+                        decision.interrupt?.let { return friendLifeInterrupt(it, "AFTER_CONFIRM_2") }
                     }
                     sentCount += 1
                 }

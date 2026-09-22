@@ -3,6 +3,26 @@ package com.example.cookierunbot.automation
 enum class FriendLifeTrigger { SCHEDULED, TEST, SCHEDULED_AND_TEST }
 enum class FriendLifeTestRequest { BOT_STOPPED, QUEUED, ALREADY_QUEUED, IN_PROGRESS }
 enum class FriendLifeTraversalDecision { SEND, COMPLETE, SCROLL_DOWN, ABORT_SCROLL_LIMIT }
+internal enum class FriendLifeSendStep { SEND_BUTTON, CONFIRM_1, CONFIRM_2, COMPLETE }
+
+internal data class FriendLifeSendDecision(
+    val nextStep: FriendLifeSendStep?,
+    val interrupt: BotStage?,
+)
+
+internal fun friendLifeSendDecision(
+    completedStep: FriendLifeSendStep,
+    interrupt: BotStage?,
+): FriendLifeSendDecision {
+    if (interrupt != null) return FriendLifeSendDecision(null, interrupt)
+    val next = when (completedStep) {
+        FriendLifeSendStep.SEND_BUTTON -> FriendLifeSendStep.CONFIRM_1
+        FriendLifeSendStep.CONFIRM_1 -> FriendLifeSendStep.CONFIRM_2
+        FriendLifeSendStep.CONFIRM_2 -> FriendLifeSendStep.COMPLETE
+        FriendLifeSendStep.COMPLETE -> null
+    }
+    return FriendLifeSendDecision(next, null)
+}
 
 class FriendLifeScheduler(private val intervalMs: Long = FRIEND_LIFE_INTERVAL_MS) {
     private var enabled = false
