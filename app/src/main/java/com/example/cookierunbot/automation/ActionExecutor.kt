@@ -37,6 +37,50 @@ class ActionExecutor(private val context: Context? = null) {
         onGestureCompleted,
     )
 
+    fun swipeLogical(
+        actionName: String,
+        start: LogicalPoint,
+        end: LogicalPoint,
+        sourceWidth: Int,
+        sourceHeight: Int,
+        durationMs: Long,
+        callbackTimeoutMs: Long,
+        onGestureCompleted: (success: Boolean, timedOut: Boolean) -> Unit,
+    ): ActionResult {
+        if (!logActionReadiness(actionName)) {
+            return ActionResult(actionName, false, start.x, start.y, null)
+        }
+        val lease = GestureArbiter.acquire(GesturePriority.NORMAL)
+            ?: return ActionResult(actionName, false, start.x, start.y, null)
+        val completion = GestureCompletionContext(
+            lease,
+            callbackTimeoutMs,
+        ) { _, success, timedOut -> onGestureCompleted(success, timedOut) }
+        completion.armTimeout(actionName)
+        val accepted = try {
+            BotAccessibilityService.dispatchLogicalSwipe(
+                start,
+                end,
+                sourceWidth,
+                sourceHeight,
+                durationMs,
+                "[ACTION] $actionName",
+            ) { completedAt, success -> completion.complete(completedAt, success) }
+        } catch (error: Exception) {
+            completion.cancel()
+            throw error
+        }
+        if (!accepted) completion.cancel()
+        return ActionResult(
+            actionName,
+            accepted,
+            start.x,
+            start.y,
+            CoordinateMapper.logicalToPhysical(start.x, start.y, sourceWidth, sourceHeight),
+            pendingGesture = completion,
+        )
+    }
+
     fun tapDetectedPoint(
         actionName: String,
         point: LogicalPoint,
@@ -113,8 +157,16 @@ class ActionExecutor(private val context: Context? = null) {
                 PhysicalPoint(x, y),
             )
         }
+        val lease = GestureArbiter.acquire(GesturePriority.NORMAL)
+            ?: return ActionResult(actionName, false, logicalPoint.x, logicalPoint.y, PhysicalPoint(x, y))
         Log.i(CookieRunBotApplication.TAG, "[ACTION] dispatch start state=$actionName")
-        val dispatch = BotAccessibilityService.dispatchPhysicalPoint(x, y, "[ACTION] $actionName")
+        val dispatch = BotAccessibilityService.dispatchPhysicalPoint(
+            x,
+            y,
+            "[ACTION] $actionName",
+        ) { _, _ -> GestureArbiter.release(lease) }.also {
+            if (!it.accepted) GestureArbiter.release(lease)
+        }
         return ActionResult(
             actionName,
             dispatch.accepted,
@@ -143,8 +195,16 @@ class ActionExecutor(private val context: Context? = null) {
         if (!logActionReadiness(actionName)) {
             return ActionResult(actionName, false, detectorPoint.x, detectorPoint.y, PhysicalPoint(x, y))
         }
+        val lease = GestureArbiter.acquire(GesturePriority.NORMAL)
+            ?: return ActionResult(actionName, false, detectorPoint.x, detectorPoint.y, PhysicalPoint(x, y))
         Log.i(CookieRunBotApplication.TAG, "[ACTION] dispatch start state=$actionName mapping=DETECTOR_CONTENT")
-        val dispatch = BotAccessibilityService.dispatchPhysicalPoint(x, y, "[ACTION] $actionName")
+        val dispatch = BotAccessibilityService.dispatchPhysicalPoint(
+            x,
+            y,
+            "[ACTION] $actionName",
+        ) { _, _ -> GestureArbiter.release(lease) }.also {
+            if (!it.accepted) GestureArbiter.release(lease)
+        }
         return ActionResult(
             actionName,
             dispatch.accepted,

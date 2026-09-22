@@ -78,7 +78,7 @@ class BotController(
     private var mysteryBoxCount = 0
     private var livesDoneForRound = true
     private var livesPendingAfterGame = false
-    private var sendFriendCheckedForMainMenu = false
+    private val friendLifeScheduler = FriendLifeScheduler()
     private var lastNoMatchDiagnosticAt = 0L
     private var noMatchDebugFrameRequested = false
     private var pendingNoMatchCapture: NoMatchCaptureDue? = null
@@ -148,7 +148,11 @@ class BotController(
             mysteryBoxCount = 0
             livesDoneForRound = true
             livesPendingAfterGame = false
-            sendFriendCheckedForMainMenu = false
+            friendLifeScheduler.start(options.sendFriendLife, SystemClock.elapsedRealtime())
+            logDiagnostic(
+                "[FRIEND_LIFE_TIMER] enabled=${options.sendFriendLife} " +
+                    "intervalMs=$FRIEND_LIFE_INTERVAL_MS firstDueInMs=${if (options.sendFriendLife) FRIEND_LIFE_INTERVAL_MS else 0}",
+            )
             workerAlive = false
             lastProcessedFrameSequence = -1L
             lastDetectionAttemptAt = 0L
@@ -206,6 +210,7 @@ class BotController(
         stoppedTimeDealGesture?.cancel()
         stoppedPreviousResultsGesture?.cancel()
         autoTapper.stop("BOT_EXIT")
+        friendLifeScheduler.stop()
         resetNoMatchEpisode("bot_stopped")
         worker?.shutdownNow()
         Log.i(CookieRunBotApplication.TAG, "[BOT] Stopped")
@@ -252,6 +257,15 @@ class BotController(
             workerAlive = false
             autoTapper.stop("BOT_LOOP_END")
         }
+    }
+
+    fun requestFriendLifeTest(): FriendLifeTestRequest {
+        val result = friendLifeScheduler.requestTest(isRunning())
+        logDiagnostic("[FRIEND_LIFE_TEST] requested=true result=${result.name}")
+        if (result == FriendLifeTestRequest.QUEUED) {
+            logDiagnostic("[FRIEND_LIFE_TEST] queued=true reason=waiting_for_mainmenu")
+        }
+        return result
     }
 
     private fun waitForReadiness(): Boolean {
@@ -402,6 +416,9 @@ class BotController(
             var result = detector.detectFirst(stagesFor(group), frame.mat)
             var detectionMatchedAtNanos = SystemClock.elapsedRealtimeNanos()
             val now = SystemClock.elapsedRealtime()
+            if (friendLifeScheduler.observeTime(now)) {
+                logDiagnostic("[FRIEND_LIFE_DUE] elapsedMs=$now pending=true")
+            }
             if (result == null && now - lastDetectionAt >= recoveryInterval(group)) {
                 result = detector.detectFirst(ALL_STAGE_ORDER, frame.mat)
                 detectionMatchedAtNanos = SystemClock.elapsedRealtimeNanos()
@@ -485,7 +502,6 @@ class BotController(
             LatestFrameProvider.updateDetection(result)
             listener.onDetection(result.state, result)
             logDetection(result)
-            if (result.state != BotStage.MAINMENU) sendFriendCheckedForMainMenu = false
             lastStage = result.state
             DebugLogStore.log(
                 "[STATE] ${previousStage?.name ?: "NONE"} -> ${result.state.name}",
@@ -944,11 +960,31 @@ class BotController(
         Log.i(CookieRunBotApplication.TAG, "[BOT] MAINMENU reached; waiting 5 seconds for screen refresh")
         delayOrStop(5000L)
         if (!revalidateMainMenu(detector, "AFTER_INITIAL_WAIT")) return
-        if (options.sendFriendLife && !sendFriendCheckedForMainMenu) {
+        val friendTrigger = friendLifeScheduler.beginIfReady(SystemClock.elapsedRealtime())
+        if (friendTrigger != null) {
             if (!revalidateMainMenu(detector, "BEFORE_FRIEND_LIFE")) return
-            sendFriendCheckedForMainMenu = true
-            handleMainMenuFriendLife(detector, sourceWidth, sourceHeight)
-            if (!revalidateMainMenu(detector, "AFTER_FRIEND_LIFE")) return
+            when (handleMainMenuFriendLife(detector, sourceWidth, sourceHeight, friendTrigger)) {
+                FriendLifeWorkflowResult.COMPLETED -> {
+                    val completedAt = SystemClock.elapsedRealtime()
+                    friendLifeScheduler.complete(friendTrigger, completedAt)
+                    if (friendTrigger != FriendLifeTrigger.TEST) {
+                        logDiagnostic("[FRIEND_LIFE_TIMER] nextDueInMs=$FRIEND_LIFE_INTERVAL_MS")
+                    }
+                    if (!revalidateMainMenu(detector, "AFTER_FRIEND_LIFE")) return
+                }
+                FriendLifeWorkflowResult.INTERRUPTED -> {
+                    friendLifeScheduler.interrupt()
+                    lastStage = null
+                    updateGroup(DetectionGroup.PRE_GAME)
+                    return
+                }
+                FriendLifeWorkflowResult.FAILED -> {
+                    friendLifeScheduler.fail(SystemClock.elapsedRealtime(), FRIEND_LIFE_RETRY_DELAY_MS)
+                    lastStage = null
+                    updateGroup(DetectionGroup.PRE_GAME)
+                    return
+                }
+            }
         }
         if (options.receiveSendLivesAfterEachGame && livesPendingAfterGame && !livesDoneForRound) {
             if (!revalidateMainMenu(detector, "BEFORE_LIVES_WAIT")) return
@@ -1326,102 +1362,163 @@ class BotController(
         lastStage = null
     }
 
-    private fun handleMainMenuFriendLife(detector: StateDetector, sourceWidth: Int, sourceHeight: Int) {
-        Log.i(CookieRunBotApplication.TAG, "[SEND FRIEND LIFE] MAINMENU reached")
-        var completed = 0
-        var pendingMatch: TemplateMatch? = null
-        while (isRunning()) {
-            // After the third tap the screen can be in an intermediate animation
-            // state.  Keep the next match in memory so the frame used for the
-            // explicit re-scan is also the frame used by the next sequence.
-            val match = pendingMatch ?: detectCurrentFriendSendLife(detector)
-            pendingMatch = null
-            if (match == null) {
-                delayOrStop(120L)
-                continue
-            }
-            if (!match.matched) {
-                Log.i(CookieRunBotApplication.TAG, "[SEND FRIEND LIFE] no more buttons score=${format(match.score)}")
-                delayOrStop(3000L)
-                return
-            }
-            val center = LogicalPoint(match.x + match.width / 2, match.y + match.height / 2)
-            performDetectedPhysicalCircleTap("FRIEND_TEMPLATE", center, sourceWidth, sourceHeight)
-            delayOrStop(randomMs(1000, 2000))
-            performPhysicalCircleTap("FRIEND_CONFIRM_1", AutomationConfig.MAINMENU_FRIEND_CONFIRM_1, sourceWidth, sourceHeight)
-            delayOrStop(randomMs(1000, 2000))
-            val generationBeforeThirdTap = LatestFrameProvider.currentGeneration()
-            performPhysicalCircleTap("FRIEND_CONFIRM_2", AutomationConfig.MAINMENU_FRIEND_CONFIRM_2, sourceWidth, sourceHeight)
-            completed += 1
-            Log.i(
-                CookieRunBotApplication.TAG,
-                "[SEND FRIEND LIFE] Re-scanning after third tap (completed=$completed)",
-            )
-            // Do not immediately reuse the frame captured before the third tap.
-            // Wait for the gesture/UI transition and explicitly run a fresh
-            // template search.  A single transient no-match must not terminate
-            // the sequence while the page is still animating.
-            delayOrStop(FRIEND_POST_TAP_SETTLE_MS)
-            val refreshed = awaitFriendSendLifeAfter(detector, generationBeforeThirdTap)
-            if (refreshed == null) {
-                Log.w(CookieRunBotApplication.TAG, "[SEND FRIEND LIFE] Fresh frame timeout; no more buttons")
-                delayOrStop(3000L)
-                return
-            }
-            if (!refreshed.matched) {
-                Log.i(CookieRunBotApplication.TAG, "[SEND FRIEND LIFE] no more buttons after re-scan score=${format(refreshed.score)}")
-                delayOrStop(3000L)
-                return
-            }
-            Log.i(
-                CookieRunBotApplication.TAG,
-                "[SEND FRIEND LIFE] Fresh template match ready score=${format(refreshed.score)}; continuing",
-            )
-            pendingMatch = refreshed
-        }
-    }
-
-    /** Detect the friend-life button on the current latest frame. */
-    private fun detectCurrentFriendSendLife(detector: StateDetector): TemplateMatch? {
-        val snapshot = LatestFrameProvider.snapshot() ?: return null
-        return detectFriendSendLife(detector, snapshot)
-    }
-
-    /**
-     * Wait for a frame newer than [afterGeneration] and scan every new frame
-     * until the UI settles or the bounded re-scan window expires.
-     */
-    private fun awaitFriendSendLifeAfter(
+    private fun handleMainMenuFriendLife(
         detector: StateDetector,
-        afterGeneration: Long,
-    ): TemplateMatch? {
-        var generation = afterGeneration
-        var lastMatch: TemplateMatch? = null
-        val deadline = SystemClock.elapsedRealtime() + FRIEND_RESCAN_TIMEOUT_MS
-        while (isRunning()) {
-            val remaining = deadline - SystemClock.elapsedRealtime()
-            if (remaining <= 0L) break
-            val snapshot = LatestFrameProvider.awaitNextSnapshot(generation, remaining) ?: break
-            generation = snapshot.generation
-            val match = detectFriendSendLife(detector, snapshot)
-            lastMatch = match
-            if (match.matched) return match
+        sourceWidth: Int,
+        sourceHeight: Int,
+        trigger: FriendLifeTrigger,
+    ): FriendLifeWorkflowResult {
+        val startedAt = SystemClock.elapsedRealtime()
+        logDiagnostic("[FRIEND_LIFE_WORKFLOW] start trigger=${friendTriggerText(trigger)}")
+        for (attempt in 1..MAX_FRIEND_TOP_SCROLLS) {
+            val snapshot = LatestFrameProvider.snapshot() ?: return friendLifeAbort("FIND_TOP", "no_frame", attempt)
+            val scan = scanFriendFrame(detector, snapshot)
+            scan.interrupt?.let { return friendLifeInterrupt(it, "FIND_TOP") }
+            logDiagnostic("[FRIEND_LIFE_TOP] matched=${scan.top.matched} attempt=$attempt score=${format(scan.top.score)}")
+            if (scan.top.matched) break
+            if (attempt == MAX_FRIEND_TOP_SCROLLS) return friendLifeAbort("FIND_TOP", "scroll_limit", attempt)
+            if (!performFriendScroll(
+                    "FIND_TOP",
+                    attempt,
+                    "TOWARD_TOP",
+                    LogicalPoint(435, 260),
+                    LogicalPoint(435, 620),
+                    sourceWidth,
+                    sourceHeight,
+                )) return friendLifeAbort("FIND_TOP", "gesture_or_fresh_frame_timeout", attempt)
         }
-        return lastMatch
+
+        var sentCount = 0
+        var noButtonScrollCount = 0
+        while (isRunning()) {
+            val snapshot = LatestFrameProvider.snapshot() ?: return friendLifeAbort("TRAVERSE", "no_frame", noButtonScrollCount)
+            val scan = scanFriendFrame(detector, snapshot)
+            scan.interrupt?.let { return friendLifeInterrupt(it, "TRAVERSE") }
+            when (friendLifeTraversalDecision(
+                scan.send.matched,
+                scan.bottom.matched,
+                noButtonScrollCount,
+                MAX_NO_BUTTON_SCROLLS,
+            )) {
+                FriendLifeTraversalDecision.SEND -> {
+                    noButtonScrollCount = 0
+                    val center = LogicalPoint(scan.send.x + scan.send.width / 2, scan.send.y + scan.send.height / 2)
+                    logDiagnostic(
+                        "[FRIEND_LIFE_SEND] buttonScore=${format(scan.send.score)} " +
+                            "logicalCenter=(${center.x},${center.y}) sentCount=$sentCount",
+                    )
+                    if (!performDetectedPhysicalCircleTap("FRIEND_TEMPLATE", center, sourceWidth, sourceHeight)) {
+                        return friendLifeAbort("SEND", "button_tap_rejected", sentCount)
+                    }
+                    delayOrStop(randomMs(1000, 2000))
+                    if (!performPhysicalCircleTap("FRIEND_CONFIRM_1", AutomationConfig.MAINMENU_FRIEND_CONFIRM_1, sourceWidth, sourceHeight)) {
+                        return friendLifeAbort("SEND", "confirm_1_rejected", sentCount)
+                    }
+                    delayOrStop(randomMs(1000, 2000))
+                    val baseline = LatestFrameProvider.currentGeneration()
+                    if (!performPhysicalCircleTap("FRIEND_CONFIRM_2", AutomationConfig.MAINMENU_FRIEND_CONFIRM_2, sourceWidth, sourceHeight)) {
+                        return friendLifeAbort("SEND", "confirm_2_rejected", sentCount)
+                    }
+                    sentCount += 1
+                    delayOrStop(FRIEND_POST_TAP_SETTLE_MS)
+                    val fresh = LatestFrameProvider.awaitNextSnapshot(baseline, FRIEND_RESCAN_TIMEOUT_MS)
+                        ?: return friendLifeAbort("SEND", "fresh_frame_timeout", sentCount)
+                    val freshScan = scanFriendFrame(detector, fresh)
+                    freshScan.interrupt?.let { return friendLifeInterrupt(it, "AFTER_SEND") }
+                }
+                FriendLifeTraversalDecision.COMPLETE -> {
+                    logDiagnostic("[FRIEND_LIFE_BOTTOM] matched=true score=${format(scan.bottom.score)}")
+                    logDiagnostic(
+                        "[FRIEND_LIFE_COMPLETE] trigger=${friendTriggerText(trigger)} sentCount=$sentCount " +
+                            "durationMs=${SystemClock.elapsedRealtime() - startedAt} reason=bottom_reached",
+                    )
+                    return FriendLifeWorkflowResult.COMPLETED
+                }
+                FriendLifeTraversalDecision.SCROLL_DOWN -> {
+                    noButtonScrollCount += 1
+                    logDiagnostic(
+                        "[FRIEND_LIFE_SCAN] sendButtonMatched=false bottomMatched=false " +
+                            "noButtonScrollCount=$noButtonScrollCount",
+                    )
+                    if (!performFriendScroll(
+                            "SCROLL_DOWN",
+                            noButtonScrollCount,
+                            "TOWARD_BOTTOM",
+                            LogicalPoint(435, 330),
+                            LogicalPoint(435, 190),
+                            sourceWidth,
+                            sourceHeight,
+                        )) return friendLifeAbort("SCROLL_DOWN", "gesture_or_fresh_frame_timeout", noButtonScrollCount)
+                }
+                FriendLifeTraversalDecision.ABORT_SCROLL_LIMIT ->
+                    return friendLifeAbort("SCROLL_DOWN", "scroll_limit", noButtonScrollCount)
+            }
+        }
+        return friendLifeAbort("TRAVERSE", "bot_stopped", noButtonScrollCount)
     }
 
-    private fun detectFriendSendLife(detector: StateDetector, snapshot: FrameSnapshot): TemplateMatch {
-        val match = try {
-            detector.detectTemplate(snapshot.mat, "FRIEND_SEND_LIFE_1.png", Rect(580, 250, 180, 400))
-        } finally {
-            snapshot.mat.release()
-        }
-        Log.i(
-            CookieRunBotApplication.TAG,
-            "[SEND FRIEND LIFE] Searching FRIEND_SEND_LIFE_1.png " +
-                "generation=${snapshot.generation} score=${format(match.score)} matched=${match.matched}",
+    private fun scanFriendFrame(detector: StateDetector, snapshot: FrameSnapshot): FriendLifeFrameScan = try {
+        val interrupt = detector.detectFirst(FRIEND_LIFE_INTERRUPT_STAGES, snapshot.mat)?.state
+        FriendLifeFrameScan(
+            interrupt = interrupt,
+            top = detector.detectTemplate(snapshot.mat, "FRIEND_TOP_LEADERBOARD_1.png", FRIEND_TOP_REGION),
+            bottom = detector.detectTemplate(snapshot.mat, "FRIEND_BOTTOM_LEADERBOARD_1.png", FRIEND_BOTTOM_REGION),
+            send = detector.detectTemplate(snapshot.mat, "FRIEND_SEND_LIFE_1.png", FRIEND_SEND_REGION),
         )
-        return match
+    } finally { snapshot.mat.release() }
+
+    private fun performFriendScroll(
+        phase: String,
+        attempt: Int,
+        direction: String,
+        start: LogicalPoint,
+        end: LogicalPoint,
+        sourceWidth: Int,
+        sourceHeight: Int,
+    ): Boolean {
+        val baseline = LatestFrameProvider.currentGeneration()
+        logDiagnostic(
+            "[FRIEND_LIFE_SCROLL] phase=$phase attempt=$attempt direction=$direction " +
+                "baselineGeneration=$baseline",
+        )
+        val gestureSucceeded = java.util.concurrent.atomic.AtomicReference<Boolean?>(null)
+        val action = actionExecutor.swipeLogical(
+            "FRIEND_LIFE_SCROLL_$direction",
+            start,
+            end,
+            sourceWidth,
+            sourceHeight,
+            FRIEND_SCROLL_DURATION_MS,
+            FRIEND_GESTURE_TIMEOUT_MS,
+        ) { success, timedOut -> gestureSucceeded.set(success && !timedOut) }
+        reportActionResult(action)
+        if (!action.accepted) return false
+        val deadline = SystemClock.elapsedRealtime() + FRIEND_GESTURE_TIMEOUT_MS
+        while (isRunning() && action.pendingGesture?.isCompleted == false && SystemClock.elapsedRealtime() < deadline) {
+            delayOrStop(25L)
+        }
+        if (gestureSucceeded.get() != true) return false
+        val fresh = LatestFrameProvider.awaitNextSnapshot(baseline, FRIEND_RESCAN_TIMEOUT_MS) ?: return false
+        fresh.mat.release()
+        return true
+    }
+
+    private fun friendLifeInterrupt(state: BotStage, phase: String): FriendLifeWorkflowResult {
+        logDiagnostic(
+            "[FRIEND_LIFE_INTERRUPT] state=${state.name} phase=$phase action=return_to_state_machine",
+        )
+        return FriendLifeWorkflowResult.INTERRUPTED
+    }
+
+    private fun friendLifeAbort(phase: String, reason: String, attempts: Int): FriendLifeWorkflowResult {
+        logDiagnostic("[FRIEND_LIFE_ABORT] phase=$phase reason=$reason attempts=$attempts")
+        return FriendLifeWorkflowResult.FAILED
+    }
+
+    private fun friendTriggerText(trigger: FriendLifeTrigger): String = when (trigger) {
+        FriendLifeTrigger.SCHEDULED -> "SCHEDULED"
+        FriendLifeTrigger.TEST -> "TEST"
+        FriendLifeTrigger.SCHEDULED_AND_TEST -> "SCHEDULED+TEST"
     }
 
     private fun handleQuickLives(detector: StateDetector, sourceWidth: Int, sourceHeight: Int): Boolean {
@@ -2048,11 +2145,7 @@ class BotController(
     private fun handleNoMatchDiagnostics(detector: StateDetector, frame: FrameSnapshot) {
         val now = SystemClock.elapsedRealtime()
         if (now - lastNoMatchDiagnosticAt >= NO_MATCH_DIAGNOSTIC_INTERVAL_MS) {
-            val scores = if (group == DetectionGroup.PRE_GAME) {
-                detector.scoreStages(PRE_GAME_DIAGNOSTIC_STAGES, frame.mat)
-            } else {
-                emptyList()
-            }
+            val scores = detector.scoreStages(noMatchDiagnosticStages(group), frame.mat)
             val best = scores.maxByOrNull(DetectionResult::score)
             lastNoMatchBestCandidate = best?.state?.name ?: "NONE"
             lastNoMatchBestScore = best?.let { format(it.score) } ?: "none"
@@ -2214,6 +2307,7 @@ class BotController(
             BotStage.TIME_DEAL, BotStage.PREVIOUS_RESULTS, BotStage.GAME_SETTINGS,
             BotStage.MAINMENU, BotStage.PURCHASE_ITEM,
         )
+        private val FRIEND_LIFE_INTERRUPT_STAGES = ALWAYS + PRE_GAME.filterNot { it == BotStage.MAINMENU }
         private val IN_GAME = listOf(BotStage.GAME_RELAY, BotStage.GAME_COMPLETE, BotStage.GAME_START)
         private val FAST_START_PRIORITY = listOf(BotStage.GAME_START)
         private const val IN_GAME_FRAME_WAIT_MS = 500L
@@ -2225,6 +2319,14 @@ class BotController(
         private const val FAST_START_PRIORITY_WINDOW_NANOS = 8_000_000_000L
         private const val FRIEND_RESCAN_TIMEOUT_MS = 2_500L
         private const val FRIEND_POST_TAP_SETTLE_MS = 300L
+        private const val FRIEND_GESTURE_TIMEOUT_MS = 2_000L
+        private const val FRIEND_SCROLL_DURATION_MS = 150L
+        private const val FRIEND_LIFE_RETRY_DELAY_MS = 15L * 60L * 1000L
+        private const val MAX_FRIEND_TOP_SCROLLS = 30
+        private const val MAX_NO_BUTTON_SCROLLS = 30
+        private val FRIEND_TOP_REGION = Rect(149, 272, 54, 302)
+        private val FRIEND_BOTTOM_REGION = Rect(272, 545, 338, 80)
+        private val FRIEND_SEND_REGION = Rect(580, 250, 180, 400)
         private const val READINESS_POLL_INTERVAL_MS = 100L
         private const val READINESS_LOG_INTERVAL_MS = 1_000L
         private const val NO_MATCH_DIAGNOSTIC_INTERVAL_MS = 1_500L
@@ -2237,25 +2339,6 @@ class BotController(
         private const val MAINMENU_REVALIDATE_FRAME_TIMEOUT_MS = 1_000L
         private const val FRESH_FRAME_GATE_MAX_WAIT_MS = 7_500L
         private const val MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS = 3
-        private val PRE_GAME_DIAGNOSTIC_STAGES = listOf(
-            BotStage.MAINMENU,
-            BotStage.PURCHASE_ITEM,
-            BotStage.PARTY_RUN,
-            BotStage.PARTY_RUN_SEASON_REWARDS,
-            BotStage.TIME_DEAL,
-            BotStage.PREVIOUS_RESULTS,
-            BotStage.GAME_SETTINGS,
-            BotStage.DAILY_CHECKIN,
-            BotStage.DAILY_CHECKIN_BOOST_SET,
-            BotStage.DAILY_TREASURE,
-            BotStage.DAILY_NEW,
-            BotStage.CONGRATULATIONS,
-            BotStage.LEVEL_UP,
-            BotStage.RELIC_COMPLETE,
-            BotStage.RELIC_CLAIM,
-            BotStage.CONNECTION_LOST,
-            BotStage.INACTIVE,
-        )
         private val POST_GAME = listOf(BotStage.ANTI_BOT, BotStage.OVERTAKE_BREAK_SCORE, BotStage.MYSTERY_BOX, BotStage.MAINMENU)
         private val ALL_STAGE_ORDER = listOf(
             BotStage.GAME_START, BotStage.GAME_RELAY, BotStage.ANTI_BOT,
@@ -2300,4 +2383,13 @@ private data class FastPathTiming(
     val latestFramePublishedAtNanos: Long,
     val detectionStartedAtNanos: Long,
     val detectionMatchedAtNanos: Long,
+)
+
+private enum class FriendLifeWorkflowResult { COMPLETED, INTERRUPTED, FAILED }
+
+private data class FriendLifeFrameScan(
+    val interrupt: BotStage?,
+    val top: TemplateMatch,
+    val bottom: TemplateMatch,
+    val send: TemplateMatch,
 )

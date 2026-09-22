@@ -11,13 +11,37 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.Executors
 
+data class TelegramSendResult(
+    val success: Boolean,
+    val reason: String,
+    val httpCode: Int? = null,
+)
+
+internal fun shouldSendTelegramText(config: TelegramConfig, manualTest: Boolean): Boolean =
+    manualTest || config.sendTextNotifications
+
 class TelegramNotifier(context: Context) {
     private val appContext = context.applicationContext
     private val executor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "telegram-notifications")
     }
 
-    fun sendText(text: String) = enqueue { config -> sendTextBlocking(config, text) }
+    fun sendText(text: String) = enqueue { config -> sendTextBlocking(config, text, manualTest = false) }
+
+    fun sendTestMessage(text: String, callback: (TelegramSendResult) -> Unit) {
+        val config = TelegramConfigStore.load(appContext)
+        logConfig(config)
+        if (!config.enabled || !config.isValid) {
+            val reason = if (!config.enabled) "disabled" else "invalid_config:${config.invalidReason}"
+            val result = TelegramSendResult(false, reason)
+            log("[TELEGRAM_SEND] success=false reason=$reason method=sendMessage test=true")
+            callback(result)
+            return
+        }
+        executor.execute {
+            callback(sendTextBlocking(config, text, manualTest = true))
+        }
+    }
 
     fun sendPhoto(png: ByteArray, filename: String, caption: String) = enqueue { config ->
         if (!config.sendDebugImages) {
@@ -39,7 +63,7 @@ class TelegramNotifier(context: Context) {
             if (config.sendDebugImages) {
                 sendPhotoBlocking(config, normalizedPng, "no_match_normalized.png", caption)
             } else if (config.sendTextNotifications) {
-                sendTextBlocking(config, caption)
+                sendTextBlocking(config, caption, manualTest = false)
             }
         }
     }
@@ -55,12 +79,16 @@ class TelegramNotifier(context: Context) {
         executor.execute { block(config) }
     }
 
-    private fun sendTextBlocking(config: TelegramConfig, text: String) {
-        if (!config.sendTextNotifications) {
+    private fun sendTextBlocking(
+        config: TelegramConfig,
+        text: String,
+        manualTest: Boolean,
+    ): TelegramSendResult {
+        if (!shouldSendTelegramText(config, manualTest)) {
             log("[TELEGRAM_SEND] skipped=true reason=text_notifications_disabled")
-            return
+            return TelegramSendResult(false, "text_notifications_disabled")
         }
-        request(config, "sendMessage", "application/x-www-form-urlencoded") { output ->
+        return request(config, "sendMessage", "application/x-www-form-urlencoded") { output ->
             val body = "chat_id=${encode(config.chatId)}&text=${encode(text)}"
             output.write(body.toByteArray(StandardCharsets.UTF_8))
         }
@@ -88,7 +116,7 @@ class TelegramNotifier(context: Context) {
         method: String,
         contentType: String,
         writeBody: (BufferedOutputStream) -> Unit,
-    ) {
+    ): TelegramSendResult {
         var connection: HttpURLConnection? = null
         try {
             connection = URL("https://api.telegram.org/bot${config.botToken}/$method")
@@ -100,12 +128,17 @@ class TelegramNotifier(context: Context) {
             connection.setRequestProperty("Content-Type", contentType)
             BufferedOutputStream(connection.outputStream).use(writeBody)
             val code = connection.responseCode
-            if (code in 200..299) log("[TELEGRAM_SEND] success=true method=$method code=$code")
-            else log("[TELEGRAM_SEND] success=false reason=http_error method=$method code=$code")
+            if (code in 200..299) {
+                log("[TELEGRAM_SEND] success=true method=$method code=$code")
+                return TelegramSendResult(true, "success", code)
+            }
+            log("[TELEGRAM_SEND] success=false reason=http_error method=$method code=$code")
+            return TelegramSendResult(false, "http_error", code)
         } catch (error: Exception) {
             // Exception messages from URLConnection can contain the request URL;
             // never risk exposing the bot token in app logs.
             log("[TELEGRAM_SEND] success=false reason=exception type=${error.javaClass.simpleName}")
+            return TelegramSendResult(false, "exception:${error.javaClass.simpleName}")
         } finally {
             connection?.disconnect()
         }

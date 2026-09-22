@@ -21,4 +21,15 @@ class TelegramConfigTest {
     @Test fun completeConfigIsValid() {
         assertTrue(TelegramConfig(enabled = true, botToken = "secret", chatId = "123").isValid)
     }
+
+    @Test fun manualTestMessageIgnoresAutomaticTextPreference() {
+        val config = TelegramConfig(
+            enabled = true,
+            botToken = "secret",
+            chatId = "123",
+            sendTextNotifications = false,
+        )
+        assertFalse(shouldSendTelegramText(config, manualTest = false))
+        assertTrue(shouldSendTelegramText(config, manualTest = true))
+    }
 }

@@ -177,7 +177,20 @@ class BotControlOverlay(private val context: Context) {
         }
         panel.addView(boostGroup, matchWidth())
         addSwitch(detectRelic, "Detect Relic", options.detectRelic)
-        addSwitch(sendFriendLife, "Send Friend Life", options.sendFriendLife)
+        addSwitch(sendFriendLife, "Send Friend Life every 1 hour", options.sendFriendLife)
+        panel.addView(Button(context).apply {
+            text = "Run Friend Life Now (Test)"
+            setOnClickListener {
+                val message = when (BotRuntime.requestFriendLifeTest()) {
+                    FriendLifeTestRequest.BOT_STOPPED -> "Start Bot first"
+                    FriendLifeTestRequest.QUEUED -> "Friend Life test queued; waiting for MAINMENU"
+                    FriendLifeTestRequest.ALREADY_QUEUED -> "Friend Life test already queued"
+                    FriendLifeTestRequest.IN_PROGRESS -> "Friend Life workflow already running"
+                }
+                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                panelStatus.text = message
+            }
+        }, matchWidth())
         addSwitch(quickLives, "Receive/Send Lives after each game", options.receiveSendLivesAfterEachGame)
         addSwitch(saveDebugImages, "Save Debug Images", options.saveDebugImages)
 

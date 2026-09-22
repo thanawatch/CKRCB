@@ -119,6 +119,7 @@ class BotAccessibilityService : AccessibilityService() {
         endY: Int,
         durationMs: Long,
         logPrefix: String,
+        onCompleted: ((Long, Boolean) -> Unit)? = null,
     ): Boolean {
         val path = Path().apply {
             moveTo(startX.toFloat(), startY.toFloat())
@@ -130,10 +131,12 @@ class BotAccessibilityService : AccessibilityService() {
         val accepted = dispatchGesture(gesture, object : GestureResultCallback() {
             override fun onCompleted(gestureDescription: GestureDescription?) {
                 Log.i(CookieRunBotApplication.TAG, "$logPrefix completed=true")
+                onCompleted?.invoke(SystemClock.elapsedRealtimeNanos(), true)
             }
 
             override fun onCancelled(gestureDescription: GestureDescription?) {
                 Log.w(CookieRunBotApplication.TAG, "$logPrefix completed=false")
+                onCompleted?.invoke(SystemClock.elapsedRealtimeNanos(), false)
             }
         }, null)
         Log.i(CookieRunBotApplication.TAG, "$logPrefix dispatchGesture success=$accepted")
@@ -289,6 +292,7 @@ class BotAccessibilityService : AccessibilityService() {
             sourceHeight: Int,
             durationMs: Long,
             logPrefix: String,
+            onCompleted: ((Long, Boolean) -> Unit)? = null,
         ): Boolean {
             val service = instance
             if (service == null || !service.connected) {
@@ -316,6 +320,7 @@ class BotAccessibilityService : AccessibilityService() {
                 physicalEnd.y,
                 durationMs,
                 logPrefix,
+                onCompleted,
             )
         }
     }

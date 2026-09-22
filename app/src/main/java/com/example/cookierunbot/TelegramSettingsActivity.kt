@@ -17,6 +17,7 @@ import com.example.cookierunbot.notifications.TelegramConfigStore
 import com.example.cookierunbot.notifications.TelegramNotifier
 
 class TelegramSettingsActivity : ComponentActivity() {
+    private val notifier by lazy { TelegramNotifier(applicationContext) }
     private lateinit var enabled: Switch
     private lateinit var token: EditText
     private lateinit var chatId: EditText
@@ -55,20 +56,32 @@ class TelegramSettingsActivity : ComponentActivity() {
             text = "Save Telegram Settings"
             setOnClickListener {
                 val config = readConfig()
-                TelegramConfigStore.save(this@TelegramSettingsActivity, config)
-                renderStatus(config)
-                Toast.makeText(this@TelegramSettingsActivity, "Telegram settings saved", Toast.LENGTH_SHORT).show()
+                if (TelegramConfigStore.save(this@TelegramSettingsActivity, config)) {
+                    renderStatus(config)
+                    Toast.makeText(this@TelegramSettingsActivity, "Telegram settings saved", Toast.LENGTH_SHORT).show()
+                } else {
+                    status.text = "Status: Secure storage error"
+                    Toast.makeText(this@TelegramSettingsActivity, "Unable to protect Bot Token", Toast.LENGTH_LONG).show()
+                }
             }
         }, matchWidth())
         content.addView(Button(this).apply {
             text = "Send Test Message"
             setOnClickListener {
                 val config = readConfig()
-                TelegramConfigStore.save(this@TelegramSettingsActivity, config)
-                renderStatus(config)
-                if (config.enabled && config.isValid) {
-                    TelegramNotifier(applicationContext).sendText("RobotRun Telegram test successful")
-                    Toast.makeText(this@TelegramSettingsActivity, "Test message queued", Toast.LENGTH_SHORT).show()
+                val saved = TelegramConfigStore.save(this@TelegramSettingsActivity, config)
+                if (saved && config.enabled && config.isValid) {
+                    status.text = "Test: Sending…"
+                    notifier.sendTestMessage("RobotRun Telegram test successful") { result ->
+                        runOnUiThread {
+                            if (isFinishing || isDestroyed) return@runOnUiThread
+                            status.text = if (result.success) {
+                                "Test: Success (HTTP ${result.httpCode})"
+                            } else {
+                                "Test: Failed (${result.reason}${result.httpCode?.let { ", HTTP $it" }.orEmpty()})"
+                            }
+                        }
+                    }
                 } else {
                     Toast.makeText(
                         this@TelegramSettingsActivity,

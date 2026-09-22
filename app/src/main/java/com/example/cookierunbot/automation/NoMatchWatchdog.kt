@@ -36,7 +36,9 @@ class NoMatchWatchdog(
         }
         if (captures >= maximumCaptures || nowMs < nextCaptureAt) return null
         captures += 1
-        nextCaptureAt += repeatCaptureIntervalMs
+        // Schedule from the observation that actually triggered this capture.
+        // This deliberately drops missed deadlines after a detector pause/stall.
+        nextCaptureAt = nowMs + repeatCaptureIntervalMs
         return NoMatchCaptureDue(activeGroup, (nowMs - startedAt).coerceAtLeast(0L), captures)
     }
 

@@ -25,6 +25,8 @@ object BotRuntime : BotController.Listener {
     fun start(options: BotOptions) = controller?.start(options) ?: Unit
     fun stop() = controller?.stop() ?: Unit
     fun isRunning(): Boolean = controller?.isRunning() == true
+    fun requestFriendLifeTest(): FriendLifeTestRequest =
+        controller?.requestFriendLifeTest() ?: FriendLifeTestRequest.BOT_STOPPED
     fun diagnostics(): BotControllerDiagnostics = controller?.diagnostics()
         ?: BotControllerDiagnostics(
             running = false,

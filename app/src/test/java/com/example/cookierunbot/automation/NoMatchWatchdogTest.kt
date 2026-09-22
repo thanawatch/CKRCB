@@ -43,4 +43,36 @@ class NoMatchWatchdogTest {
         assertTrue(watchdog.markLimitReported())
         assertNull(watchdog.observeNoMatch(DetectionGroup.POST_GAME, 800_000L))
     }
+
+    @Test fun longObservationGapDoesNotBurstCatchUpCaptures() {
+        val watchdog = NoMatchWatchdog()
+        watchdog.observeNoMatch(DetectionGroup.POST_GAME, 1_000L)
+        assertEquals(1, watchdog.observeNoMatch(DetectionGroup.POST_GAME, 301_000L)?.captureIndex)
+        assertNull(watchdog.observeNoMatch(DetectionGroup.POST_GAME, 302_000L))
+        assertNull(watchdog.observeNoMatch(DetectionGroup.POST_GAME, 360_999L))
+        assertEquals(2, watchdog.observeNoMatch(DetectionGroup.POST_GAME, 361_000L)?.captureIndex)
+    }
+
+    @Test fun postGameDiagnosticsContainExpectedCandidates() {
+        val stages = noMatchDiagnosticStages(DetectionGroup.POST_GAME)
+        assertTrue(stages.containsAll(listOf(
+            BotStage.ANTI_BOT,
+            BotStage.OVERTAKE_BREAK_SCORE,
+            BotStage.MYSTERY_BOX,
+            BotStage.MAINMENU,
+            BotStage.CONNECTION_LOST,
+            BotStage.INACTIVE,
+        )))
+    }
+
+    @Test fun inGameDiagnosticsContainExpectedCandidates() {
+        val stages = noMatchDiagnosticStages(DetectionGroup.IN_GAME)
+        assertTrue(stages.containsAll(listOf(
+            BotStage.GAME_START,
+            BotStage.GAME_RELAY,
+            BotStage.GAME_COMPLETE,
+            BotStage.CONNECTION_LOST,
+            BotStage.INACTIVE,
+        )))
+    }
 }
