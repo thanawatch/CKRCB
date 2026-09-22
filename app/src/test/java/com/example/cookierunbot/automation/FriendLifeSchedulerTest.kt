@@ -226,4 +226,16 @@ class FriendLifeSchedulerTest {
             friendLifeSendDecision(FriendLifeSendStep.CONFIRM_2, null).nextStep,
         )
     }
+
+    @Test fun friendLifeRegionsContainTheirTemplates() {
+        assertTrue(friendLifeRoiContainsTemplate(100, 350, 53, 301))
+        assertTrue(friendLifeRoiContainsTemplate(390, 130, 340, 81))
+        assertTrue(friendLifeRoiContainsTemplate(180, 400, 111, 69))
+    }
+
+    @Test fun friendLifeRegionValidationRejectsSmallerRoi() {
+        assertFalse(friendLifeRoiContainsTemplate(52, 301, 53, 301))
+        assertFalse(friendLifeRoiContainsTemplate(340, 80, 340, 81))
+    }
+
 }

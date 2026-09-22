@@ -1386,7 +1386,13 @@ class BotController(
             val snapshot = LatestFrameProvider.snapshot() ?: return friendLifeAbort("FIND_TOP", "no_frame", attempt)
             val scan = scanFriendFrame(detector, snapshot)
             scan.interrupt?.let { return friendLifeInterrupt(it, "FIND_TOP") }
-            logDiagnostic("[FRIEND_LIFE_TOP] matched=${scan.top.matched} attempt=$attempt score=${format(scan.top.score)}")
+            if (scan.top.matched || attempt in FRIEND_TOP_DIAGNOSTIC_ATTEMPTS) {
+                logFriendLifeMatch(
+                    "TOP", scan.top, FRIEND_TOP_REGION,
+                    FRIEND_TOP_TEMPLATE_WIDTH, FRIEND_TOP_TEMPLATE_HEIGHT,
+                    snapshot.generation, attempt,
+                )
+            }
             if (scan.top.matched) break
             if (attempt == MAX_FRIEND_TOP_SCROLLS) return friendLifeAbort("FIND_TOP", "scroll_limit", attempt)
             if (!performFriendScroll(
@@ -1406,6 +1412,20 @@ class BotController(
             val snapshot = LatestFrameProvider.snapshot() ?: return friendLifeAbort("TRAVERSE", "no_frame", noButtonScrollCount)
             val scan = scanFriendFrame(detector, snapshot)
             scan.interrupt?.let { return friendLifeInterrupt(it, "TRAVERSE") }
+            if (scan.send.matched) {
+                logFriendLifeMatch(
+                    "SEND", scan.send, FRIEND_SEND_REGION,
+                    FRIEND_SEND_TEMPLATE_WIDTH, FRIEND_SEND_TEMPLATE_HEIGHT,
+                    snapshot.generation,
+                )
+            }
+            if (scan.bottom.matched) {
+                logFriendLifeMatch(
+                    "BOTTOM", scan.bottom, FRIEND_BOTTOM_REGION,
+                    FRIEND_BOTTOM_TEMPLATE_WIDTH, FRIEND_BOTTOM_TEMPLATE_HEIGHT,
+                    snapshot.generation,
+                )
+            }
             when (friendLifeTraversalDecision(
                 scan.send.matched,
                 scan.bottom.matched,
@@ -1479,6 +1499,9 @@ class BotController(
     }
 
     private fun scanFriendFrame(detector: StateDetector, snapshot: FrameSnapshot): FriendLifeFrameScan = try {
+        warnIfFriendLifeRoiInvalid("TOP", FRIEND_TOP_REGION, FRIEND_TOP_TEMPLATE_WIDTH, FRIEND_TOP_TEMPLATE_HEIGHT)
+        warnIfFriendLifeRoiInvalid("BOTTOM", FRIEND_BOTTOM_REGION, FRIEND_BOTTOM_TEMPLATE_WIDTH, FRIEND_BOTTOM_TEMPLATE_HEIGHT)
+        warnIfFriendLifeRoiInvalid("SEND", FRIEND_SEND_REGION, FRIEND_SEND_TEMPLATE_WIDTH, FRIEND_SEND_TEMPLATE_HEIGHT)
         val interrupt = detector.detectFirst(friendLifeInterruptStages(), snapshot.mat)?.state
         FriendLifeFrameScan(
             interrupt = interrupt,
@@ -1487,6 +1510,37 @@ class BotController(
             send = detector.detectTemplate(snapshot.mat, "FRIEND_SEND_LIFE_1.png", FRIEND_SEND_REGION),
         )
     } finally { snapshot.mat.release() }
+
+    private fun logFriendLifeMatch(
+        type: String,
+        match: TemplateMatch,
+        roi: Rect,
+        templateWidth: Int,
+        templateHeight: Int,
+        frameSequence: Long,
+        attempt: Int? = null,
+    ) {
+        val attemptText = attempt?.let { " attempt=$it" } ?: ""
+        logDiagnostic(
+            "[FRIEND_LIFE_MATCH] type=$type$attemptText score=${format(match.score)} " +
+                "matched=${match.matched} roi=(${roi.x},${roi.y},${roi.x + roi.width},${roi.y + roi.height}) " +
+                "roiSize=${roi.width}x${roi.height} templateSize=${templateWidth}x$templateHeight " +
+                "match=(${match.x},${match.y}) threshold=0.8 frameSequence=$frameSequence",
+        )
+    }
+
+    private fun warnIfFriendLifeRoiInvalid(
+        type: String,
+        roi: Rect,
+        templateWidth: Int,
+        templateHeight: Int,
+    ) {
+        if (friendLifeRoiContainsTemplate(roi.width, roi.height, templateWidth, templateHeight)) return
+        logDiagnostic(
+            "[FRIEND_LIFE_ROI_INVALID] type=$type roiSize=${roi.width}x${roi.height} " +
+                "templateSize=${templateWidth}x$templateHeight",
+        )
+    }
 
     private fun performFriendScroll(
         phase: String,
@@ -2408,9 +2462,16 @@ class BotController(
         private const val FRIEND_LIFE_RETRY_DELAY_MS = 15L * 60L * 1000L
         private const val MAX_FRIEND_TOP_SCROLLS = 30
         private const val MAX_NO_BUTTON_SCROLLS = 30
-        private val FRIEND_TOP_REGION = Rect(149, 272, 54, 302)
-        private val FRIEND_BOTTOM_REGION = Rect(272, 545, 338, 80)
+        private val FRIEND_TOP_REGION = Rect(130, 250, 100, 350)
+        private val FRIEND_BOTTOM_REGION = Rect(250, 520, 390, 130)
         private val FRIEND_SEND_REGION = Rect(580, 250, 180, 400)
+        private const val FRIEND_TOP_TEMPLATE_WIDTH = 53
+        private const val FRIEND_TOP_TEMPLATE_HEIGHT = 301
+        private const val FRIEND_BOTTOM_TEMPLATE_WIDTH = 340
+        private const val FRIEND_BOTTOM_TEMPLATE_HEIGHT = 81
+        private const val FRIEND_SEND_TEMPLATE_WIDTH = 111
+        private const val FRIEND_SEND_TEMPLATE_HEIGHT = 69
+        private val FRIEND_TOP_DIAGNOSTIC_ATTEMPTS = setOf(1, 5, 10, 20, 30)
         private const val READINESS_POLL_INTERVAL_MS = 100L
         private const val READINESS_LOG_INTERVAL_MS = 1_000L
         private const val NO_MATCH_DIAGNOSTIC_INTERVAL_MS = 1_500L

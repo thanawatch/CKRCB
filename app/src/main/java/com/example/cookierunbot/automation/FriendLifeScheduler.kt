@@ -106,6 +106,13 @@ internal fun friendLifeInterruptStages(
 internal fun isGenuinelyPostGestureFrame(frameGeneration: Long, postGestureBaseline: Long): Boolean =
     frameGeneration > postGestureBaseline
 
+internal fun friendLifeRoiContainsTemplate(
+    roiWidth: Int,
+    roiHeight: Int,
+    templateWidth: Int,
+    templateHeight: Int,
+): Boolean = roiWidth >= templateWidth && roiHeight >= templateHeight
+
 internal fun friendLifeTraversalDecision(
     sendButtonMatched: Boolean,
     bottomMatched: Boolean,
