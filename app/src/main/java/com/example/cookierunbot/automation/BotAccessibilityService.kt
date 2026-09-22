@@ -121,9 +121,24 @@ class BotAccessibilityService : AccessibilityService() {
         logPrefix: String,
         onCompleted: ((Long, Boolean) -> Unit)? = null,
     ): Boolean {
+        return dispatchPhysicalPath(
+            listOf(PhysicalPoint(startX, startY), PhysicalPoint(endX, endY)),
+            durationMs,
+            logPrefix,
+            onCompleted,
+        )
+    }
+
+    private fun dispatchPhysicalPath(
+        points: List<PhysicalPoint>,
+        durationMs: Long,
+        logPrefix: String,
+        onCompleted: ((Long, Boolean) -> Unit)? = null,
+    ): Boolean {
+        require(points.size >= 2) { "Swipe path requires at least two points" }
         val path = Path().apply {
-            moveTo(startX.toFloat(), startY.toFloat())
-            lineTo(endX.toFloat(), endY.toFloat())
+            moveTo(points.first().x.toFloat(), points.first().y.toFloat())
+            points.drop(1).forEach { point -> lineTo(point.x.toFloat(), point.y.toFloat()) }
         }
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0L, durationMs))
@@ -322,6 +337,35 @@ class BotAccessibilityService : AccessibilityService() {
                 logPrefix,
                 onCompleted,
             )
+        }
+
+        fun dispatchLogicalPath(
+            logicalPoints: List<LogicalPoint>,
+            sourceWidth: Int,
+            sourceHeight: Int,
+            durationMs: Long,
+            logPrefix: String,
+            onCompleted: ((Long, Boolean) -> Unit)? = null,
+        ): Boolean {
+            require(logicalPoints.size >= 2) { "Logical swipe path requires at least two points" }
+            val service = instance
+            if (service == null || !service.connected) {
+                Log.w(
+                    CookieRunBotApplication.TAG,
+                    "$logPrefix [ACTION] SKIPPED reason=ACCESSIBILITY_SERVICE_DISCONNECTED",
+                )
+                return false
+            }
+            val physicalPoints = logicalPoints.map { point ->
+                CoordinateMapper.logicalToPhysical(point.x, point.y, sourceWidth, sourceHeight)
+            }
+            Log.i(
+                CookieRunBotApplication.TAG,
+                "$logPrefix logicalPoints=${logicalPoints.joinToString(prefix = "[", postfix = "]") { "(${it.x},${it.y})" }} " +
+                    "physical=(${physicalPoints.first().x},${physicalPoints.first().y})->" +
+                    "(${physicalPoints.last().x},${physicalPoints.last().y}) durationMs=$durationMs",
+            )
+            return service.dispatchPhysicalPath(physicalPoints, durationMs, logPrefix, onCompleted)
         }
     }
 }

@@ -81,6 +81,50 @@ class ActionExecutor(private val context: Context? = null) {
         )
     }
 
+    fun swipeLogicalPath(
+        actionName: String,
+        points: List<LogicalPoint>,
+        sourceWidth: Int,
+        sourceHeight: Int,
+        durationMs: Long,
+        callbackTimeoutMs: Long,
+        onGestureCompleted: (success: Boolean, timedOut: Boolean) -> Unit,
+    ): ActionResult {
+        require(points.size >= 2) { "Swipe path requires at least two points" }
+        val start = points.first()
+        if (!logActionReadiness(actionName)) {
+            return ActionResult(actionName, false, start.x, start.y, null)
+        }
+        val lease = GestureArbiter.acquire(GesturePriority.NORMAL)
+            ?: return ActionResult(actionName, false, start.x, start.y, null)
+        val completion = GestureCompletionContext(
+            lease,
+            callbackTimeoutMs,
+        ) { _, success, timedOut -> onGestureCompleted(success, timedOut) }
+        completion.armTimeout(actionName)
+        val accepted = try {
+            BotAccessibilityService.dispatchLogicalPath(
+                points,
+                sourceWidth,
+                sourceHeight,
+                durationMs,
+                "[ACTION] $actionName",
+            ) { completedAt, success -> completion.complete(completedAt, success) }
+        } catch (error: Exception) {
+            completion.cancel()
+            throw error
+        }
+        if (!accepted) completion.cancel()
+        return ActionResult(
+            actionName,
+            accepted,
+            start.x,
+            start.y,
+            CoordinateMapper.logicalToPhysical(start.x, start.y, sourceWidth, sourceHeight),
+            pendingGesture = completion,
+        )
+    }
+
     fun tapDetectedPoint(
         actionName: String,
         point: LogicalPoint,

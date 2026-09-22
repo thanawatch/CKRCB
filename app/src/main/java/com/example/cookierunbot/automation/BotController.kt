@@ -1412,7 +1412,6 @@ class BotController(
                         LogicalPoint(435, 580),
                         sourceWidth,
                         sourceHeight,
-                        FRIEND_FIND_TOP_SWIPE_DURATION_MS,
                     ) == null) return friendLifeAbort("FIND_TOP", "gesture_or_fresh_frame_timeout", topSwipeCount)
                 recordFriendLifeProgress("TOP_SCROLL_COMPLETE", 0, 0)
                 val interrupt = detectFriendLifeInterrupt(detector)
@@ -1548,7 +1547,6 @@ class BotController(
                             LogicalPoint(435, 330),
                             sourceWidth,
                             sourceHeight,
-                            FRIEND_TRAVERSE_SWIPE_DURATION_MS,
                             beforeScrollSample,
                         ) ?: return friendLifeAbort("SCROLL_DOWN", "gesture_or_fresh_frame_timeout", traverseSwipeCount)
                     val verification = requireNotNull(scroll.verification)
@@ -1572,7 +1570,7 @@ class BotController(
                     val settleMs = randomMs(FRIEND_TRAVERSE_SETTLE_MIN_MS, FRIEND_TRAVERSE_SETTLE_MAX_MS)
                     logDiagnostic(
                         "[FRIEND_LIFE_SCROLL] phase=SCROLL_DOWN direction=TOWARD_BOTTOM " +
-                            "durationMs=$FRIEND_TRAVERSE_SWIPE_DURATION_MS settleMs=$settleMs",
+                            "durationMs=${scroll.durationMs} settleMs=$settleMs",
                     )
                     delayOrStop(settleMs)
                 }
@@ -1665,33 +1663,40 @@ class BotController(
         end: LogicalPoint,
         sourceWidth: Int,
         sourceHeight: Int,
-        durationMs: Long,
         verificationBefore: FriendScrollSample? = null,
     ): FriendScrollExecution? {
-        val physicalStart = CoordinateMapper.logicalToPhysical(start.x, start.y, sourceWidth, sourceHeight)
-        val physicalEnd = CoordinateMapper.logicalToPhysical(end.x, end.y, sourceWidth, sourceHeight)
+        val swipePhase = if (phase == "FIND_TOP") FriendSwipePhase.FIND_TOP else FriendSwipePhase.SCROLL_DOWN
+        val profile = FriendSwipeProfileGenerator.create(swipePhase, start, end)
+        val physicalPoints = profile.logicalPoints.map { point ->
+            CoordinateMapper.logicalToPhysical(point.x, point.y, sourceWidth, sourceHeight)
+        }
         val contentRect = ContentGeometryRegistry.current(sourceWidth, sourceHeight)?.contentRect
             ?: FrameNormalizer.contentTransform(sourceWidth, sourceHeight).contentRect
         logDiagnostic(
+            "[FRIEND_SWIPE_PROFILE] phase=$phase attempt=$attempt durationMs=${profile.durationMs} " +
+                "points=${profile.logicalPoints.joinToString(prefix = "[", postfix = "]") { "(${it.x},${it.y})" }}",
+        )
+        logDiagnostic(
             "[FRIEND_LIFE_SCROLL_MAP] phase=$phase direction=$direction " +
-                "logicalStart=(${start.x},${start.y}) logicalEnd=(${end.x},${end.y}) " +
-                "physicalStart=(${physicalStart.x},${physicalStart.y}) " +
-                "physicalEnd=(${physicalEnd.x},${physicalEnd.y}) " +
-                "contentRect=${rectText(contentRect)} sourceSize=${sourceWidth}x$sourceHeight",
+                "logicalStart=(${profile.logicalPoints.first().x},${profile.logicalPoints.first().y}) " +
+                "logicalEnd=(${profile.logicalPoints.last().x},${profile.logicalPoints.last().y}) " +
+                "physicalStart=(${physicalPoints.first().x},${physicalPoints.first().y}) " +
+                "physicalEnd=(${physicalPoints.last().x},${physicalPoints.last().y}) " +
+                "durationMs=${profile.durationMs} contentRect=${rectText(contentRect)} " +
+                "sourceSize=${sourceWidth}x$sourceHeight",
         )
         val preGestureGeneration = LatestFrameProvider.currentGeneration()
         logDiagnostic(
             "[FRIEND_LIFE_SCROLL] phase=$phase attempt=$attempt direction=$direction " +
-                "durationMs=$durationMs preGestureGeneration=$preGestureGeneration",
+                "durationMs=${profile.durationMs} preGestureGeneration=$preGestureGeneration",
         )
         val gestureSucceeded = java.util.concurrent.atomic.AtomicReference<Boolean?>(null)
-        val action = actionExecutor.swipeLogical(
+        val action = actionExecutor.swipeLogicalPath(
             "FRIEND_LIFE_SCROLL_$direction",
-            start,
-            end,
+            profile.logicalPoints,
             sourceWidth,
             sourceHeight,
-            durationMs,
+            profile.durationMs,
             FRIEND_GESTURE_TIMEOUT_MS,
         ) { success, timedOut -> gestureSucceeded.set(success && !timedOut) }
         reportActionResult(action)
@@ -1714,7 +1719,7 @@ class BotController(
         } finally {
             fresh.mat.release()
         }
-        return FriendScrollExecution(fresh.generation, verification)
+        return FriendScrollExecution(fresh.generation, profile.durationMs, verification)
     }
 
     private fun friendLifeTapStep(
@@ -2670,6 +2675,7 @@ private data class FriendLifeTapStepResult(
 
 private data class FriendScrollExecution(
     val afterGeneration: Long,
+    val durationMs: Long,
     val verification: FriendScrollVerification?,
 )
 
