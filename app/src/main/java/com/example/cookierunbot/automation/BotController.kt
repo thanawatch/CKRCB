@@ -16,6 +16,7 @@ import com.example.cookierunbot.diagnostics.PersistentTrace
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.statistics.RoundResultCollector
 import com.example.cookierunbot.statistics.MysteryBoxPhasePolicy
+import com.example.cookierunbot.notifications.TelegramNotifier
 import org.opencv.core.Mat
 import org.opencv.core.Rect
 import org.opencv.imgproc.Imgproc
@@ -47,6 +48,11 @@ class BotController(
     private val autoTapper = GameAutoTapper(actionExecutor)
     private val resultSaver = ResultImageSaver(context.applicationContext)
     private val noMatchDebugFrameSaver = NoMatchDebugFrameSaver(context.applicationContext)
+    private val telegramNotifier = TelegramNotifier(context.applicationContext)
+    private val noMatchWatchdog = NoMatchWatchdog()
+    private val diagnosticExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "bot-diagnostics")
+    }
     private val roundResultCollector = RoundResultCollector(context.applicationContext)
     private var executor: ExecutorService? = null
     private var running = false
@@ -73,11 +79,11 @@ class BotController(
     private var livesDoneForRound = true
     private var livesPendingAfterGame = false
     private var sendFriendCheckedForMainMenu = false
-    private var noMatchStartedAt = 0L
-    private var lastNoMatchObservedAt = 0L
     private var lastNoMatchDiagnosticAt = 0L
-    private var noMatchFrameSaved = false
     private var noMatchDebugFrameRequested = false
+    private var pendingNoMatchCapture: NoMatchCaptureDue? = null
+    private var lastNoMatchBestCandidate = "NONE"
+    private var lastNoMatchBestScore = "none"
     private var lastRewardPopupAction: BotStage? = null
     private var consecutiveRewardPopupActions = 0
     private val popupInstanceGuard = PopupInstanceGuard(MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS)
@@ -162,7 +168,7 @@ class BotController(
             pendingPreviousResultsGesture = null
             previousResultsSettleUntilElapsedRealtime = 0L
             pendingPreviousResultsRedetectBaseline = -1L
-            resetNoMatchEpisode()
+            resetNoMatchEpisode("bot_started")
             executor = Executors.newSingleThreadExecutor { runnable ->
                 Thread(runnable, "cookierun-bot-loop").apply { priority = Thread.NORM_PRIORITY - 1 }
             }.also { it.submit(::runLoop) }
@@ -200,6 +206,7 @@ class BotController(
         stoppedTimeDealGesture?.cancel()
         stoppedPreviousResultsGesture?.cancel()
         autoTapper.stop("BOT_EXIT")
+        resetNoMatchEpisode("bot_stopped")
         worker?.shutdownNow()
         Log.i(CookieRunBotApplication.TAG, "[BOT] Stopped")
         DebugLogStore.log("[BOT] Stopped")
@@ -462,7 +469,7 @@ class BotController(
                 if (group == DetectionGroup.IN_GAME && gameStartDetectedForRound) autoTapper.start()
                 return
             }
-            resetNoMatchEpisode()
+            resetNoMatchEpisode("state_matched", result.state)
             lastDetectionAt = now
             if (result.state == lastStage) {
                 if (result.state == BotStage.DAILY_NEW) {
@@ -1979,7 +1986,7 @@ class BotController(
 
     private fun updateGroup(next: DetectionGroup) {
         group = next
-        resetNoMatchEpisode()
+        resetNoMatchEpisode("group_changed")
         listener.onGroupChanged(next.name)
         Log.i(CookieRunBotApplication.TAG, "[BOT] detection_group=${next.name}")
         DebugLogStore.log("[STATE] detection_group=${next.name}")
@@ -2039,26 +2046,16 @@ class BotController(
     }
 
     private fun handleNoMatchDiagnostics(detector: StateDetector, frame: FrameSnapshot) {
-        if (group != DetectionGroup.PRE_GAME) {
-            resetNoMatchEpisode()
-            return
-        }
-
         val now = SystemClock.elapsedRealtime()
-        if (
-            noMatchStartedAt == 0L ||
-            now - lastNoMatchObservedAt > NO_MATCH_CONTINUITY_GAP_MS
-        ) {
-            noMatchStartedAt = now
-            lastNoMatchDiagnosticAt = 0L
-            noMatchFrameSaved = false
-            noMatchDebugFrameRequested = false
-        }
-        lastNoMatchObservedAt = now
-
         if (now - lastNoMatchDiagnosticAt >= NO_MATCH_DIAGNOSTIC_INTERVAL_MS) {
-            val scores = detector.scoreStages(PRE_GAME_DIAGNOSTIC_STAGES, frame.mat)
+            val scores = if (group == DetectionGroup.PRE_GAME) {
+                detector.scoreStages(PRE_GAME_DIAGNOSTIC_STAGES, frame.mat)
+            } else {
+                emptyList()
+            }
             val best = scores.maxByOrNull(DetectionResult::score)
+            lastNoMatchBestCandidate = best?.state?.name ?: "NONE"
+            lastNoMatchBestScore = best?.let { format(it.score) } ?: "none"
             scores.firstOrNull { it.state == BotStage.DAILY_NEW }?.let { dailyNew ->
                 logDiagnostic(
                     "[DAILY_NEW] noMatch score=${format(dailyNew.score)} " +
@@ -2079,21 +2076,40 @@ class BotController(
             lastNoMatchDiagnosticAt = now
         }
 
-        if (
-            options.saveDebugImages &&
-            !noMatchFrameSaved &&
-            now - noMatchStartedAt >= NO_MATCH_FRAME_DELAY_MS
-        ) {
-            if (!noMatchDebugFrameRequested) {
-                // Ask the capture producer to copy one raw+normalized pair. Raw frames
-                // are deliberately not copied on every video frame.
-                LatestFrameProvider.requestDebugFramePair(frame.generation)
-                noMatchDebugFrameRequested = true
-                return
-            }
+        if (noMatchDebugFrameRequested) {
             val pair = LatestFrameProvider.consumeDebugFramePair() ?: return
-            // Mark first so a storage failure cannot cause an encode attempt on every frame.
-            noMatchFrameSaved = true
+            val capture = pendingNoMatchCapture
+            noMatchDebugFrameRequested = false
+            pendingNoMatchCapture = null
+            if (capture != null) enqueueNoMatchDebugSave(pair, capture, pair.generation)
+        }
+
+        val due = noMatchWatchdog.observeNoMatch(group, now)
+        if (due != null && !noMatchDebugFrameRequested) {
+            logDiagnostic(
+                "[NO_MATCH_WATCHDOG] group=${due.group.name} durationMs=${due.durationMs} " +
+                    "captureIndex=${due.captureIndex} reason=prolonged_no_match",
+            )
+            LatestFrameProvider.requestDebugFramePair(frame.generation)
+            pendingNoMatchCapture = due
+            noMatchDebugFrameRequested = true
+            if (due.captureIndex == NO_MATCH_CAPTURE_LIMIT) {
+                logDiagnostic(
+                    "[NO_MATCH_WATCHDOG] group=${due.group.name} durationMs=${due.durationMs} " +
+                        "captureLimitReached=true",
+                )
+            }
+        }
+    }
+
+    private fun enqueueNoMatchDebugSave(
+        pair: com.example.cookierunbot.capture.DebugFramePair,
+        capture: NoMatchCaptureDue,
+        frameSequence: Long,
+    ) {
+        val bestCandidate = lastNoMatchBestCandidate
+        val bestScore = lastNoMatchBestScore
+        diagnosticExecutor.execute {
             try {
                 runCatching { noMatchDebugFrameSaver.save(pair) }
                     .onSuccess { paths ->
@@ -2101,29 +2117,45 @@ class BotController(
                             "[DEBUG_FRAME] rawSaved=${paths.raw} normalizedSaved=${paths.normalized} " +
                                 "sourceSize=${pair.rawMat.cols()}x${pair.rawMat.rows()} " +
                                 "contentRect=${rectText(pair.contentTransform.contentRect)} " +
-                                "normalizedSize=${pair.normalizedMat.cols()}x${pair.normalizedMat.rows()}",
+                                "normalizedSize=${pair.normalizedMat.cols()}x${pair.normalizedMat.rows()} " +
+                                "reason=NO_MATCH_WATCHDOG",
                         )
+                        val caption = "NO_MATCH_WATCHDOG\n" +
+                            "group=${capture.group.name}\n" +
+                            "durationMs=${capture.durationMs}\n" +
+                            "captureIndex=${capture.captureIndex}\n" +
+                            "frameSequence=$frameSequence\n" +
+                            "bestCandidate=$bestCandidate bestScore=$bestScore\n" +
+                            "reason=prolonged_no_match\nrawSaved=${paths.raw}"
+                        telegramNotifier.notifyNoMatch(paths.normalizedPng, caption)
                     }
                     .onFailure { error ->
                         logDiagnostic(
                             "[DEBUG_FRAME] saveFailed=${error.message} " +
                                 "sourceSize=${pair.rawMat.cols()}x${pair.rawMat.rows()} " +
                                 "contentRect=${rectText(pair.contentTransform.contentRect)} " +
-                                "normalizedSize=${pair.normalizedMat.cols()}x${pair.normalizedMat.rows()}",
+                                "normalizedSize=${pair.normalizedMat.cols()}x${pair.normalizedMat.rows()} " +
+                                "reason=NO_MATCH_WATCHDOG",
                         )
                     }
-            } finally {
-                pair.release()
-            }
+            } finally { pair.release() }
         }
     }
 
-    private fun resetNoMatchEpisode() {
-        noMatchStartedAt = 0L
-        lastNoMatchObservedAt = 0L
+    private fun resetNoMatchEpisode(reason: String, state: BotStage? = null) {
+        val summary = noMatchWatchdog.reset(SystemClock.elapsedRealtime())
+        if (summary != null && reason == "state_matched") {
+            logDiagnostic(
+                "[NO_MATCH_WATCHDOG_RESET] previousGroup=${summary.group.name} " +
+                    "durationMs=${summary.durationMs} captures=${summary.captures} " +
+                    "reason=$reason state=${state?.name ?: "UNKNOWN"}",
+            )
+        }
         lastNoMatchDiagnosticAt = 0L
-        noMatchFrameSaved = false
         noMatchDebugFrameRequested = false
+        pendingNoMatchCapture = null
+        lastNoMatchBestCandidate = "NONE"
+        lastNoMatchBestScore = "none"
         LatestFrameProvider.cancelDebugFrameRequest()
     }
 
@@ -2196,9 +2228,8 @@ class BotController(
         private const val READINESS_POLL_INTERVAL_MS = 100L
         private const val READINESS_LOG_INTERVAL_MS = 1_000L
         private const val NO_MATCH_DIAGNOSTIC_INTERVAL_MS = 1_500L
-        private const val NO_MATCH_FRAME_DELAY_MS = 3_000L
+        private const val NO_MATCH_CAPTURE_LIMIT = 10
         private const val DETECT_FRAME_LOG_INTERVAL_MS = 2_000L
-        private const val NO_MATCH_CONTINUITY_GAP_MS = 1_000L
         private const val POPUP_FRESH_FRAME_TIMEOUT_MS = 2_500L
         private const val PREVIOUS_RESULTS_SETTLE_MS = 500L
         private const val PREVIOUS_RESULTS_CONFIRM_OFFSET_X = 153

@@ -307,6 +307,13 @@ class MainActivity : ComponentActivity() {
             }
         }, matchWidth())
 
+        content.addView(Button(this).apply {
+            text = "Telegram Notifications"
+            setOnClickListener {
+                startActivity(Intent(this@MainActivity, TelegramSettingsActivity::class.java))
+            }
+        }, matchWidth())
+
         botStatus = diagnosticLine(content)
         botState = diagnosticLine(content)
         botDetectionGroup = diagnosticLine(content)

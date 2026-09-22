@@ -4,12 +4,18 @@ import android.content.Context
 import com.example.cookierunbot.capture.DebugFramePair
 import com.example.cookierunbot.capture.FrameNormalizer
 import org.opencv.core.Mat
+import org.opencv.core.MatOfByte
+import org.opencv.imgcodecs.Imgcodecs
 import org.opencv.imgproc.Imgproc
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-data class DebugFramePaths(val raw: String, val normalized: String)
+data class DebugFramePaths(
+    val raw: String,
+    val normalized: String,
+    val normalizedPng: ByteArray,
+)
 
 /** Saves the raw source and the exact normalized frame consumed by OpenCV. */
 class NoMatchDebugFrameSaver(context: Context) {
@@ -28,6 +34,7 @@ class NoMatchDebugFrameSaver(context: Context) {
         return DebugFramePaths(
             raw = saveRgba(pair.rawMat, rawName),
             normalized = saveRgba(pair.normalizedMat, normalizedName),
+            normalizedPng = encodePng(pair.normalizedMat),
         )
     }
 
@@ -39,5 +46,13 @@ class NoMatchDebugFrameSaver(context: Context) {
         } finally {
             bgra.release()
         }
+    }
+
+    private fun encodePng(rgba: Mat): ByteArray {
+        val encoded = MatOfByte()
+        return try {
+            check(Imgcodecs.imencode(".png", rgba, encoded)) { "Unable to encode normalized debug frame" }
+            encoded.toArray()
+        } finally { encoded.release() }
     }
 }
