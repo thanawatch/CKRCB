@@ -243,57 +243,42 @@ class FriendLifeSchedulerTest {
         assertFalse(friendLifeRoiContainsTemplate(340, 80, 340, 81))
     }
 
-    @Test fun topSearchFoundImmediatelyDoesNotSwipe() {
+    @Test fun topRoundMatchedCompletesSearch() {
         assertEquals(
-            FriendLifeTopSearchDecision.FOUND,
-            friendLifeTopSearchDecision(matched = true, elapsedMs = 0L),
-        )
-        assertEquals(2_000L, FRIEND_TOP_SETTLE_MS)
-    }
-
-    @Test fun topSearchContinuesPastOldThirtySwipeLimitWhileUnderDeadline() {
-        // Swipe count is intentionally not part of the policy anymore.
-        assertEquals(
-            FriendLifeTopSearchDecision.SWIPE,
-            friendLifeTopSearchDecision(matched = false, elapsedMs = 59_999L),
+            FriendLifeTopRoundDecision.COMPLETE,
+            friendLifeTopRoundDecision(matched = true, round = 1),
         )
     }
 
-    @Test fun topSearchStopsSwipingAtDeadlineForOneFinalRecheck() {
+    @Test fun firstFailedTopRoundStartsSecondRound() {
         assertEquals(
-            FriendLifeTopSearchDecision.FINAL_RECHECK,
-            friendLifeTopSearchDecision(matched = false, elapsedMs = 60_000L),
-        )
-        assertEquals(
-            FriendLifeTopSearchDecision.FOUND,
-            friendLifeTopSearchDecision(matched = true, elapsedMs = 60_000L),
+            FriendLifeTopRoundDecision.NEXT_ROUND,
+            friendLifeTopRoundDecision(matched = false, round = 1),
         )
     }
 
-    @Test fun finalTopRecheckMatchedContinuesAndNotMatchedAborts() {
+    @Test fun twoFailedTopRoundsContinueToTraversalInsteadOfAborting() {
         assertEquals(
-            FriendLifeFinalTopDecision.CONTINUE_TRAVERSAL,
-            friendLifeFinalTopDecision(matched = true),
-        )
-        assertEquals(
-            FriendLifeFinalTopDecision.ABORT_TIMEOUT,
-            friendLifeFinalTopDecision(matched = false),
+            FriendLifeTopRoundDecision.CONTINUE_TRAVERSAL,
+            friendLifeTopRoundDecision(matched = false, round = 2),
         )
     }
 
-    @Test fun friendLifeUsesDedicatedThresholdWithoutChangingGlobalThreshold() {
-        assertTrue(templateScoreMatches(0.70, FRIEND_LIFE_MATCH_THRESHOLD))
-        assertFalse(templateScoreMatches(0.70, AutomationConfig.MATCH_THRESHOLD))
-        assertEquals(0.70, FRIEND_LIFE_MATCH_THRESHOLD, 0.0)
+    @Test fun friendLifeUsesConfiguredThresholdWithoutChangingGlobalThreshold() {
+        assertTrue(templateScoreMatches(0.80, FRIEND_LIFE_MATCH_THRESHOLD))
+        assertFalse(templateScoreMatches(0.79, FRIEND_LIFE_MATCH_THRESHOLD))
+        assertEquals(0.80, FRIEND_LIFE_MATCH_THRESHOLD, 0.0)
         assertEquals(0.80, AutomationConfig.MATCH_THRESHOLD, 0.0)
     }
 
     @Test fun friendLifeTimingConstantsMatchPolicy() {
-        assertEquals(60_000L, FRIEND_FIND_TOP_TIMEOUT_MS)
-        assertEquals(2_000L, FRIEND_FIND_TOP_SWIPE_DURATION_MS)
-        assertEquals(2_600L, FRIEND_TRAVERSE_SWIPE_DURATION_MS)
+        assertEquals(360L, FRIEND_FIND_TOP_SWIPE_DURATION_MS)
+        assertEquals(800L, FRIEND_TRAVERSE_SWIPE_DURATION_MS)
         assertEquals(3_500L, FRIEND_GESTURE_TIMEOUT_MS)
         assertEquals(60_000L, FRIEND_TRAVERSE_TIMEOUT_MS)
+        assertEquals(60_000L, FRIEND_TOP_SCROLL_ROUND_MS)
+        assertEquals(2_800L, FRIEND_TOP_CHECK_SETTLE_MS)
+        assertEquals(2, FRIEND_TOP_SEARCH_ROUNDS)
         assertEquals(1_000, FRIEND_TRAVERSE_SETTLE_MIN_MS)
         assertEquals(1_600, FRIEND_TRAVERSE_SETTLE_MAX_MS)
         assertEquals(3_660_000L, FRIEND_LIFE_INTERVAL_MS)

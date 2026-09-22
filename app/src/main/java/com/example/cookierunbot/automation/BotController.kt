@@ -1385,76 +1385,57 @@ class BotController(
     ): FriendLifeWorkflowResult {
         val startedAt = SystemClock.elapsedRealtime()
         logDiagnostic("[FRIEND_LIFE_WORKFLOW] start trigger=${friendTriggerText(trigger)}")
-        val findTopStartedAt = SystemClock.elapsedRealtime()
         var topSwipeCount = 0
-        while (isRunning()) {
-            val snapshot = LatestFrameProvider.snapshot()
-                ?: return friendLifeAbort("FIND_TOP", "no_frame", topSwipeCount)
-            val scan = scanFriendFrame(detector, snapshot)
-            scan.interrupt?.let { return friendLifeInterrupt(it, "FIND_TOP") }
-            val elapsedMs = SystemClock.elapsedRealtime() - findTopStartedAt
-            logDiagnostic(
-                "[FRIEND_LIFE_TOP_SEARCH] elapsedMs=$elapsedMs swipeCount=$topSwipeCount " +
-                    "score=${format(scan.top.score)} matched=${scan.top.matched} " +
-                    "threshold=${format(FRIEND_LIFE_MATCH_THRESHOLD)} frameSequence=${snapshot.generation}",
-            )
-            logFriendLifeMatch(
-                "TOP", scan.top, FRIEND_TOP_REGION,
-                FRIEND_TOP_TEMPLATE_WIDTH, FRIEND_TOP_TEMPLATE_HEIGHT,
-                snapshot.generation, topSwipeCount,
-            )
-            when (friendLifeTopSearchDecision(scan.top.matched, elapsedMs)) {
-                FriendLifeTopSearchDecision.FOUND -> {
-                    logDiagnostic(
-                        "[FRIEND_LIFE_TOP_FOUND] score=${format(scan.top.score)} elapsedMs=$elapsedMs " +
-                            "swipeCount=$topSwipeCount settleMs=$FRIEND_TOP_SETTLE_MS",
-                    )
-                    delayOrStop(FRIEND_TOP_SETTLE_MS)
-                    break
-                }
-                FriendLifeTopSearchDecision.SWIPE -> {
-                    topSwipeCount += 1
-                    if (!performFriendScroll(
-                            "FIND_TOP",
-                            topSwipeCount,
-                            "TOWARD_TOP",
-                            LogicalPoint(435, 350),
-                            LogicalPoint(435, 580),
-                            sourceWidth,
-                            sourceHeight,
-                            FRIEND_FIND_TOP_SWIPE_DURATION_MS,
-                        )) return friendLifeAbort("FIND_TOP", "gesture_or_fresh_frame_timeout", topSwipeCount)
-                }
-                FriendLifeTopSearchDecision.FINAL_RECHECK -> {
-                    logDiagnostic(
-                        "[FRIEND_LIFE_TOP_TIMEOUT] elapsedMs=$elapsedMs swipeCount=$topSwipeCount " +
-                            "action=WAIT_2S_AND_FINAL_RECHECK",
-                    )
-                    delayOrStop(FRIEND_TOP_SETTLE_MS)
-                    val baseline = LatestFrameProvider.currentGeneration()
-                    val finalFrame = LatestFrameProvider.awaitNextSnapshot(baseline, FRIEND_RESCAN_TIMEOUT_MS)
-                        ?: return friendLifeAbort("FIND_TOP", "final_fresh_frame_timeout", topSwipeCount)
-                    val finalScan = scanFriendFrame(detector, finalFrame)
-                    finalScan.interrupt?.let { return friendLifeInterrupt(it, "FIND_TOP_FINAL_RECHECK") }
-                    logDiagnostic(
-                        "[FRIEND_LIFE_TOP_FINAL_CHECK] score=${format(finalScan.top.score)} " +
-                            "matched=${finalScan.top.matched} threshold=${format(FRIEND_LIFE_MATCH_THRESHOLD)} " +
-                            "frameSequence=${finalFrame.generation}",
-                    )
-                    when (friendLifeFinalTopDecision(finalScan.top.matched)) {
-                        FriendLifeFinalTopDecision.ABORT_TIMEOUT ->
-                            return friendLifeAbort("FIND_TOP", "timeout_top_not_found", topSwipeCount)
-                        FriendLifeFinalTopDecision.CONTINUE_TRAVERSAL -> Unit
-                    }
-                    logDiagnostic(
-                        "[FRIEND_LIFE_TOP_FOUND] source=FINAL_RECHECK elapsedMs=" +
-                            "${SystemClock.elapsedRealtime() - findTopStartedAt} swipeCount=$topSwipeCount " +
-                            "settleMs=$FRIEND_TOP_SETTLE_MS",
-                    )
-                    delayOrStop(FRIEND_TOP_SETTLE_MS)
-                    break
-                }
+        var topFound = false
+        for (round in 1..FRIEND_TOP_SEARCH_ROUNDS) {
+            val roundStartedAt = SystemClock.elapsedRealtime()
+            while (isRunning() && SystemClock.elapsedRealtime() - roundStartedAt < FRIEND_TOP_SCROLL_ROUND_MS) {
+                val elapsedMs = SystemClock.elapsedRealtime() - roundStartedAt
+                logDiagnostic(
+                    "[FRIEND_LIFE_TOP_ROUND] round=$round/$FRIEND_TOP_SEARCH_ROUNDS " +
+                        "action=SCROLL elapsedMs=$elapsedMs",
+                )
+                topSwipeCount += 1
+                if (!performFriendScroll(
+                        "FIND_TOP",
+                        topSwipeCount,
+                        "TOWARD_TOP",
+                        LogicalPoint(435, 350),
+                        LogicalPoint(435, 580),
+                        sourceWidth,
+                        sourceHeight,
+                        FRIEND_FIND_TOP_SWIPE_DURATION_MS,
+                    )) return friendLifeAbort("FIND_TOP", "gesture_or_fresh_frame_timeout", topSwipeCount)
+                val interrupt = detectFriendLifeInterrupt(detector)
+                interrupt?.let { return friendLifeInterrupt(it, "FIND_TOP") }
             }
+            if (!isRunning()) return friendLifeAbort("FIND_TOP", "bot_stopped", topSwipeCount)
+            logDiagnostic(
+                "[FRIEND_LIFE_TOP_ROUND] round=$round/$FRIEND_TOP_SEARCH_ROUNDS " +
+                    "action=WAIT settleMs=$FRIEND_TOP_CHECK_SETTLE_MS",
+            )
+            delayOrStop(FRIEND_TOP_CHECK_SETTLE_MS)
+            val baseline = LatestFrameProvider.currentGeneration()
+            val checkFrame = LatestFrameProvider.awaitNextSnapshot(baseline, FRIEND_RESCAN_TIMEOUT_MS)
+                ?: return friendLifeAbort("FIND_TOP", "round_check_fresh_frame_timeout", topSwipeCount)
+            val checkScan = scanFriendFrame(detector, checkFrame)
+            checkScan.interrupt?.let { return friendLifeInterrupt(it, "FIND_TOP_ROUND_CHECK") }
+            logDiagnostic(
+                "[FRIEND_LIFE_TOP_ROUND_CHECK] round=$round/$FRIEND_TOP_SEARCH_ROUNDS " +
+                    "score=${format(checkScan.top.score)} matched=${checkScan.top.matched} " +
+                    "threshold=${format(FRIEND_LIFE_MATCH_THRESHOLD)} frameSequence=${checkFrame.generation}",
+            )
+            when (friendLifeTopRoundDecision(checkScan.top.matched, round)) {
+                FriendLifeTopRoundDecision.COMPLETE -> {
+                    topFound = true
+                    break
+                }
+                FriendLifeTopRoundDecision.NEXT_ROUND -> Unit
+                FriendLifeTopRoundDecision.CONTINUE_TRAVERSAL -> break
+            }
+        }
+        if (!topFound) {
+            logDiagnostic("[FRIEND_LIFE_TOP_CONTINUE] reason=top_not_found_after_2_rounds")
         }
 
         var sentCount = 0
@@ -1574,6 +1555,15 @@ class BotController(
             ),
         )
     } finally { snapshot.mat.release() }
+
+    private fun detectFriendLifeInterrupt(detector: StateDetector): BotStage? {
+        val snapshot = LatestFrameProvider.snapshot() ?: return null
+        return try {
+            detector.detectFirst(friendLifeInterruptStages(), snapshot.mat)?.state
+        } finally {
+            snapshot.mat.release()
+        }
+    }
 
     private fun logFriendLifeMatch(
         type: String,

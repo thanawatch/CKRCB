@@ -3,8 +3,7 @@ package com.example.cookierunbot.automation
 enum class FriendLifeTrigger { SCHEDULED, TEST, SCHEDULED_AND_TEST }
 enum class FriendLifeTestRequest { BOT_STOPPED, QUEUED, ALREADY_QUEUED, IN_PROGRESS }
 enum class FriendLifeTraversalDecision { SEND, COMPLETE, SCROLL_DOWN, ABORT_TIMEOUT }
-internal enum class FriendLifeTopSearchDecision { FOUND, SWIPE, FINAL_RECHECK }
-internal enum class FriendLifeFinalTopDecision { CONTINUE_TRAVERSAL, ABORT_TIMEOUT }
+internal enum class FriendLifeTopRoundDecision { COMPLETE, NEXT_ROUND, CONTINUE_TRAVERSAL }
 internal enum class FriendLifeSendStep { SEND_BUTTON, CONFIRM_1, CONFIRM_2, COMPLETE }
 
 internal data class FriendLifeSendDecision(
@@ -127,27 +126,24 @@ internal fun friendLifeTraversalDecision(
     else -> FriendLifeTraversalDecision.SCROLL_DOWN
 }
 
-internal fun friendLifeTopSearchDecision(
+internal fun friendLifeTopRoundDecision(
     matched: Boolean,
-    elapsedMs: Long,
-    timeoutMs: Long = FRIEND_FIND_TOP_TIMEOUT_MS,
-): FriendLifeTopSearchDecision = when {
-    matched -> FriendLifeTopSearchDecision.FOUND
-    elapsedMs >= timeoutMs -> FriendLifeTopSearchDecision.FINAL_RECHECK
-    else -> FriendLifeTopSearchDecision.SWIPE
+    round: Int,
+    totalRounds: Int = FRIEND_TOP_SEARCH_ROUNDS,
+): FriendLifeTopRoundDecision = when {
+    matched -> FriendLifeTopRoundDecision.COMPLETE
+    round < totalRounds -> FriendLifeTopRoundDecision.NEXT_ROUND
+    else -> FriendLifeTopRoundDecision.CONTINUE_TRAVERSAL
 }
 
-internal fun friendLifeFinalTopDecision(matched: Boolean): FriendLifeFinalTopDecision =
-    if (matched) FriendLifeFinalTopDecision.CONTINUE_TRAVERSAL
-    else FriendLifeFinalTopDecision.ABORT_TIMEOUT
-
 const val FRIEND_LIFE_INTERVAL_MS = 61L * 60L * 1000L
-internal const val FRIEND_FIND_TOP_TIMEOUT_MS = 60_000L
-internal const val FRIEND_FIND_TOP_SWIPE_DURATION_MS = 2_000L
-internal const val FRIEND_TRAVERSE_SWIPE_DURATION_MS = 2_600L
+internal const val FRIEND_FIND_TOP_SWIPE_DURATION_MS = 360L
+internal const val FRIEND_TRAVERSE_SWIPE_DURATION_MS = 800L
 internal const val FRIEND_GESTURE_TIMEOUT_MS = 3_500L
 internal const val FRIEND_TRAVERSE_TIMEOUT_MS = 60_000L
-internal const val FRIEND_TOP_SETTLE_MS = 2_000L
+internal const val FRIEND_TOP_SCROLL_ROUND_MS = 60_000L
+internal const val FRIEND_TOP_CHECK_SETTLE_MS = 2_800L
+internal const val FRIEND_TOP_SEARCH_ROUNDS = 2
 internal const val FRIEND_TRAVERSE_SETTLE_MIN_MS = 1_000
 internal const val FRIEND_TRAVERSE_SETTLE_MAX_MS = 1_600
-internal const val FRIEND_LIFE_MATCH_THRESHOLD = 0.70
+internal const val FRIEND_LIFE_MATCH_THRESHOLD = 0.80
