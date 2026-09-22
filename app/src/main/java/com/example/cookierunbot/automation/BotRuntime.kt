@@ -40,6 +40,8 @@ object BotRuntime : BotController.Listener {
             minimumFreshFrameGeneration = -1L,
             gestureBusy = false,
             pendingPopupAction = "NONE",
+            friendLifeWorkflowActive = false,
+            friendLifeLastProgressAgeMs = null,
         )
 
     override fun onRunningChanged(running: Boolean) = listener?.onRunningChanged(running) ?: Unit

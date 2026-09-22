@@ -51,21 +51,34 @@ class TelegramNotifier(context: Context) {
         }
     }
 
-    fun notifyNoMatch(normalizedPng: ByteArray, caption: String) {
+    fun notifyNoMatch(normalizedPng: ByteArray, caption: String): Boolean =
+        notifyDiagnosticImage(normalizedPng, "no_match_normalized.png", caption)
+
+    fun notifyDiagnosticImage(normalizedPng: ByteArray, filename: String, caption: String): Boolean {
         val config = TelegramConfigStore.load(appContext)
         logConfig(config)
-        if (!config.enabled) return
+        if (!config.enabled) return false
         if (!config.isValid) {
             log("[TELEGRAM_SEND] success=false reason=invalid_config detail=${config.invalidReason}")
-            return
+            return false
         }
+        if (!config.sendDebugImages && !config.sendTextNotifications) return false
         executor.execute {
-            if (config.sendDebugImages) {
-                sendPhotoBlocking(config, normalizedPng, "no_match_normalized.png", caption)
-            } else if (config.sendTextNotifications) {
-                sendTextBlocking(config, caption, manualTest = false)
+            runCatching {
+                if (config.sendDebugImages) {
+                    sendPhotoBlocking(config, normalizedPng, filename, caption)
+                } else {
+                    sendTextBlocking(config, caption, manualTest = false)
+                }
+            }.onFailure { error ->
+                log("[TELEGRAM_SEND] success=false reason=async_exception type=${error.javaClass.simpleName}")
             }
         }
+        return true
+    }
+
+    fun isDebugImageEnabled(): Boolean = TelegramConfigStore.load(appContext).let { config ->
+        config.enabled && config.isValid && config.sendDebugImages
     }
 
     private fun enqueue(block: (TelegramConfig) -> Unit) {

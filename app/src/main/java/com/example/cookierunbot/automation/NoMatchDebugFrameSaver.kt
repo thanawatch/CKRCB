@@ -34,8 +34,16 @@ class NoMatchDebugFrameSaver(context: Context) {
         return DebugFramePaths(
             raw = saveRgba(pair.rawMat, rawName),
             normalized = saveRgba(pair.normalizedMat, normalizedName),
-            normalizedPng = encodePng(pair.normalizedMat),
+            normalizedPng = encodeNormalizedPng(pair.normalizedMat),
         )
+    }
+
+    fun encodeNormalizedPng(normalizedRgba: Mat): ByteArray {
+        require(
+            normalizedRgba.cols() == FrameNormalizer.LOGICAL_WIDTH &&
+                normalizedRgba.rows() == FrameNormalizer.LOGICAL_HEIGHT,
+        ) { "Diagnostic frame must be normalized 1280x720" }
+        return encodePng(normalizedRgba)
     }
 
     private fun saveRgba(rgba: Mat, filename: String): String {

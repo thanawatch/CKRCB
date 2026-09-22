@@ -17,6 +17,7 @@ import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.statistics.RoundResultCollector
 import com.example.cookierunbot.statistics.MysteryBoxPhasePolicy
 import com.example.cookierunbot.notifications.TelegramNotifier
+import com.example.cookierunbot.notifications.TelegramDiagnosticImageGate
 import org.opencv.core.Mat
 import org.opencv.core.Rect
 import org.opencv.imgproc.Imgproc
@@ -90,6 +91,8 @@ class BotController(
     @Volatile private var minimumFreshFrameGeneration = -1L
     @Volatile private var currentHandler = "IDLE"
     @Volatile private var pendingPopupAction = "NONE"
+    @Volatile private var friendLifeWorkflowActive = false
+    @Volatile private var friendLifeLastProgressAt = 0L
     private var freshFrameGateWaitStartedAt = 0L
     private var pendingDailyNewTapGeneration = -1L
     private var pendingPartyRunSeasonRewardsGesture: GestureCancellation? = null
@@ -124,6 +127,10 @@ class BotController(
                 pendingTimeDealGesture?.isCompleted == false -> "TIME_DEAL"
                 pendingPreviousResultsGesture?.isCompleted == false -> "PREVIOUS_RESULTS"
                 else -> pendingPopupAction
+            },
+            friendLifeWorkflowActive = friendLifeWorkflowActive,
+            friendLifeLastProgressAgeMs = friendLifeLastProgressAt.takeIf { it > 0L }?.let {
+                (SystemClock.elapsedRealtime() - it).coerceAtLeast(0L)
             },
         )
     }
@@ -163,6 +170,8 @@ class BotController(
             freshFrameGateWaitStartedAt = 0L
             currentHandler = "IDLE"
             pendingPopupAction = "NONE"
+            friendLifeWorkflowActive = false
+            friendLifeLastProgressAt = 0L
             pendingDailyNewTapGeneration = -1L
             pendingPartyRunSeasonRewardsTapGeneration = -1L
             pendingPartyRunSeasonRewardsGesture = null
@@ -182,6 +191,7 @@ class BotController(
         PersistentTrace.log("[BOT] started options=$options")
         Log.i(CookieRunBotApplication.TAG, "[BOT] Options=$options")
         listener.onRunningChanged(true)
+        RuntimeDiagnosticsLogger.resetDetectorStall(context, "bot_started")
         updateGroup(DetectionGroup.PRE_GAME)
         listener.onStateChanged("WAITING_FOR_READINESS")
         RuntimeDiagnosticsLogger.log(context, "Start Bot requested")
@@ -211,7 +221,10 @@ class BotController(
         stoppedPreviousResultsGesture?.cancel()
         autoTapper.stop("BOT_EXIT")
         friendLifeScheduler.stop()
+        friendLifeWorkflowActive = false
+        friendLifeLastProgressAt = 0L
         resetNoMatchEpisode("bot_stopped")
+        RuntimeDiagnosticsLogger.resetDetectorStall(context, "bot_stopped")
         worker?.shutdownNow()
         Log.i(CookieRunBotApplication.TAG, "[BOT] Stopped")
         DebugLogStore.log("[BOT] Stopped")
@@ -975,7 +988,14 @@ class BotController(
                 return
             }
             logDiagnostic("[FRIEND_LIFE_PRECHECK] pending=true mainMenuValid=true action=begin")
-            when (handleMainMenuFriendLife(detector, sourceWidth, sourceHeight, friendTrigger)) {
+            friendLifeWorkflowActive = true
+            friendLifeLastProgressAt = SystemClock.elapsedRealtime()
+            val friendLifeResult = try {
+                handleMainMenuFriendLife(detector, sourceWidth, sourceHeight, friendTrigger)
+            } finally {
+                friendLifeWorkflowActive = false
+            }
+            when (friendLifeResult) {
                 FriendLifeWorkflowResult.COMPLETED -> {
                     val completedAt = SystemClock.elapsedRealtime()
                     friendLifeScheduler.complete(friendTrigger, completedAt)
@@ -1387,6 +1407,7 @@ class BotController(
         var lastProgressElapsedRealtime = startedAt
         fun recordFriendLifeProgress(event: String, sentCount: Int, traverseSwipeCount: Int) {
             lastProgressElapsedRealtime = SystemClock.elapsedRealtime()
+            friendLifeLastProgressAt = lastProgressElapsedRealtime
             logDiagnostic(
                 "[FRIEND_LIFE_PROGRESS] event=$event sentCount=$sentCount " +
                     "traverseSwipeCount=$traverseSwipeCount noProgressMs=0",
@@ -2498,7 +2519,18 @@ class BotController(
                             "frameSequence=$frameSequence\n" +
                             "bestCandidate=$bestCandidate bestScore=$bestScore\n" +
                             "reason=prolonged_no_match\nrawSaved=${paths.raw}"
-                        telegramNotifier.notifyNoMatch(paths.normalizedPng, caption)
+                        if (telegramNotifier.isDebugImageEnabled()) {
+                            if (TelegramDiagnosticImageGate.tryAcquire(SystemClock.elapsedRealtime())) {
+                                telegramNotifier.notifyNoMatch(paths.normalizedPng, caption)
+                            } else {
+                                logDiagnostic(
+                                    "[TELEGRAM_DIAG_SUPPRESS] reason=global_image_cooldown source=NO_MATCH",
+                                )
+                            }
+                        } else {
+                            // Preserve the existing optional text fallback when debug images are disabled.
+                            telegramNotifier.notifyNoMatch(paths.normalizedPng, caption)
+                        }
                     }
                     .onFailure { error ->
                         logDiagnostic(
@@ -2647,6 +2679,8 @@ data class BotControllerDiagnostics(
     val minimumFreshFrameGeneration: Long,
     val gestureBusy: Boolean,
     val pendingPopupAction: String,
+    val friendLifeWorkflowActive: Boolean,
+    val friendLifeLastProgressAgeMs: Long?,
 )
 
 private data class MainMenuRevalidation(
