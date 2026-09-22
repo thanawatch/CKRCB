@@ -2,7 +2,9 @@ package com.example.cookierunbot.automation
 
 enum class FriendLifeTrigger { SCHEDULED, TEST, SCHEDULED_AND_TEST }
 enum class FriendLifeTestRequest { BOT_STOPPED, QUEUED, ALREADY_QUEUED, IN_PROGRESS }
-enum class FriendLifeTraversalDecision { SEND, COMPLETE, SCROLL_DOWN, ABORT_TIMEOUT }
+enum class FriendLifeTraversalDecision {
+    SEND, COMPLETE, SCROLL_DOWN, ABORT_NO_PROGRESS, ABORT_ABSOLUTE_TIMEOUT,
+}
 internal enum class FriendLifeTopRoundDecision { COMPLETE, NEXT_ROUND, CONTINUE_TRAVERSAL }
 internal enum class FriendLifeSendStep { SEND_BUTTON, CONFIRM_1, CONFIRM_2, COMPLETE }
 
@@ -118,11 +120,14 @@ internal fun friendLifeTraversalDecision(
     sendButtonMatched: Boolean,
     bottomMatched: Boolean,
     elapsedMs: Long,
-    timeoutMs: Long = FRIEND_TRAVERSE_TIMEOUT_MS,
+    noProgressMs: Long,
+    noProgressTimeoutMs: Long = FRIEND_LIFE_NO_PROGRESS_TIMEOUT_MS,
+    absoluteTimeoutMs: Long = FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS,
 ): FriendLifeTraversalDecision = when {
     sendButtonMatched -> FriendLifeTraversalDecision.SEND
     bottomMatched -> FriendLifeTraversalDecision.COMPLETE
-    elapsedMs >= timeoutMs -> FriendLifeTraversalDecision.ABORT_TIMEOUT
+    elapsedMs >= absoluteTimeoutMs -> FriendLifeTraversalDecision.ABORT_ABSOLUTE_TIMEOUT
+    noProgressMs >= noProgressTimeoutMs -> FriendLifeTraversalDecision.ABORT_NO_PROGRESS
     else -> FriendLifeTraversalDecision.SCROLL_DOWN
 }
 
@@ -140,7 +145,9 @@ const val FRIEND_LIFE_INTERVAL_MS = 61L * 60L * 1000L
 internal const val FRIEND_FIND_TOP_SWIPE_DURATION_MS = 360L
 internal const val FRIEND_TRAVERSE_SWIPE_DURATION_MS = 800L
 internal const val FRIEND_GESTURE_TIMEOUT_MS = 3_500L
-internal const val FRIEND_TRAVERSE_TIMEOUT_MS = 60_000L
+internal const val FRIEND_LIFE_NO_PROGRESS_TIMEOUT_MS = 30_000L
+internal const val FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS = 10L * 60L * 1000L
+internal const val FRIEND_LIFE_WATCHDOG_LOG_INTERVAL_MS = 10_000L
 internal const val FRIEND_TOP_SCROLL_ROUND_MS = 60_000L
 internal const val FRIEND_TOP_CHECK_SETTLE_MS = 2_800L
 internal const val FRIEND_TOP_SEARCH_ROUNDS = 2

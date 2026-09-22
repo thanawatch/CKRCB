@@ -101,19 +101,59 @@ class FriendLifeSchedulerTest {
     @Test fun traversalDoesNotFinishUntilBottomIsVisible() {
         assertEquals(
             FriendLifeTraversalDecision.SCROLL_DOWN,
-            friendLifeTraversalDecision(false, false, 59_999L),
+            friendLifeTraversalDecision(false, false, 150_000L, 5_000L),
         )
         assertEquals(
             FriendLifeTraversalDecision.COMPLETE,
-            friendLifeTraversalDecision(false, true, 60_000L),
+            friendLifeTraversalDecision(false, true, 150_000L, 30_000L),
         )
         assertEquals(
-            FriendLifeTraversalDecision.ABORT_TIMEOUT,
-            friendLifeTraversalDecision(false, false, 60_000L),
+            FriendLifeTraversalDecision.ABORT_NO_PROGRESS,
+            friendLifeTraversalDecision(false, false, 150_000L, 30_000L),
         )
         assertEquals(
             FriendLifeTraversalDecision.SEND,
-            friendLifeTraversalDecision(true, false, 60_000L),
+            friendLifeTraversalDecision(true, false, 150_000L, 30_000L),
+        )
+    }
+
+    @Test fun longHealthyTraversalDoesNotTimeoutWhileProgressIsRecent() {
+        assertEquals(
+            FriendLifeTraversalDecision.SCROLL_DOWN,
+            friendLifeTraversalDecision(false, false, 5 * 60_000L, 1_000L),
+        )
+    }
+
+    @Test fun progressResetAllowsTwoTwentyFiveSecondWindows() {
+        assertEquals(
+            FriendLifeTraversalDecision.SCROLL_DOWN,
+            friendLifeTraversalDecision(false, false, 25_000L, 25_000L),
+        )
+        // A SEND completion resets lastProgressTime, so noProgressMs is 25 seconds again.
+        assertEquals(
+            FriendLifeTraversalDecision.SCROLL_DOWN,
+            friendLifeTraversalDecision(false, false, 50_000L, 25_000L),
+        )
+    }
+
+    @Test fun actualNoProgressStallAborts() {
+        assertEquals(
+            FriendLifeTraversalDecision.ABORT_NO_PROGRESS,
+            friendLifeTraversalDecision(false, false, 31_000L, 30_000L),
+        )
+    }
+
+    @Test fun bottomReachedCompletesInsteadOfTimingOut() {
+        assertEquals(
+            FriendLifeTraversalDecision.COMPLETE,
+            friendLifeTraversalDecision(false, true, 700_000L, 40_000L),
+        )
+    }
+
+    @Test fun absoluteSafetyTimeoutAbortsAbnormalTraversal() {
+        assertEquals(
+            FriendLifeTraversalDecision.ABORT_ABSOLUTE_TIMEOUT,
+            friendLifeTraversalDecision(false, false, FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS, 1_000L),
         )
     }
 
@@ -275,7 +315,8 @@ class FriendLifeSchedulerTest {
         assertEquals(360L, FRIEND_FIND_TOP_SWIPE_DURATION_MS)
         assertEquals(800L, FRIEND_TRAVERSE_SWIPE_DURATION_MS)
         assertEquals(3_500L, FRIEND_GESTURE_TIMEOUT_MS)
-        assertEquals(60_000L, FRIEND_TRAVERSE_TIMEOUT_MS)
+        assertEquals(30_000L, FRIEND_LIFE_NO_PROGRESS_TIMEOUT_MS)
+        assertEquals(600_000L, FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS)
         assertEquals(60_000L, FRIEND_TOP_SCROLL_ROUND_MS)
         assertEquals(2_800L, FRIEND_TOP_CHECK_SETTLE_MS)
         assertEquals(2, FRIEND_TOP_SEARCH_ROUNDS)

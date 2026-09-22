@@ -1384,6 +1384,14 @@ class BotController(
         trigger: FriendLifeTrigger,
     ): FriendLifeWorkflowResult {
         val startedAt = SystemClock.elapsedRealtime()
+        var lastProgressElapsedRealtime = startedAt
+        fun recordFriendLifeProgress(event: String, sentCount: Int, traverseSwipeCount: Int) {
+            lastProgressElapsedRealtime = SystemClock.elapsedRealtime()
+            logDiagnostic(
+                "[FRIEND_LIFE_PROGRESS] event=$event sentCount=$sentCount " +
+                    "traverseSwipeCount=$traverseSwipeCount noProgressMs=0",
+            )
+        }
         logDiagnostic("[FRIEND_LIFE_WORKFLOW] start trigger=${friendTriggerText(trigger)}")
         var topSwipeCount = 0
         var topFound = false
@@ -1406,6 +1414,7 @@ class BotController(
                         sourceHeight,
                         FRIEND_FIND_TOP_SWIPE_DURATION_MS,
                     )) return friendLifeAbort("FIND_TOP", "gesture_or_fresh_frame_timeout", topSwipeCount)
+                recordFriendLifeProgress("TOP_SCROLL_COMPLETE", 0, 0)
                 val interrupt = detectFriendLifeInterrupt(detector)
                 interrupt?.let { return friendLifeInterrupt(it, "FIND_TOP") }
             }
@@ -1428,6 +1437,7 @@ class BotController(
             when (friendLifeTopRoundDecision(checkScan.top.matched, round)) {
                 FriendLifeTopRoundDecision.COMPLETE -> {
                     topFound = true
+                    recordFriendLifeProgress("TOP_DETECTED", 0, 0)
                     break
                 }
                 FriendLifeTopRoundDecision.NEXT_ROUND -> Unit
@@ -1440,12 +1450,13 @@ class BotController(
 
         var sentCount = 0
         var traverseSwipeCount = 0
-        val traverseStartedAt = SystemClock.elapsedRealtime()
+        var lastWatchdogLogAt = 0L
         while (isRunning()) {
             val snapshot = LatestFrameProvider.snapshot() ?: return friendLifeAbort("TRAVERSE", "no_frame", traverseSwipeCount)
             val scan = scanFriendFrame(detector, snapshot)
             scan.interrupt?.let { return friendLifeInterrupt(it, "TRAVERSE") }
             if (scan.send.matched) {
+                recordFriendLifeProgress("SEND_DETECTED", sentCount, traverseSwipeCount)
                 logFriendLifeMatch(
                     "SEND", scan.send, FRIEND_SEND_REGION,
                     FRIEND_SEND_TEMPLATE_WIDTH, FRIEND_SEND_TEMPLATE_HEIGHT,
@@ -1453,17 +1464,29 @@ class BotController(
                 )
             }
             if (scan.bottom.matched) {
+                recordFriendLifeProgress("BOTTOM_DETECTED", sentCount, traverseSwipeCount)
                 logFriendLifeMatch(
                     "BOTTOM", scan.bottom, FRIEND_BOTTOM_REGION,
                     FRIEND_BOTTOM_TEMPLATE_WIDTH, FRIEND_BOTTOM_TEMPLATE_HEIGHT,
                     snapshot.generation,
                 )
             }
-            val traverseElapsedMs = SystemClock.elapsedRealtime() - traverseStartedAt
+            val watchdogNow = SystemClock.elapsedRealtime()
+            val friendLifeElapsedMs = watchdogNow - startedAt
+            val noProgressMs = watchdogNow - lastProgressElapsedRealtime
+            if (watchdogNow - lastWatchdogLogAt >= FRIEND_LIFE_WATCHDOG_LOG_INTERVAL_MS) {
+                logDiagnostic(
+                    "[FRIEND_LIFE_WATCHDOG] phase=TRAVERSE elapsedMs=$friendLifeElapsedMs " +
+                        "noProgressMs=$noProgressMs sentCount=$sentCount " +
+                        "traverseSwipeCount=$traverseSwipeCount",
+                )
+                lastWatchdogLogAt = watchdogNow
+            }
             when (friendLifeTraversalDecision(
                 scan.send.matched,
                 scan.bottom.matched,
-                traverseElapsedMs,
+                friendLifeElapsedMs,
+                noProgressMs,
             )) {
                 FriendLifeTraversalDecision.SEND -> {
                     val center = LogicalPoint(scan.send.x + scan.send.width / 2, scan.send.y + scan.send.height / 2)
@@ -1498,12 +1521,14 @@ class BotController(
                         decision.interrupt?.let { return friendLifeInterrupt(it, "AFTER_CONFIRM_2") }
                     }
                     sentCount += 1
+                    recordFriendLifeProgress("SEND_COMPLETE", sentCount, traverseSwipeCount)
                 }
                 FriendLifeTraversalDecision.COMPLETE -> {
                     logDiagnostic("[FRIEND_LIFE_BOTTOM] matched=true score=${format(scan.bottom.score)}")
                     logDiagnostic(
                         "[FRIEND_LIFE_COMPLETE] trigger=${friendTriggerText(trigger)} sentCount=$sentCount " +
-                            "durationMs=${SystemClock.elapsedRealtime() - startedAt} reason=bottom_reached",
+                            "traverseSwipeCount=$traverseSwipeCount " +
+                            "elapsedMs=${SystemClock.elapsedRealtime() - startedAt} reason=bottom_reached",
                     )
                     return FriendLifeWorkflowResult.COMPLETED
                 }
@@ -1511,7 +1536,7 @@ class BotController(
                     traverseSwipeCount += 1
                     logDiagnostic(
                         "[FRIEND_LIFE_SCAN] sendButtonMatched=false bottomMatched=false " +
-                            "traverseSwipeCount=$traverseSwipeCount elapsedMs=$traverseElapsedMs",
+                            "traverseSwipeCount=$traverseSwipeCount elapsedMs=$friendLifeElapsedMs",
                     )
                     if (!performFriendScroll(
                             "SCROLL_DOWN",
@@ -1523,6 +1548,7 @@ class BotController(
                             sourceHeight,
                             FRIEND_TRAVERSE_SWIPE_DURATION_MS,
                         )) return friendLifeAbort("SCROLL_DOWN", "gesture_or_fresh_frame_timeout", traverseSwipeCount)
+                    recordFriendLifeProgress("SCROLL_COMPLETE", sentCount, traverseSwipeCount)
                     val settleMs = randomMs(FRIEND_TRAVERSE_SETTLE_MIN_MS, FRIEND_TRAVERSE_SETTLE_MAX_MS)
                     logDiagnostic(
                         "[FRIEND_LIFE_SCROLL] phase=SCROLL_DOWN direction=TOWARD_BOTTOM " +
@@ -1530,8 +1556,22 @@ class BotController(
                     )
                     delayOrStop(settleMs)
                 }
-                FriendLifeTraversalDecision.ABORT_TIMEOUT ->
-                    return friendLifeAbort("TRAVERSE", "timeout", traverseSwipeCount)
+                FriendLifeTraversalDecision.ABORT_NO_PROGRESS -> {
+                    logDiagnostic(
+                        "[FRIEND_LIFE_ABORT] phase=TRAVERSE reason=no_progress_timeout " +
+                            "noProgressMs=$noProgressMs sentCount=$sentCount " +
+                            "traverseSwipeCount=$traverseSwipeCount",
+                    )
+                    return FriendLifeWorkflowResult.FAILED
+                }
+                FriendLifeTraversalDecision.ABORT_ABSOLUTE_TIMEOUT -> {
+                    logDiagnostic(
+                        "[FRIEND_LIFE_ABORT] phase=TRAVERSE reason=absolute_timeout " +
+                            "elapsedMs=$friendLifeElapsedMs sentCount=$sentCount " +
+                            "traverseSwipeCount=$traverseSwipeCount",
+                    )
+                    return FriendLifeWorkflowResult.FAILED
+                }
             }
         }
         return friendLifeAbort("TRAVERSE", "bot_stopped", traverseSwipeCount)
