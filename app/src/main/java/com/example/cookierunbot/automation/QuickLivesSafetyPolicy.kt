@@ -23,19 +23,18 @@ internal object QuickLivesSafetyPolicy {
                 reference = null
             }
             if (popupCandidate == null) {
+                // Only a popup-free frame may establish the trusted visual
+                // reference for this Mail phase.
                 if (fingerprint != null) reference = fingerprint
                 return knownMailTemplateMatched
             }
-            if (knownMailTemplateMatched) return true
             if (!mainMenuMatched || fingerprint == null) return false
-            val prior = reference
-            if (prior == null) {
-                // The first settled frame after a successful Mail action is the
-                // reference when this phase has no dedicated Mail template.
-                reference = fingerprint
-                return true
-            }
-            return !PopupFingerprinting.isMeaningfullyDifferent(prior, fingerprint)
+            // Never learn an untrusted popup candidate as the Mail reference.
+            val prior = reference ?: return false
+            // A Mail template can remain visible behind a real popup, so visual
+            // consistency with the already-trusted reference remains required.
+            if (PopupFingerprinting.isMeaningfullyDifferent(prior, fingerprint)) return false
+            return true
         }
     }
 
