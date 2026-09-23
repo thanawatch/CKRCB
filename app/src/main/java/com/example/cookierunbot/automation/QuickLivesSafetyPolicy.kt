@@ -14,6 +14,8 @@ internal object QuickLivesSafetyPolicy {
         // MAINMENU can remain visible beneath the Mail overlay. It is not an interrupt.
         first.alwaysState?.let { return it }
         confirmation?.alwaysState?.let { return it }
-        return first.popupState?.takeIf { it == confirmation?.popupState }
+        return first.popupState?.takeIf {
+            it == confirmation?.popupState && confirmation?.mainMenuMatched == false
+        }
     }
 }

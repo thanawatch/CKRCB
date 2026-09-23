@@ -27,6 +27,16 @@ class QuickLivesSafetyPolicyTest {
         )
     }
 
+    @Test fun stablePopupFalsePositiveDoesNotBeatMainMenuBehindMail() {
+        val mailSignal = signal(popupState = BotStage.PREVIOUS_RESULTS, mainMenuMatched = true)
+        assertNull(QuickLivesSafetyPolicy.interruptState(mailSignal, mailSignal))
+    }
+
+    @Test fun confirmedPopupWithoutMainMenuInterrupts() {
+        val popup = signal(popupState = BotStage.CONGRATULATIONS)
+        assertEquals(BotStage.CONGRATULATIONS, QuickLivesSafetyPolicy.interruptState(popup, popup))
+    }
+
     @Test fun alwaysStatesInterruptImmediately() {
         assertEquals(
             BotStage.CONNECTION_LOST,

@@ -1,25 +1,25 @@
 package com.example.cookierunbot.automation
 
-/** Remembers a prepared boost only while retrying Play on the same purchase screen. */
+/** Remembers an accepted boost purchase while retrying Play on the same purchase screen. */
 internal class PurchaseItemRetryState {
-    private var boostPrepared = false
+    private var boostPurchasePerformed = false
 
-    fun shouldPrepareBoost(enabled: Boolean): Boolean = enabled && !boostPrepared
+    fun shouldPrepareBoost(enabled: Boolean): Boolean = enabled && !boostPurchasePerformed
 
-    fun boostPrepared() {
-        boostPrepared = true
+    fun boostPurchasePerformed() {
+        boostPurchasePerformed = true
     }
 
     fun onDetectedStage(stage: BotStage) {
-        if (stage != BotStage.PURCHASE_ITEM) boostPrepared = false
+        if (stage != BotStage.PURCHASE_ITEM) boostPurchasePerformed = false
     }
 
     fun onPlayDispatch(accepted: Boolean): Boolean {
-        if (accepted) boostPrepared = false
+        if (accepted) boostPurchasePerformed = false
         return accepted
     }
 
     fun reset() {
-        boostPrepared = false
+        boostPurchasePerformed = false
     }
 }

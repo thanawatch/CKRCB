@@ -411,40 +411,49 @@ class BotController(
             previousResultsSettleUntilElapsedRealtime = 0L
             logDiagnostic("[PREVIOUS_RESULTS_SETTLE] completed=true waitMs=$PREVIOUS_RESULTS_SETTLE_MS")
         }
-        if (PopupFreshFramePolicy.blocks(frame.generation, minimumFreshFrameGeneration)) {
-            val now = SystemClock.elapsedRealtime()
-            if (freshFrameGateWaitStartedAt == 0L) freshFrameGateWaitStartedAt = now
-            if (now - freshFrameGateWaitStartedAt >= FRESH_FRAME_GATE_MAX_WAIT_MS) {
-                logDiagnostic(
-                    "[POPUP_FRESH_GATE] timeout=true frameGeneration=${frame.generation} " +
-                        "minimumFreshFrameGeneration=$minimumFreshFrameGeneration action=fail_open",
-                )
-                minimumFreshFrameGeneration = -1L
-                freshFrameGateWaitStartedAt = 0L
-                lastStage = null
+        val freshFrameAllowed = synchronized(lock) {
+            val baseline = minimumFreshFrameGeneration
+            if (PopupFreshFramePolicy.blocks(frame.generation, baseline)) {
+                val now = SystemClock.elapsedRealtime()
+                if (freshFrameGateWaitStartedAt == 0L) freshFrameGateWaitStartedAt = now
+                if (now - freshFrameGateWaitStartedAt >= FRESH_FRAME_GATE_MAX_WAIT_MS) {
+                    // Preserve the existing bounded fail-open, but never clear a
+                    // baseline installed after this check by a gesture callback.
+                    logDiagnostic(
+                        "[POPUP_FRESH_GATE] timeout=true frameGeneration=${frame.generation} " +
+                            "minimumFreshFrameGeneration=$baseline action=fail_open",
+                    )
+                    minimumFreshFrameGeneration = -1L
+                    freshFrameGateWaitStartedAt = 0L
+                    lastStage = null
+                    true
+                } else false
             } else {
-                listener.onStateChanged("WAITING_FOR_FRESH_POPUP_FRAME")
-                frame.mat.release()
-                return
+                if (baseline >= 0L) {
+                    Log.i(
+                        CookieRunBotApplication.TAG,
+                        "[POPUP] Fresh frame accepted generation=${frame.generation} after=$baseline",
+                    )
+                    minimumFreshFrameGeneration =
+                        PopupFreshFramePolicy.baselineAfterAcceptedFrame(frame.generation, baseline)
+                    val previousResultsBaseline = pendingPreviousResultsRedetectBaseline
+                    if (previousResultsBaseline >= 0L) {
+                        logDiagnostic(
+                            "[STATE_REDETECT] previous=PREVIOUS_RESULTS " +
+                                "baselineGeneration=$previousResultsBaseline freshFrameSequence=${frame.generation}",
+                        )
+                        pendingPreviousResultsRedetectBaseline = -1L
+                    }
+                }
+                freshFrameGateWaitStartedAt = 0L
+                true
             }
         }
-        if (minimumFreshFrameGeneration >= 0L) {
-            Log.i(
-                CookieRunBotApplication.TAG,
-                "[POPUP] Fresh frame accepted generation=${frame.generation} " +
-                    "after=$minimumFreshFrameGeneration",
-            )
-            minimumFreshFrameGeneration = -1L
-            val previousResultsBaseline = pendingPreviousResultsRedetectBaseline
-            if (previousResultsBaseline >= 0L) {
-                logDiagnostic(
-                    "[STATE_REDETECT] previous=PREVIOUS_RESULTS " +
-                        "baselineGeneration=$previousResultsBaseline freshFrameSequence=${frame.generation}",
-                )
-                pendingPreviousResultsRedetectBaseline = -1L
-            }
+        if (!freshFrameAllowed) {
+            listener.onStateChanged("WAITING_FOR_FRESH_POPUP_FRAME")
+            frame.mat.release()
+            return
         }
-        freshFrameGateWaitStartedAt = 0L
 
         try {
             synchronized(lock) {
@@ -726,6 +735,7 @@ class BotController(
             pendingPartyRunSeasonRewardsTapGeneration = -1L
             val baseline = LatestFrameProvider.currentGeneration()
             minimumFreshFrameGeneration = baseline
+            freshFrameGateWaitStartedAt = 0L
             lastStage = null
             updateGroup(DetectionGroup.PRE_GAME)
             return@synchronized
@@ -743,6 +753,7 @@ class BotController(
         // The detector loop owns the fresh-frame wait. A gesture callback may run
         // on the Accessibility main thread and must not wait for capture here.
         minimumFreshFrameGeneration = postCallbackBaseline
+        freshFrameGateWaitStartedAt = 0L
         lastStage = null
         updateGroup(DetectionGroup.PRE_GAME)
         logDiagnostic(
@@ -825,6 +836,7 @@ class BotController(
             timeDealCallbackFailures += 1
             val baseline = LatestFrameProvider.currentGeneration()
             minimumFreshFrameGeneration = baseline
+            freshFrameGateWaitStartedAt = 0L
             lastStage = null
             updateGroup(DetectionGroup.PRE_GAME)
             return@synchronized
@@ -835,6 +847,7 @@ class BotController(
         logDiagnostic("[POPUP] state=TIME_DEAL postCallbackBaselineGeneration=$postCallbackBaseline")
         recordRewardPopupAction(BotStage.TIME_DEAL)
         minimumFreshFrameGeneration = postCallbackBaseline
+        freshFrameGateWaitStartedAt = 0L
         lastStage = null
         updateGroup(DetectionGroup.PRE_GAME)
         logDiagnostic(
@@ -849,7 +862,7 @@ class BotController(
         sourceHeight: Int,
         frameGeneration: Long,
     ) {
-        if (!isRunning()) return
+        if (!isRunning() || PopupFreshFramePolicy.blocks(frameGeneration, minimumFreshFrameGeneration)) return
         if (synchronized(lock) { pendingPreviousResultsGesture?.isCompleted == false }) {
             logDiagnostic("[PREVIOUS_RESULTS_SKIP] reason=callback_pending")
             return
@@ -891,7 +904,9 @@ class BotController(
         val runGeneration = synchronized(lock) { botRunGeneration }
         logBotActionRequest("PREVIOUS_RESULTS")
         val action = synchronized(lock) {
-            if (!isCurrentWorkerRunLocked()) {
+            if (!isCurrentWorkerRunLocked() ||
+                PopupFreshFramePolicy.blocks(frameGeneration, minimumFreshFrameGeneration)
+            ) {
                 actionSkippedBotStopped("PREVIOUS_RESULTS")
                 ActionResult("PREVIOUS_RESULTS", false, 0, 0, null)
             } else {
@@ -934,19 +949,21 @@ class BotController(
         runGeneration: Long,
         success: Boolean,
         timedOut: Boolean,
-    ) {
-        if (!synchronized(lock) { running && botRunGeneration == runGeneration }) return
-        synchronized(lock) { pendingPreviousResultsGesture = null }
+    ) = synchronized(lock) {
+        if (!running || botRunGeneration != runGeneration) return@synchronized
+        pendingPreviousResultsGesture = null
         if (timedOut) logDiagnostic("[GESTURE] state=PREVIOUS_RESULTS callback=TIMEOUT")
         if (!success) {
-            lastStage = null
             minimumFreshFrameGeneration = LatestFrameProvider.currentGeneration()
+            freshFrameGateWaitStartedAt = 0L
+            lastStage = null
             updateGroup(DetectionGroup.PRE_GAME)
-            return
+            return@synchronized
         }
 
         val postCallbackBaseline = LatestFrameProvider.currentGeneration()
         minimumFreshFrameGeneration = postCallbackBaseline
+        freshFrameGateWaitStartedAt = 0L
         pendingPreviousResultsRedetectBaseline = postCallbackBaseline
         previousResultsSettleUntilElapsedRealtime =
             SystemClock.elapsedRealtime() + PREVIOUS_RESULTS_SETTLE_MS
@@ -1175,12 +1192,6 @@ class BotController(
     private fun handlePurchaseItem(detector: StateDetector, sourceWidth: Int, sourceHeight: Int) {
         if (purchaseItemRetryState.shouldPrepareBoost(options.useDesiredRandomBoost)) {
             val ready = purchaseDesiredBoost(detector, sourceWidth, sourceHeight)
-            if (ready) {
-                synchronized(lock) {
-                    if (!isCurrentWorkerRunLocked()) return
-                    purchaseItemRetryState.boostPrepared()
-                }
-            }
             Log.i(
                 CookieRunBotApplication.TAG,
                 "[BOOST_FLOW] desired=${boostLogName()} ready=$ready next=PLAY_GAME",
@@ -1237,6 +1248,10 @@ class BotController(
         delayOrStop(randomMs(1000, 2000))
         if (!performTap("MULTI_BUY", AutomationConfig.MULTI_BUY, sourceWidth, sourceHeight)) {
             return false
+        }
+        synchronized(lock) {
+            if (!isCurrentWorkerRunLocked()) return false
+            purchaseItemRetryState.boostPurchasePerformed()
         }
         // Do not accept a frame captured before MULTI_BUY. The wait below starts
         // strictly after this generation and consumes only the latest frame.
@@ -2089,7 +2104,7 @@ class BotController(
         return QuickLivesSafetyPolicy.ScreenSignal(
             alwaysState = always,
             popupState = popup,
-            mainMenuMatched = if (always == null && popup == null) {
+            mainMenuMatched = if (always == null) {
                 detector.detect(BotStage.MAINMENU, frame).matched
             } else false,
         )
