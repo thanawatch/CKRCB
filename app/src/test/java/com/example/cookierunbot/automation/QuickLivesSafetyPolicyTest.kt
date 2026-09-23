@@ -8,27 +8,38 @@ import org.junit.Test
 
 class QuickLivesSafetyPolicyTest {
     @Test fun mailScreenContinuesUntilDeadline() {
-        assertNull(QuickLivesSafetyPolicy.interruptState(null, null, false))
+        assertNull(QuickLivesSafetyPolicy.interruptState(signal()))
         assertFalse(QuickLivesSafetyPolicy.timedOut(119_999L, 120_000L))
         assertTrue(QuickLivesSafetyPolicy.timedOut(120_000L, 120_000L))
     }
 
-    @Test fun popupOrMainMenuReturnsControlToDetector() {
-        assertEquals(
-            BotStage.PREVIOUS_RESULTS,
-            QuickLivesSafetyPolicy.interruptState(null, BotStage.PREVIOUS_RESULTS, false),
-        )
-        assertEquals(BotStage.MAINMENU, QuickLivesSafetyPolicy.interruptState(null, null, true))
+    @Test fun mainMenuVisibleBehindMailDoesNotInterrupt() {
+        assertNull(QuickLivesSafetyPolicy.interruptState(signal(mainMenuMatched = true)))
     }
 
-    @Test fun connectionLostHasPriorityOverPopup() {
+    @Test fun popupNeedsConfirmationOnAnotherFrame() {
+        val popup = signal(popupState = BotStage.PREVIOUS_RESULTS, mainMenuMatched = true)
+        assertNull(QuickLivesSafetyPolicy.interruptState(popup))
+        assertNull(QuickLivesSafetyPolicy.interruptState(popup, signal(mainMenuMatched = true)))
+        assertEquals(
+            BotStage.PREVIOUS_RESULTS,
+            QuickLivesSafetyPolicy.interruptState(popup, signal(popupState = BotStage.PREVIOUS_RESULTS)),
+        )
+    }
+
+    @Test fun alwaysStatesInterruptImmediately() {
         assertEquals(
             BotStage.CONNECTION_LOST,
             QuickLivesSafetyPolicy.interruptState(
-                BotStage.CONNECTION_LOST,
-                BotStage.CONGRATULATIONS,
-                true,
+                signal(BotStage.CONNECTION_LOST, BotStage.CONGRATULATIONS, true),
             ),
         )
+        assertEquals(BotStage.INACTIVE, QuickLivesSafetyPolicy.interruptState(signal(BotStage.INACTIVE)))
     }
+
+    private fun signal(
+        alwaysState: BotStage? = null,
+        popupState: BotStage? = null,
+        mainMenuMatched: Boolean = false,
+    ) = QuickLivesSafetyPolicy.ScreenSignal(alwaysState, popupState, mainMenuMatched)
 }

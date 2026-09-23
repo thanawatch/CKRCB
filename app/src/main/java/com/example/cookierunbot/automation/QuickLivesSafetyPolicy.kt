@@ -4,9 +4,16 @@ package com.example.cookierunbot.automation
 internal object QuickLivesSafetyPolicy {
     fun timedOut(nowMs: Long, deadlineMs: Long): Boolean = nowMs >= deadlineMs
 
-    fun interruptState(
-        alwaysState: BotStage?,
-        popupState: BotStage?,
-        mainMenuMatched: Boolean,
-    ): BotStage? = alwaysState ?: popupState ?: BotStage.MAINMENU.takeIf { mainMenuMatched }
+    data class ScreenSignal(
+        val alwaysState: BotStage?,
+        val popupState: BotStage?,
+        val mainMenuMatched: Boolean,
+    )
+
+    fun interruptState(first: ScreenSignal, confirmation: ScreenSignal? = null): BotStage? {
+        // MAINMENU can remain visible beneath the Mail overlay. It is not an interrupt.
+        first.alwaysState?.let { return it }
+        confirmation?.alwaysState?.let { return it }
+        return first.popupState?.takeIf { it == confirmation?.popupState }
+    }
 }
