@@ -20,7 +20,21 @@ class PurchaseItemRetryStateTest {
         val retry = PurchaseItemRetryState()
         retry.boostPurchasePerformed() // MULTI_BUY accepted before the template wait times out.
         assertFalse(retry.onPlayDispatch(false))
+        retry.onDetectedStage(BotStage.TIME_DEAL)
         retry.onDetectedStage(BotStage.PURCHASE_ITEM)
+        assertFalse(retry.shouldPrepareBoost(true))
+    }
+
+    @Test fun temporaryPreGamePopupsDoNotClearAcceptedBoostPurchase() {
+        val retry = PurchaseItemRetryState()
+        retry.boostPurchasePerformed()
+        listOf(
+            BotStage.TIME_DEAL,
+            BotStage.PREVIOUS_RESULTS,
+            BotStage.PARTY_RUN_SEASON_REWARDS,
+            BotStage.DAILY_CHECKIN,
+            BotStage.CONGRATULATIONS,
+        ).forEach(retry::onDetectedStage)
         assertFalse(retry.shouldPrepareBoost(true))
     }
 

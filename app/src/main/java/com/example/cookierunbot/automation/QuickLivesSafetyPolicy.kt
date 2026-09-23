@@ -8,14 +8,17 @@ internal object QuickLivesSafetyPolicy {
         val alwaysState: BotStage?,
         val popupState: BotStage?,
         val mainMenuMatched: Boolean,
+        val expectedMailScreenMatched: Boolean = false,
     )
 
     fun interruptState(first: ScreenSignal, confirmation: ScreenSignal? = null): BotStage? {
         // MAINMENU can remain visible beneath the Mail overlay. It is not an interrupt.
         first.alwaysState?.let { return it }
         confirmation?.alwaysState?.let { return it }
+        val confirmedMailContext = confirmation?.mainMenuMatched == true &&
+            confirmation?.expectedMailScreenMatched == true
         return first.popupState?.takeIf {
-            it == confirmation?.popupState && confirmation?.mainMenuMatched == false
+            it == confirmation?.popupState && !confirmedMailContext
         }
     }
 }

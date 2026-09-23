@@ -542,10 +542,14 @@ class BotController(
                 if (group == DetectionGroup.IN_GAME && gameStartDetectedForRound) autoTapper.start()
                 return
             }
-            synchronized(lock) {
-                if (!isCurrentWorkerRunLocked()) return
-                purchaseItemRetryState.onDetectedStage(result.state)
+            val stageRecorded = synchronized(lock) {
+                PopupFreshFramePolicy.applySemanticMutationIfFresh(
+                    frame.generation,
+                    minimumFreshFrameGeneration,
+                    isCurrentWorkerRunLocked(),
+                ) { purchaseItemRetryState.onDetectedStage(result.state) }
             }
+            if (!stageRecorded) return
             resetNoMatchEpisode("state_matched", result.state)
             lastDetectionAt = now
             if (result.state == lastStage) {
@@ -2101,12 +2105,19 @@ class BotController(
             PRE_GAME.filterNot { it == BotStage.MAINMENU || (!options.detectRelic && it in RELIC_STAGES) },
             frame,
         )?.state else null
+        val mainMenuMatched = if (always == null) detector.detect(BotStage.MAINMENU, frame).matched else false
+        // A known Mail-specific template is positive evidence that a conflicting
+        // PRE_GAME match is on the normal Mail screen, not a popup interruption.
+        val expectedMailScreenMatched = popup != null && mainMenuMatched && (
+            detector.detectTemplate(frame, "NO_LIVES_TO_RECEIVE_1.png", Rect(454, 223, 370, 352)).matched ||
+                detector.detectTemplate(frame, "CONFIRM_SEND_LIFE_1.png", Rect(640, 402, 304, 113)).matched ||
+                detector.detectTemplate(frame, "ALL_LIVES_RECEIVED_AND_SENT_1.png", Rect(396, 267, 486, 79)).matched
+            )
         return QuickLivesSafetyPolicy.ScreenSignal(
             alwaysState = always,
             popupState = popup,
-            mainMenuMatched = if (always == null) {
-                detector.detect(BotStage.MAINMENU, frame).matched
-            } else false,
+            mainMenuMatched = mainMenuMatched,
+            expectedMailScreenMatched = expectedMailScreenMatched,
         )
     }
 

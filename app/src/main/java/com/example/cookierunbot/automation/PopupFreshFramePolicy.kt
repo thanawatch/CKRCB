@@ -6,4 +6,16 @@ internal object PopupFreshFramePolicy {
 
     fun baselineAfterAcceptedFrame(frameGeneration: Long, currentBaseline: Long): Long =
         if (currentBaseline >= 0L && frameGeneration > currentBaseline) -1L else currentBaseline
+
+    /** Caller holds the controller lock while reading the current baseline and mutating state. */
+    fun applySemanticMutationIfFresh(
+        frameGeneration: Long,
+        currentBaseline: Long,
+        currentRunActive: Boolean,
+        mutation: () -> Unit,
+    ): Boolean {
+        if (!currentRunActive || blocks(frameGeneration, currentBaseline)) return false
+        mutation()
+        return true
+    }
 }

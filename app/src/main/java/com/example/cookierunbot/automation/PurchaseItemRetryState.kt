@@ -11,7 +11,8 @@ internal class PurchaseItemRetryState {
     }
 
     fun onDetectedStage(stage: BotStage) {
-        if (stage != BotStage.PURCHASE_ITEM) boostPurchasePerformed = false
+        // Temporary PRE_GAME popups do not start a new purchase transaction.
+        if (stage == BotStage.MAINMENU) boostPurchasePerformed = false
     }
 
     fun onPlayDispatch(accepted: Boolean): Boolean {

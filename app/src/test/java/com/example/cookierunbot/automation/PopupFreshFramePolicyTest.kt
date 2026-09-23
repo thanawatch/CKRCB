@@ -29,4 +29,29 @@ class PopupFreshFramePolicyTest {
         assertEquals(101L, baseline)
         assertEquals(-1L, PopupFreshFramePolicy.baselineAfterAcceptedFrame(102L, baseline))
     }
+
+    @Test fun callbackBaselineBlocksDetectedStageMutationUntilFreshFrame() {
+        val retry = PurchaseItemRetryState().apply { boostPurchasePerformed() }
+        val frameGeneration = 100L
+        var currentBaseline = -1L
+        assertFalse(PopupFreshFramePolicy.blocks(frameGeneration, currentBaseline))
+
+        // The callback installs a new gate after detection but before state mutation.
+        currentBaseline = 101L
+        val staleApplied = PopupFreshFramePolicy.applySemanticMutationIfFresh(
+            frameGeneration,
+            currentBaseline,
+            currentRunActive = true,
+        ) { retry.onDetectedStage(BotStage.MAINMENU) }
+        assertFalse(staleApplied)
+        assertFalse(retry.shouldPrepareBoost(true))
+
+        val freshApplied = PopupFreshFramePolicy.applySemanticMutationIfFresh(
+            102L,
+            currentBaseline,
+            currentRunActive = true,
+        ) { retry.onDetectedStage(BotStage.MAINMENU) }
+        assertTrue(freshApplied)
+        assertTrue(retry.shouldPrepareBoost(true))
+    }
 }
