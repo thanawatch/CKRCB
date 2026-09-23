@@ -64,4 +64,37 @@ class PopupFreshFramePolicyTest {
         assertTrue(PopupFreshFramePolicy.allowsActionDispatch(true, 102L, baseline))
         assertFalse(PopupFreshFramePolicy.allowsActionDispatch(false, 102L, baseline))
     }
+    @Test fun acceptedFirstActionDoesNotEndHandlerFreshnessProtection() {
+        var detectionFrameGeneration: Long? = 100L
+        var baseline = -1L
+
+        assertTrue(
+            PopupFreshFramePolicy.allowsActionDispatch(
+                currentRunActive = true,
+                detectionFrameGeneration = detectionFrameGeneration,
+                currentBaseline = baseline,
+            ),
+        )
+
+        // First action is accepted, but the handler still belongs to frame 100.
+        baseline = 101L
+        assertFalse(
+            PopupFreshFramePolicy.allowsActionDispatch(
+                currentRunActive = true,
+                detectionFrameGeneration = detectionFrameGeneration,
+                currentBaseline = baseline,
+            ),
+        )
+
+        // handleStage finally owns the normal token cleanup.
+        detectionFrameGeneration = null
+        assertTrue(
+            PopupFreshFramePolicy.allowsActionDispatch(
+                currentRunActive = true,
+                detectionFrameGeneration = detectionFrameGeneration,
+                currentBaseline = baseline,
+            ),
+        )
+    }
+
 }
