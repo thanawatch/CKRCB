@@ -58,6 +58,7 @@ class BotControlOverlay(private val context: Context) {
     private val sendFriendLife = Switch(context)
     private val quickLives = Switch(context)
     private val saveDebugImages = Switch(context)
+    private val saveResultImages = Switch(context)
     private val jumpFixed = Switch(context)
     private val jumpContinuous = Switch(context)
     private val fixedCount = EditText(context)
@@ -192,7 +193,13 @@ class BotControlOverlay(private val context: Context) {
             }
         }, matchWidth())
         addSwitch(quickLives, "Receive/Send Lives after each game", options.receiveSendLivesAfterEachGame)
-        addSwitch(saveDebugImages, "Save Debug Images", options.saveDebugImages)
+        addSwitch(saveDebugImages, "Save NO_MATCH Debug Images", options.saveDebugImages)
+        addSwitch(saveResultImages, "Save GAME_COMPLETE / MYSTERY_BOX Images", options.saveResultImages)
+        val saveImageOptions = android.widget.CompoundButton.OnCheckedChangeListener { _, _ ->
+            BotOptionsStore.saveImageOptions(context, saveDebugImages.isChecked, saveResultImages.isChecked)
+        }
+        saveDebugImages.setOnCheckedChangeListener(saveImageOptions)
+        saveResultImages.setOnCheckedChangeListener(saveImageOptions)
 
         panel.addView(TextView(context).apply {
             text = "Jump mode (both off = no jump)"
@@ -314,6 +321,7 @@ class BotControlOverlay(private val context: Context) {
             sendFriendLife = sendFriendLife.isChecked,
             receiveSendLivesAfterEachGame = quickLives.isChecked,
             saveDebugImages = saveDebugImages.isChecked,
+            saveResultImages = saveResultImages.isChecked,
             jumpMode = mode,
             fixedJumpCount = if (mode == JumpMode.FIXED_COUNT) count else 0,
             tapIntervalMs = if (mode == JumpMode.NONE) 250 else tapInterval,

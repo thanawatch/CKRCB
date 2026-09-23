@@ -1643,7 +1643,7 @@ class BotController(
             val waitMs = randomMs(9000, 11000)
             Log.i(
                 CookieRunBotApplication.TAG,
-                "[RESULT] Waiting ${waitMs / 1000.0}s before save",
+                "[RESULT] Waiting ${waitMs / 1000.0}s before result capture",
             )
             delayOrStop(waitMs)
             if (!synchronized(lock) { canDispatchActionLocked() }) return
@@ -2611,6 +2611,10 @@ class BotController(
     }
 
     private fun saveLatestResult(stage: String) {
+        if (!BotOptionsStore.shouldSaveResultImages(context)) {
+            logDiagnostic("[RESULT] Screenshot skipped stage=$stage reason=setting_disabled")
+            return
+        }
         val snapshot = LatestFrameProvider.snapshot() ?: return
         try {
             val file = resultSaver.save(snapshot.mat, roundNumber, stage)
@@ -2625,12 +2629,17 @@ class BotController(
             return
         }
         try {
-            val screenshotPath = try {
-                resultSaver.save(snapshot.mat, roundNumber, "game_complete").also {
-                    Log.i(CookieRunBotApplication.TAG, "[RESULT] Saved $it")
+            val screenshotPath = if (BotOptionsStore.shouldSaveResultImages(context)) {
+                try {
+                    resultSaver.save(snapshot.mat, roundNumber, "game_complete").also {
+                        Log.i(CookieRunBotApplication.TAG, "[RESULT] Saved $it")
+                    }
+                } catch (error: Exception) {
+                    Log.e(CookieRunBotApplication.TAG, "[RESULT] Screenshot save failed", error)
+                    null
                 }
-            } catch (error: Exception) {
-                Log.e(CookieRunBotApplication.TAG, "[RESULT] Screenshot save failed", error)
+            } else {
+                logDiagnostic("[RESULT] Screenshot skipped stage=GAME_COMPLETE reason=setting_disabled")
                 null
             }
             roundResultCollector.completeRound(
@@ -3011,6 +3020,15 @@ class BotController(
             lastNoMatchDiagnosticAt = now
         }
 
+        if (!BotOptionsStore.shouldSaveNoMatchImages(context)) {
+            noMatchWatchdog.reset(now)
+            if (noMatchDebugFrameRequested) {
+                noMatchDebugFrameRequested = false
+                LatestFrameProvider.cancelDebugFrameRequest()
+            }
+            return
+        }
+
         if (noMatchDebugFrameRequested) {
             val pair = LatestFrameProvider.consumeDebugFramePair() ?: return
             noMatchDebugFrameRequested = false
@@ -3037,6 +3055,7 @@ class BotController(
     private fun enqueueNoMatchDebugSave(pair: com.example.cookierunbot.capture.DebugFramePair) {
         diagnosticExecutor.execute {
             try {
+                if (!BotOptionsStore.shouldSaveNoMatchImages(context)) return@execute
                 runCatching { noMatchDebugFrameSaver.save(pair) }
                     .onSuccess { paths ->
                         logDiagnostic(

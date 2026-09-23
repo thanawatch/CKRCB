@@ -16,6 +16,7 @@ object BotOptionsStore {
             .putBoolean("friend_life", options.sendFriendLife)
             .putBoolean("quick_lives", options.receiveSendLivesAfterEachGame)
             .putBoolean("save_debug_images", options.saveDebugImages)
+            .putBoolean("save_result_images", options.saveResultImages)
             .putString("jump_mode", options.jumpMode.name)
             .putInt("fixed_jump_count", options.fixedJumpCount)
             .putInt("tap_interval_ms", options.tapIntervalMs)
@@ -43,7 +44,8 @@ object BotOptionsStore {
                 detectRelic = preferences.getBoolean("relic", false),
                 sendFriendLife = preferences.getBoolean("friend_life", false),
                 receiveSendLivesAfterEachGame = preferences.getBoolean("quick_lives", false),
-                saveDebugImages = preferences.getBoolean("save_debug_images", false),
+                saveDebugImages = preferences.getBoolean("save_debug_images", true),
+                saveResultImages = preferences.getBoolean("save_result_images", true),
                 jumpMode = jumpMode,
                 fixedJumpCount = if (jumpMode == JumpMode.FIXED_COUNT) {
                     preferences.getInt("fixed_jump_count", 10)
@@ -58,6 +60,22 @@ object BotOptionsStore {
             )
         }.getOrDefault(BotOptions())
     }
+
+    /** Image settings can be changed in the overlay without restarting the bot. */
+    fun saveImageOptions(context: Context, saveDebugImages: Boolean, saveResultImages: Boolean) {
+        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit()
+            .putBoolean("save_debug_images", saveDebugImages)
+            .putBoolean("save_result_images", saveResultImages)
+            .apply()
+    }
+
+    fun shouldSaveNoMatchImages(context: Context): Boolean =
+        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+            .getBoolean("save_debug_images", true)
+
+    fun shouldSaveResultImages(context: Context): Boolean =
+        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+            .getBoolean("save_result_images", true)
 
     private inline fun <reified T : Enum<T>> enumValueOrDefault(value: String?, default: T): T =
         value?.let { runCatching { enumValueOf<T>(it) }.getOrNull() } ?: default

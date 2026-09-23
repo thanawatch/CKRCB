@@ -25,4 +25,19 @@ class BotOptionsTest {
             BotOptions(postCookieRelaySequence = true)
         }
     }
+
+    @Test
+    fun localImageSavingChoicesAreIndependent() {
+        val defaults = BotOptions()
+        assertEquals(true, defaults.saveDebugImages)
+        assertEquals(true, defaults.saveResultImages)
+
+        val noMatchOff = defaults.copy(saveDebugImages = false)
+        assertEquals(false, noMatchOff.saveDebugImages)
+        assertEquals(true, noMatchOff.saveResultImages)
+
+        val resultsOff = defaults.copy(saveResultImages = false)
+        assertEquals(true, resultsOff.saveDebugImages)
+        assertEquals(false, resultsOff.saveResultImages)
+    }
 }
