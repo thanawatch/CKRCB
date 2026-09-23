@@ -23,8 +23,38 @@ class RoundStatisticsTest {
         val generation = RoundResultStore.startNewSession()
         (1..55).forEach { RoundResultStore.upsert(result(it, coins = it, xp = it * 2), generation) }
         val snapshot = RoundResultStore.snapshot()
-        assertEquals(50, snapshot.rounds)
+        assertEquals(55, snapshot.rounds)
+        assertEquals(50, snapshot.history.size)
         assertEquals(55, snapshot.lastRound?.round)
+    }
+
+    @Test fun cumulativeSessionTotalsIncludeRoundsEvictedFromHistory() {
+        val generation = RoundResultStore.startNewSession()
+        (1..75).forEach { round ->
+            RoundResultStore.upsert(
+                result(round, coins = 10, xp = 20).copy(boxes = listOf("wood"), boxCount = 1),
+                generation,
+            )
+        }
+        val snapshot = RoundResultStore.snapshot()
+        assertEquals(75, snapshot.rounds)
+        assertEquals(750, snapshot.totalCoins)
+        assertEquals(1_500, snapshot.totalXp)
+        assertEquals(75, snapshot.totalBoxes)
+        assertEquals(75, snapshot.woodBoxes)
+        assertEquals(50, snapshot.history.size)
+    }
+
+    @Test fun lateMysteryBoxReplacementUsesDeltaAndDoesNotDoubleCount() {
+        val generation = RoundResultStore.startNewSession()
+        RoundResultStore.upsert(result(1, 10, 20), generation)
+        RoundResultStore.updateBoxes(1, listOf("wood", "gold"), generation)
+        RoundResultStore.updateBoxes(1, listOf("rainbow"), generation)
+        val snapshot = RoundResultStore.snapshot()
+        assertEquals(1, snapshot.totalBoxes)
+        assertEquals(0, snapshot.woodBoxes)
+        assertEquals(0, snapshot.goldBoxes)
+        assertEquals(1, snapshot.rainbowBoxes)
     }
 
     @Test fun boxUpdatesAndSessionTotalsAreThreadSafeValues() {

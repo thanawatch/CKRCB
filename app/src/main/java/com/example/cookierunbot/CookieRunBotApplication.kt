@@ -6,6 +6,7 @@ import com.example.cookierunbot.automation.BotRuntime
 import com.example.cookierunbot.automation.RuntimeDiagnosticsLogger
 import com.example.cookierunbot.diagnostics.PersistentTrace
 import com.example.cookierunbot.diagnostics.DebugLogStore
+import com.example.cookierunbot.notifications.TelegramCommandReceiver
 import org.opencv.android.OpenCVLoader
 
 class CookieRunBotApplication : Application() {
@@ -16,6 +17,7 @@ class CookieRunBotApplication : Application() {
         val loaded = OpenCVLoader.initLocal()
         Log.i(TAG, "[OPENCV] initialized=$loaded")
         BotRuntime.initialize(this)
+        TelegramCommandReceiver.initialize(this)
         RuntimeDiagnosticsLogger.log(this, "process started")
     }
 

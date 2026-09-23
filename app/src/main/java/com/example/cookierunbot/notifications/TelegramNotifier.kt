@@ -43,6 +43,19 @@ class TelegramNotifier(context: Context) {
         }
     }
 
+    fun sendCommandReply(text: String, callback: (TelegramSendResult) -> Unit = {}) {
+        val config = TelegramConfigStore.load(appContext)
+        if (!config.enabled || !config.isValid) {
+            callback(TelegramSendResult(false, if (!config.enabled) "disabled" else "invalid_config"))
+            return
+        }
+        try {
+            executor.execute { callback(sendTextBlocking(config, text, manualTest = true)) }
+        } catch (error: Exception) {
+            callback(TelegramSendResult(false, "queue_rejected:${error.javaClass.simpleName}"))
+        }
+    }
+
     fun sendPhoto(png: ByteArray, filename: String, caption: String) = enqueue { config ->
         if (!config.sendDebugImages) {
             log("[TELEGRAM_SEND] skipped=true reason=debug_images_disabled")
@@ -50,9 +63,6 @@ class TelegramNotifier(context: Context) {
             sendPhotoBlocking(config, png, filename, caption)
         }
     }
-
-    fun notifyNoMatch(normalizedPng: ByteArray, caption: String): Boolean =
-        notifyDiagnosticImage(normalizedPng, "no_match_normalized.png", caption)
 
     fun notifyDiagnosticImage(
         normalizedPng: ByteArray,

@@ -18,9 +18,6 @@ import java.util.Locale
 object RuntimeDiagnosticsLogger {
     fun log(context: Context, event: String) {
         val appContext = context.applicationContext
-        if (event == "MediaProjection created") {
-            stallManager(appContext).reset("capture_restarted")
-        }
         val capture = LatestFrameProvider.diagnostics()
         val bot = BotRuntime.diagnostics()
         val powerManager = appContext.getSystemService(PowerManager::class.java)
@@ -105,11 +102,6 @@ object RuntimeDiagnosticsLogger {
                 "group=${bot.group}",
         )
         logDetectionStall(capture, bot)
-        stallManager(appContext).observe(capture, bot)
-    }
-
-    fun resetDetectorStall(context: Context, reason: String) {
-        stallManager(context.applicationContext).reset(reason)
     }
 
     private fun logDetectionStall(
@@ -153,15 +145,6 @@ object RuntimeDiagnosticsLogger {
     private fun formatAge(value: Double?): String =
         value?.let { String.format(Locale.US, "%.1f", it) } ?: "none"
 
-    private fun stallManager(context: Context): DetectorStallDiagnosticManager {
-        stallDiagnosticManager?.let { return it }
-        return synchronized(stallManagerLock) {
-            stallDiagnosticManager ?: DetectorStallDiagnosticManager(context).also {
-                stallDiagnosticManager = it
-            }
-        }
-    }
-
     private val stallLock = Any()
     private var previousCaptureFrameSequence = -1L
     private var previousProcessedFrameSequence = -1L
@@ -169,6 +152,4 @@ object RuntimeDiagnosticsLogger {
     private var lastStallLogAt = 0L
     private const val DETECT_STALL_THRESHOLD_MS = 7_500L
     private const val DETECT_STALL_LOG_INTERVAL_MS = 10_000L
-    private val stallManagerLock = Any()
-    @Volatile private var stallDiagnosticManager: DetectorStallDiagnosticManager? = null
 }

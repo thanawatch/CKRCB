@@ -15,6 +15,7 @@ import androidx.activity.ComponentActivity
 import com.example.cookierunbot.notifications.TelegramConfig
 import com.example.cookierunbot.notifications.TelegramConfigStore
 import com.example.cookierunbot.notifications.TelegramNotifier
+import com.example.cookierunbot.notifications.TelegramCommandReceiver
 
 class TelegramSettingsActivity : ComponentActivity() {
     private val notifier by lazy { TelegramNotifier(applicationContext) }
@@ -57,6 +58,7 @@ class TelegramSettingsActivity : ComponentActivity() {
             setOnClickListener {
                 val config = readConfig()
                 if (TelegramConfigStore.save(this@TelegramSettingsActivity, config)) {
+                    TelegramCommandReceiver.refresh(this@TelegramSettingsActivity)
                     renderStatus(config)
                     Toast.makeText(this@TelegramSettingsActivity, "Telegram settings saved", Toast.LENGTH_SHORT).show()
                 } else {
@@ -70,6 +72,7 @@ class TelegramSettingsActivity : ComponentActivity() {
             setOnClickListener {
                 val config = readConfig()
                 val saved = TelegramConfigStore.save(this@TelegramSettingsActivity, config)
+                if (saved) TelegramCommandReceiver.refresh(this@TelegramSettingsActivity)
                 if (saved && config.enabled && config.isValid) {
                     status.text = "Test: Sending…"
                     notifier.sendTestMessage("RobotRun Telegram test successful") { result ->

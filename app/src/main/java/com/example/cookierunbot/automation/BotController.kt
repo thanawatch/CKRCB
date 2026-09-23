@@ -16,8 +16,6 @@ import com.example.cookierunbot.diagnostics.PersistentTrace
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.statistics.RoundResultCollector
 import com.example.cookierunbot.statistics.MysteryBoxPhasePolicy
-import com.example.cookierunbot.notifications.TelegramNotifier
-import com.example.cookierunbot.notifications.TelegramDiagnosticImageGate
 import org.opencv.core.Mat
 import org.opencv.core.Rect
 import org.opencv.imgproc.Imgproc
@@ -49,7 +47,6 @@ class BotController(
     private val autoTapper = GameAutoTapper(actionExecutor)
     private val resultSaver = ResultImageSaver(context.applicationContext)
     private val noMatchDebugFrameSaver = NoMatchDebugFrameSaver(context.applicationContext)
-    private val telegramNotifier = TelegramNotifier(context.applicationContext)
     private val noMatchWatchdog = NoMatchWatchdog()
     private val diagnosticExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "bot-diagnostics")
@@ -82,9 +79,6 @@ class BotController(
     private val friendLifeScheduler = FriendLifeScheduler()
     private var lastNoMatchDiagnosticAt = 0L
     private var noMatchDebugFrameRequested = false
-    private var pendingNoMatchCapture: NoMatchCaptureDue? = null
-    private var lastNoMatchBestCandidate = "NONE"
-    private var lastNoMatchBestScore = "none"
     private var lastRewardPopupAction: BotStage? = null
     private var consecutiveRewardPopupActions = 0
     private val popupInstanceGuard = PopupInstanceGuard(MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS)
@@ -132,6 +126,7 @@ class BotController(
             friendLifeLastProgressAgeMs = friendLifeLastProgressAt.takeIf { it > 0L }?.let {
                 (SystemClock.elapsedRealtime() - it).coerceAtLeast(0L)
             },
+            roundNumber = roundNumber,
         )
     }
 
@@ -182,6 +177,7 @@ class BotController(
             previousResultsSettleUntilElapsedRealtime = 0L
             pendingPreviousResultsRedetectBaseline = -1L
             resetNoMatchEpisode("bot_started")
+            GameProgressWatchdogManager.start(context)
             executor = Executors.newSingleThreadExecutor { runnable ->
                 Thread(runnable, "cookierun-bot-loop").apply { priority = Thread.NORM_PRIORITY - 1 }
             }.also { it.submit(::runLoop) }
@@ -191,7 +187,6 @@ class BotController(
         PersistentTrace.log("[BOT] started options=$options")
         Log.i(CookieRunBotApplication.TAG, "[BOT] Options=$options")
         listener.onRunningChanged(true)
-        RuntimeDiagnosticsLogger.resetDetectorStall(context, "bot_started")
         updateGroup(DetectionGroup.PRE_GAME)
         listener.onStateChanged("WAITING_FOR_READINESS")
         RuntimeDiagnosticsLogger.log(context, "Start Bot requested")
@@ -221,10 +216,10 @@ class BotController(
         stoppedPreviousResultsGesture?.cancel()
         autoTapper.stop("BOT_EXIT")
         friendLifeScheduler.stop()
+        GameProgressWatchdogManager.stop()
         friendLifeWorkflowActive = false
         friendLifeLastProgressAt = 0L
         resetNoMatchEpisode("bot_stopped")
-        RuntimeDiagnosticsLogger.resetDetectorStall(context, "bot_stopped")
         worker?.shutdownNow()
         Log.i(CookieRunBotApplication.TAG, "[BOT] Stopped")
         DebugLogStore.log("[BOT] Stopped")
@@ -559,7 +554,10 @@ class BotController(
             BotStage.PURCHASE_ITEM -> handlePurchaseItem(detector, sourceWidth, sourceHeight)
             BotStage.GAME_START -> handleGameStart(result, frame, sourceWidth, sourceHeight, timing)
             BotStage.GAME_RELAY -> handleGameRelay(result, frame, sourceWidth, sourceHeight, timing)
-            BotStage.GAME_COMPLETE -> handleGameComplete(sourceWidth, sourceHeight)
+            BotStage.GAME_COMPLETE -> {
+                GameProgressWatchdogManager.recordProgress(GameProgressReason.GAME_COMPLETE)
+                handleGameComplete(sourceWidth, sourceHeight)
+            }
             BotStage.MYSTERY_BOX -> handleMysteryBox(sourceWidth, sourceHeight, frame)
             BotStage.CONGRATULATIONS -> rewardPopup(result.state, "CONGRATULATIONS", AutomationConfig.CONGRATULATIONS_ACCEPT, sourceWidth, sourceHeight, frameGeneration)
             BotStage.LEVEL_UP -> rewardPopup(result.state, "LEVEL_UP", AutomationConfig.LEVEL_UP_ACCEPT, sourceWidth, sourceHeight, frameGeneration)
@@ -1806,6 +1804,9 @@ class BotController(
         if (gestureSucceeded.get() != true) {
             return FriendLifeTapStepResult(false, null, "${step.lowercase()}_gesture_failed")
         }
+        friendSendTapProgressReason(step, gestureSucceeded = true)?.let {
+            GameProgressWatchdogManager.recordProgress(it)
+        }
         val postGestureBaseline = LatestFrameProvider.currentGeneration()
         if (pacingMs > 0L) delayOrStop(pacingMs)
         val fresh = LatestFrameProvider.awaitNextSnapshot(postGestureBaseline, FRIEND_RESCAN_TIMEOUT_MS)
@@ -2475,8 +2476,6 @@ class BotController(
         if (now - lastNoMatchDiagnosticAt >= NO_MATCH_DIAGNOSTIC_INTERVAL_MS) {
             val scores = detector.scoreStages(noMatchDiagnosticStages(group), frame.mat)
             val best = scores.maxByOrNull(DetectionResult::score)
-            lastNoMatchBestCandidate = best?.state?.name ?: "NONE"
-            lastNoMatchBestScore = best?.let { format(it.score) } ?: "none"
             scores.firstOrNull { it.state == BotStage.DAILY_NEW }?.let { dailyNew ->
                 logDiagnostic(
                     "[DAILY_NEW] noMatch score=${format(dailyNew.score)} " +
@@ -2499,10 +2498,8 @@ class BotController(
 
         if (noMatchDebugFrameRequested) {
             val pair = LatestFrameProvider.consumeDebugFramePair() ?: return
-            val capture = pendingNoMatchCapture
             noMatchDebugFrameRequested = false
-            pendingNoMatchCapture = null
-            if (capture != null) enqueueNoMatchDebugSave(pair, capture, pair.generation)
+            enqueueNoMatchDebugSave(pair)
         }
 
         val due = noMatchWatchdog.observeNoMatch(group, now)
@@ -2512,7 +2509,6 @@ class BotController(
                     "captureIndex=${due.captureIndex} reason=prolonged_no_match",
             )
             LatestFrameProvider.requestDebugFramePair(frame.generation)
-            pendingNoMatchCapture = due
             noMatchDebugFrameRequested = true
             if (due.captureIndex == NO_MATCH_CAPTURE_LIMIT) {
                 logDiagnostic(
@@ -2523,13 +2519,7 @@ class BotController(
         }
     }
 
-    private fun enqueueNoMatchDebugSave(
-        pair: com.example.cookierunbot.capture.DebugFramePair,
-        capture: NoMatchCaptureDue,
-        frameSequence: Long,
-    ) {
-        val bestCandidate = lastNoMatchBestCandidate
-        val bestScore = lastNoMatchBestScore
+    private fun enqueueNoMatchDebugSave(pair: com.example.cookierunbot.capture.DebugFramePair) {
         diagnosticExecutor.execute {
             try {
                 runCatching { noMatchDebugFrameSaver.save(pair) }
@@ -2541,25 +2531,7 @@ class BotController(
                                 "normalizedSize=${pair.normalizedMat.cols()}x${pair.normalizedMat.rows()} " +
                                 "reason=NO_MATCH_WATCHDOG",
                         )
-                        val caption = "NO_MATCH_WATCHDOG\n" +
-                            "group=${capture.group.name}\n" +
-                            "durationMs=${capture.durationMs}\n" +
-                            "captureIndex=${capture.captureIndex}\n" +
-                            "frameSequence=$frameSequence\n" +
-                            "bestCandidate=$bestCandidate bestScore=$bestScore\n" +
-                            "reason=prolonged_no_match\nrawSaved=${paths.raw}"
-                        if (telegramNotifier.isDebugImageEnabled()) {
-                            if (TelegramDiagnosticImageGate.tryAcquire(SystemClock.elapsedRealtime())) {
-                                telegramNotifier.notifyNoMatch(paths.normalizedPng, caption)
-                            } else {
-                                logDiagnostic(
-                                    "[TELEGRAM_DIAG_SUPPRESS] reason=global_image_cooldown source=NO_MATCH",
-                                )
-                            }
-                        } else {
-                            // Preserve the existing optional text fallback when debug images are disabled.
-                            telegramNotifier.notifyNoMatch(paths.normalizedPng, caption)
-                        }
+                        // NO_MATCH remains a local raw/normalized diagnostic only.
                     }
                     .onFailure { error ->
                         logDiagnostic(
@@ -2585,9 +2557,6 @@ class BotController(
         }
         lastNoMatchDiagnosticAt = 0L
         noMatchDebugFrameRequested = false
-        pendingNoMatchCapture = null
-        lastNoMatchBestCandidate = "NONE"
-        lastNoMatchBestScore = "none"
         LatestFrameProvider.cancelDebugFrameRequest()
     }
 
@@ -2696,6 +2665,15 @@ class BotController(
     }
 }
 
+internal fun friendSendTapProgressReason(
+    step: String,
+    gestureSucceeded: Boolean,
+): GameProgressReason? = if (step == "SEND_BUTTON" && gestureSucceeded) {
+    GameProgressReason.FRIEND_SEND_LIFE_TAP
+} else {
+    null
+}
+
 data class BotControllerDiagnostics(
     val running: Boolean,
     val jobActive: Boolean,
@@ -2710,6 +2688,7 @@ data class BotControllerDiagnostics(
     val pendingPopupAction: String,
     val friendLifeWorkflowActive: Boolean,
     val friendLifeLastProgressAgeMs: Long?,
+    val roundNumber: Int,
 )
 
 private data class MainMenuRevalidation(

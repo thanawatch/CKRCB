@@ -42,6 +42,7 @@ object BotRuntime : BotController.Listener {
             pendingPopupAction = "NONE",
             friendLifeWorkflowActive = false,
             friendLifeLastProgressAgeMs = null,
+            roundNumber = 0,
         )
 
     override fun onRunningChanged(running: Boolean) = listener?.onRunningChanged(running) ?: Unit
