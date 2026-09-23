@@ -7,6 +7,7 @@ enum class GameProgressReason { BOT_START, GAME_COMPLETE, FRIEND_SEND_LIFE_TAP }
 
 data class GameProgressStatus(
     val running: Boolean,
+    val hasStarted: Boolean,
     val lastProgressAt: Long,
     val lastProgressReason: GameProgressReason,
     val ageMs: Long,
@@ -23,6 +24,7 @@ class GameProgressWatchdog(
     private val failedRetryMs: Long = GAME_PROGRESS_FAILED_RETRY_MS,
 ) {
     private var running = false
+    private var hasStarted = false
     private var lastProgressAt = 0L
     private var reason = GameProgressReason.BOT_START
     private var alertDelivered = false
@@ -32,6 +34,7 @@ class GameProgressWatchdog(
 
     @Synchronized fun start(nowMs: Long) {
         running = true
+        hasStarted = true
         generation += 1L
         lastProgressAt = nowMs
         reason = GameProgressReason.BOT_START
@@ -71,10 +74,14 @@ class GameProgressWatchdog(
         return true
     }
 
-    @Synchronized fun failAttempt(reservation: GameProgressAlertReservation, nowMs: Long): Boolean {
+    @Synchronized fun failAttempt(
+        reservation: GameProgressAlertReservation,
+        nowMs: Long,
+        retryDelayMs: Long = failedRetryMs,
+    ): Boolean {
         if (!reservationCurrent(reservation)) return false
         alertInFlight = false
-        retryNotBefore = nowMs + failedRetryMs
+        retryNotBefore = safeAdd(nowMs, retryDelayMs.coerceAtLeast(failedRetryMs))
         return true
     }
 
@@ -82,11 +89,14 @@ class GameProgressWatchdog(
         val age = if (!running && lastProgressAt == 0L) 0L else
             (nowMs - lastProgressAt).coerceAtLeast(0L)
         return GameProgressStatus(
-            running, lastProgressAt, reason, age, (timeoutMs - age).coerceAtLeast(0L),
+            running, hasStarted, lastProgressAt, reason, age, (timeoutMs - age).coerceAtLeast(0L),
             running && age >= timeoutMs, alertDelivered, alertInFlight,
         )
     }
 
     private fun reservationCurrent(reservation: GameProgressAlertReservation): Boolean =
         running && alertInFlight && reservation.generation == generation
+
+    private fun safeAdd(left: Long, right: Long): Long =
+        if (right > Long.MAX_VALUE - left) Long.MAX_VALUE else left + right
 }

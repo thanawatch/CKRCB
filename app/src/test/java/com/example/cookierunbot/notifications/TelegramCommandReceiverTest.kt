@@ -1,5 +1,7 @@
 package com.example.cookierunbot.notifications
 
+import com.example.cookierunbot.automation.BotControllerDiagnostics
+import com.example.cookierunbot.automation.GameProgressWatchdog
 import com.example.cookierunbot.statistics.RoundResult
 import com.example.cookierunbot.statistics.SessionStatistics
 import org.junit.Assert.assertEquals
@@ -54,6 +56,31 @@ class TelegramCommandReceiverTest {
         assertTrue(reply.contains("Box types: gold"))
         assertEquals("No completed rounds in this session yet.", formatLastRoundReply(null))
     }
+
+    @Test fun statusBeforeFirstBotStartDoesNotClaimBotStartProgress() {
+        val reply = formatStatusReply(stoppedBot(), GameProgressWatchdog().status(100_000L))
+        assertTrue(reply.contains("Bot: STOPPED"))
+        assertTrue(reply.contains("Last progress: none"))
+        assertTrue(reply.contains("Watchdog:\nStopped"))
+        assertFalse(reply.contains("Last progress: BOT_START"))
+    }
+
+    private fun stoppedBot() = BotControllerDiagnostics(
+        running = false,
+        jobActive = false,
+        actionInProgress = false,
+        workerAlive = false,
+        lastProcessedFrameSequence = -1L,
+        lastDetectionAttemptAgeMs = null,
+        group = "PRE_GAME",
+        currentHandler = "IDLE",
+        minimumFreshFrameGeneration = -1L,
+        gestureBusy = false,
+        pendingPopupAction = "NONE",
+        friendLifeWorkflowActive = false,
+        friendLifeLastProgressAgeMs = null,
+        roundNumber = 0,
+    )
 
     private fun statistics(rounds: Int, totalBoxes: Int) = SessionStatistics(
         rounds = rounds,

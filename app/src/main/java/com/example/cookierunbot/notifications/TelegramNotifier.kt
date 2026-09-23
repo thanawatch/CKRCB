@@ -5,24 +5,76 @@ import android.util.Log
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import java.io.BufferedOutputStream
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 
 data class TelegramSendResult(
     val success: Boolean,
     val reason: String,
     val httpCode: Int? = null,
+    val retryAfterSeconds: Long? = null,
 )
+
+internal const val TELEGRAM_COMMAND_MAX_ATTEMPTS = 3
+private const val TELEGRAM_COMMAND_RETRY_1_MS = 2_000L
+private const val TELEGRAM_COMMAND_RETRY_2_MS = 5_000L
+
+internal data class TelegramCommandReplyAttempt(
+    val replyText: String,
+    val attempt: Int = 1,
+)
+
+internal data class TelegramCommandRetryDecision(
+    val retry: Boolean,
+    val delayMs: Long = 0L,
+    val nextAttempt: TelegramCommandReplyAttempt? = null,
+)
+
+internal fun telegramCommandRetryDecision(
+    current: TelegramCommandReplyAttempt,
+    result: TelegramSendResult,
+): TelegramCommandRetryDecision {
+    if (result.success || current.attempt >= TELEGRAM_COMMAND_MAX_ATTEMPTS ||
+        !isTransientTelegramFailure(result)
+    ) {
+        return TelegramCommandRetryDecision(retry = false)
+    }
+    val fallback = if (current.attempt == 1) TELEGRAM_COMMAND_RETRY_1_MS else TELEGRAM_COMMAND_RETRY_2_MS
+    val telegramDelay = result.retryAfterSeconds?.coerceAtLeast(0L)?.let(::secondsToMillisSafely)
+    return TelegramCommandRetryDecision(
+        retry = true,
+        delayMs = telegramDelay ?: fallback,
+        nextAttempt = current.copy(attempt = current.attempt + 1),
+    )
+}
+
+internal fun isTransientTelegramFailure(result: TelegramSendResult): Boolean = when {
+    result.httpCode == 429 -> true
+    result.httpCode != null && result.httpCode in 500..599 -> true
+    result.reason.startsWith("io_exception:") -> true
+    else -> false
+}
+
+internal fun parseTelegramRetryAfterSeconds(body: String): Long? =
+    RETRY_AFTER_PATTERN.find(body)?.groupValues?.getOrNull(1)?.toLongOrNull()?.takeIf { it > 0L }
+
+private val RETRY_AFTER_PATTERN = Regex("\\\"retry_after\\\"\\s*:\\s*(\\d+)")
+
+internal fun secondsToMillisSafely(seconds: Long): Long =
+    seconds.coerceAtMost(Long.MAX_VALUE / 1000L) * 1000L
 
 internal fun shouldSendTelegramText(config: TelegramConfig, manualTest: Boolean): Boolean =
     manualTest || config.sendTextNotifications
 
 class TelegramNotifier(context: Context) {
     private val appContext = context.applicationContext
-    private val executor = Executors.newSingleThreadExecutor { runnable ->
+    private val executor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "telegram-notifications")
     }
 
@@ -49,8 +101,39 @@ class TelegramNotifier(context: Context) {
             callback(TelegramSendResult(false, if (!config.enabled) "disabled" else "invalid_config"))
             return
         }
+        scheduleCommandReply(config, TelegramCommandReplyAttempt(text), 0L, callback)
+    }
+
+    private fun scheduleCommandReply(
+        config: TelegramConfig,
+        state: TelegramCommandReplyAttempt,
+        delayMs: Long,
+        callback: (TelegramSendResult) -> Unit,
+    ) {
         try {
-            executor.execute { callback(sendTextBlocking(config, text, manualTest = true)) }
+            executor.schedule({
+                val result = sendTextBlocking(config, state.replyText, manualTest = true)
+                val decision = telegramCommandRetryDecision(state, result)
+                if (decision.retry) {
+                    log(
+                        "[TELEGRAM_COMMAND_REPLY] success=false attempt=${state.attempt}/$TELEGRAM_COMMAND_MAX_ATTEMPTS " +
+                            "retryInMs=${decision.delayMs} code=${result.httpCode ?: "none"}",
+                    )
+                    scheduleCommandReply(
+                        config,
+                        requireNotNull(decision.nextAttempt),
+                        decision.delayMs,
+                        callback,
+                    )
+                } else {
+                    log(
+                        "[TELEGRAM_COMMAND_REPLY] success=${result.success} " +
+                            "attempt=${state.attempt}/$TELEGRAM_COMMAND_MAX_ATTEMPTS " +
+                            "code=${result.httpCode ?: "none"}",
+                    )
+                    callback(result)
+                }
+            }, delayMs, TimeUnit.MILLISECONDS)
         } catch (error: Exception) {
             callback(TelegramSendResult(false, "queue_rejected:${error.javaClass.simpleName}"))
         }
@@ -172,16 +255,23 @@ class TelegramNotifier(context: Context) {
             BufferedOutputStream(connection.outputStream).use(writeBody)
             val code = connection.responseCode
             if (code in 200..299) {
+                connection.inputStream?.close()
                 log("[TELEGRAM_SEND] success=true method=$method code=$code")
                 return TelegramSendResult(true, "success", code)
             }
-            log("[TELEGRAM_SEND] success=false reason=http_error method=$method code=$code")
-            return TelegramSendResult(false, "http_error", code)
+            val responseBody = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            val retryAfterSeconds = parseTelegramRetryAfterSeconds(responseBody)
+            log(
+                "[TELEGRAM_SEND] success=false reason=http_error method=$method code=$code " +
+                    "retryAfterSeconds=${retryAfterSeconds ?: "none"}",
+            )
+            return TelegramSendResult(false, "http_error", code, retryAfterSeconds)
         } catch (error: Exception) {
             // Exception messages from URLConnection can contain the request URL;
             // never risk exposing the bot token in app logs.
-            log("[TELEGRAM_SEND] success=false reason=exception type=${error.javaClass.simpleName}")
-            return TelegramSendResult(false, "exception:${error.javaClass.simpleName}")
+            val reason = if (error is IOException) "io_exception" else "exception"
+            log("[TELEGRAM_SEND] success=false reason=$reason type=${error.javaClass.simpleName}")
+            return TelegramSendResult(false, "$reason:${error.javaClass.simpleName}")
         } finally {
             connection?.disconnect()
         }

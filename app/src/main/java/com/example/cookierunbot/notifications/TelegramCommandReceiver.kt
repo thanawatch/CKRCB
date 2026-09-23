@@ -149,17 +149,28 @@ internal fun telegramCommandReply(command: String): String? = when (command) {
     else -> null
 }
 
-private fun formatStatusReply(): String {
-    val bot = BotRuntime.diagnostics()
-    val progress = GameProgressWatchdogManager.status()
+private fun formatStatusReply(): String = formatStatusReply(
+    BotRuntime.diagnostics(),
+    GameProgressWatchdogManager.status(),
+)
+
+internal fun formatStatusReply(
+    bot: com.example.cookierunbot.automation.BotControllerDiagnostics,
+    progress: com.example.cookierunbot.automation.GameProgressStatus,
+): String {
     val watchdog = when {
         !bot.running -> "Stopped"
         progress.overdue -> "OVERDUE\nAlert: ${if (progress.alertDelivered) "sent" else "pending"}"
         else -> "${formatDuration(progress.remainingMs)} remaining"
     }
+    val lastProgress = if (progress.hasStarted) {
+        "${progress.lastProgressReason}\n${formatDuration(progress.ageMs)} ago"
+    } else {
+        "none"
+    }
     return "🤖 RobotRun Status\n\nBot: ${if (bot.running) "RUNNING" else "STOPPED"}\n" +
         "Group: ${bot.group}\nHandler: ${bot.currentHandler}\nRound: ${bot.roundNumber}\n\n" +
-        "Last progress:\n${progress.lastProgressReason}\n${formatDuration(progress.ageMs)} ago\n\n" +
+        "Last progress: $lastProgress\n\n" +
         "Watchdog:\n$watchdog"
 }
 

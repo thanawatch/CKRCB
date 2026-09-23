@@ -14,6 +14,13 @@ class GameProgressWatchdogTest {
         assertNull(watchdog.reserveIfDue(GAME_PROGRESS_TIMEOUT_MS - 1L))
     }
 
+    @Test fun watchdogReportsNeverStartedBeforeFirstStart() {
+        val status = GameProgressWatchdog().status(123_000L)
+        assertFalse(status.running)
+        assertFalse(status.hasStarted)
+        assertEquals(0L, status.ageMs)
+    }
+
     @Test fun alertIsDueAtFifteenMinutes() {
         val watchdog = GameProgressWatchdog()
         watchdog.start(0L)
@@ -95,5 +102,34 @@ class GameProgressWatchdogTest {
         watchdog.recordProgress(GameProgressReason.FRIEND_SEND_LIFE_TAP, GAME_PROGRESS_TIMEOUT_MS + 1L)
         assertFalse(watchdog.confirmDelivered(old))
         assertFalse(watchdog.status(GAME_PROGRESS_TIMEOUT_MS + 1L).alertDelivered)
+    }
+
+    @Test fun freshDeliveryCallbackCommitsCurrentEpisode() {
+        val watchdog = GameProgressWatchdog()
+        watchdog.start(0L)
+        val current = requireNotNull(watchdog.reserveIfDue(GAME_PROGRESS_TIMEOUT_MS))
+        assertTrue(watchdog.confirmDelivered(current))
+        assertTrue(watchdog.status(GAME_PROGRESS_TIMEOUT_MS).alertDelivered)
+    }
+
+    @Test fun telegram429CannotShortenFiveMinuteWatchdogBackoff() {
+        val watchdog = GameProgressWatchdog()
+        watchdog.start(0L)
+        val failedAt = GAME_PROGRESS_TIMEOUT_MS
+        val reservation = requireNotNull(watchdog.reserveIfDue(failedAt))
+        watchdog.failAttempt(reservation, failedAt, retryDelayMs = 12_000L)
+        assertNull(watchdog.reserveIfDue(failedAt + GAME_PROGRESS_FAILED_RETRY_MS - 1L))
+        assertNotNull(watchdog.reserveIfDue(failedAt + GAME_PROGRESS_FAILED_RETRY_MS))
+    }
+
+    @Test fun telegram429LongerThanSafetyBackoffIsRespected() {
+        val watchdog = GameProgressWatchdog()
+        watchdog.start(0L)
+        val failedAt = GAME_PROGRESS_TIMEOUT_MS
+        val telegramRetry = 10L * 60L * 1000L
+        val reservation = requireNotNull(watchdog.reserveIfDue(failedAt))
+        watchdog.failAttempt(reservation, failedAt, retryDelayMs = telegramRetry)
+        assertNull(watchdog.reserveIfDue(failedAt + telegramRetry - 1L))
+        assertNotNull(watchdog.reserveIfDue(failedAt + telegramRetry))
     }
 }

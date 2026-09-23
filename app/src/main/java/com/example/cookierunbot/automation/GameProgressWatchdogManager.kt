@@ -8,6 +8,7 @@ import com.example.cookierunbot.capture.LatestFrameProvider
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.notifications.TelegramDiagnosticImageGate
 import com.example.cookierunbot.notifications.TelegramNotifier
+import com.example.cookierunbot.notifications.secondsToMillisSafely
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
@@ -93,10 +94,28 @@ object GameProgressWatchdogManager {
         caption: String,
     ) {
         val accepted = telegram.notifyDiagnosticImage(png, "game_progress_timeout.png", caption) { result ->
-            val confirmed = result.success && result.httpCode?.let { it in 200..299 } == true
-            if (confirmed) watchdog.confirmDelivered(reservation)
-            else watchdog.failAttempt(reservation, SystemClock.elapsedRealtime())
-            log("[GAME_PROGRESS_WATCHDOG_TELEGRAM] success=$confirmed code=${result.httpCode ?: "none"} reason=${result.reason}")
+            val httpSuccess = result.success && result.httpCode?.let { it in 200..299 } == true
+            val now = SystemClock.elapsedRealtime()
+            val committed: Boolean
+            val stale: Boolean
+            if (httpSuccess) {
+                committed = watchdog.confirmDelivered(reservation)
+                stale = !committed
+            } else {
+                val telegramDelayMs = result.retryAfterSeconds?.let(::secondsToMillisSafely) ?: 0L
+                val released = watchdog.failAttempt(
+                    reservation,
+                    now,
+                    maxOf(GAME_PROGRESS_FAILED_RETRY_MS, telegramDelayMs),
+                )
+                committed = false
+                stale = !released
+            }
+            log(
+                "[GAME_PROGRESS_WATCHDOG_TELEGRAM] httpSuccess=$httpSuccess committed=$committed " +
+                    "stale=$stale code=${result.httpCode ?: "none"} reason=${result.reason} " +
+                    "retryAfterSeconds=${result.retryAfterSeconds ?: "none"}",
+            )
         }
         if (!accepted) {
             watchdog.failAttempt(reservation, SystemClock.elapsedRealtime())
