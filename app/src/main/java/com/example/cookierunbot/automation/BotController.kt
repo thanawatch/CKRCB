@@ -2662,7 +2662,6 @@ class BotController(
 
     private fun reportActionResult(result: ActionResult): Boolean {
         if (!isRunning()) return false
-        if (result.accepted) detectionActionFrameGeneration.remove()
         DebugLogStore.log(
             "[ACTION] state=${result.actionName} logical=(${result.logicalX},${result.logicalY}) " +
                 "physical=${result.physical?.let { "(${it.x},${it.y})" } ?: "unavailable"} " +
