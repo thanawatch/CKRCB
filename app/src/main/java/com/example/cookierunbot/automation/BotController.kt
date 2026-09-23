@@ -20,8 +20,11 @@ import org.opencv.core.Mat
 import org.opencv.core.Rect
 import org.opencv.imgproc.Imgproc
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.random.Random
 
 private const val PARTY_RUN_SEASON_REWARDS_CALLBACK_TIMEOUT_MS = 3_000L
@@ -59,7 +62,7 @@ class BotController(
     @Volatile private var lastDetectionAttemptAt = 0L
     private var options = BotOptions()
     @Volatile private var group = DetectionGroup.PRE_GAME
-    private var lastStage: BotStage? = null
+    @Volatile private var lastStage: BotStage? = null
     private var lastDetectionAt = 0L
     private var lastLogAt = 0L
     private var lastSafetyLogAt = 0L
@@ -105,7 +108,7 @@ class BotController(
         val worker = executor
         BotControllerDiagnostics(
             running = running,
-            jobActive = worker != null && !worker.isShutdown && !worker.isTerminated,
+            jobActive = workerAlive && worker != null && !worker.isShutdown && !worker.isTerminated,
             actionInProgress = actionExecutor.isActionInProgress(),
             workerAlive = workerAlive,
             lastProcessedFrameSequence = lastProcessedFrameSequence,
@@ -178,9 +181,10 @@ class BotController(
             pendingPreviousResultsRedetectBaseline = -1L
             resetNoMatchEpisode("bot_started")
             GameProgressWatchdogManager.start(context)
+            val runGeneration = botRunGeneration
             executor = Executors.newSingleThreadExecutor { runnable ->
                 Thread(runnable, "cookierun-bot-loop").apply { priority = Thread.NORM_PRIORITY - 1 }
-            }.also { it.submit(::runLoop) }
+            }.also { it.submit { runLoop(runGeneration) } }
         }
         Log.i(CookieRunBotApplication.TAG, "[BOT] Started")
         DebugLogStore.log("[BOT] Started")
@@ -193,12 +197,18 @@ class BotController(
     }
 
     fun stop() {
+        stopIfCurrentRun(null)
+    }
+
+    private fun stopIfCurrentRun(expectedGeneration: Long?) {
         val stoppedPartyGesture: GestureCancellation?
         val stoppedTimeDealGesture: GestureCancellation?
         val stoppedPreviousResultsGesture: GestureCancellation?
         val worker = synchronized(lock) {
+            if (expectedGeneration != null && botRunGeneration != expectedGeneration) return
             if (!running && executor == null) return
             running = false
+            workerAlive = false
             botRunGeneration += 1L
             val currentExecutor = executor
             executor = null
@@ -229,10 +239,13 @@ class BotController(
         listener.onGroupChanged("—")
     }
 
-    private fun runLoop() {
+    private fun runLoop(runGeneration: Long) {
         try {
             Process.setThreadPriority(Process.THREAD_PRIORITY_DISPLAY)
-            workerAlive = true
+            synchronized(lock) {
+                if (!running || botRunGeneration != runGeneration) return
+                workerAlive = true
+            }
             if (!waitForReadiness()) return
             StateDetector(context.applicationContext).use { detector ->
                 var lastFrameGeneration = -1L
@@ -262,8 +275,16 @@ class BotController(
                 listener.onStateChanged("ERROR")
             }
         } finally {
-            workerAlive = false
-            autoTapper.stop("BOT_LOOP_END")
+            val unexpectedExit = synchronized(lock) {
+                if (botRunGeneration != runGeneration) false else {
+                    workerAlive = false
+                    running
+                }
+            }
+            if (unexpectedExit) {
+                logDiagnostic("[BOT] Worker exited while running; stopping bot")
+                stopIfCurrentRun(runGeneration)
+            }
         }
     }
 
@@ -687,33 +708,15 @@ class BotController(
         // Record popup action
         recordRewardPopupAction(BotStage.PARTY_RUN_SEASON_REWARDS)
 
-        // Wait for genuinely fresh frame (generation > postCallbackBaseline)
-        val fresh = LatestFrameProvider.awaitNextSnapshot(
-            postCallbackBaseline,
-            POPUP_FRESH_FRAME_TIMEOUT_MS,
+        // The detector loop owns the fresh-frame wait. A gesture callback may run
+        // on the Accessibility main thread and must not wait for capture here.
+        minimumFreshFrameGeneration = postCallbackBaseline
+        lastStage = null
+        updateGroup(DetectionGroup.PRE_GAME)
+        logDiagnostic(
+            "[STATE_REDETECT] previous=PARTY_RUN_SEASON_REWARDS " +
+                "baselineGeneration=$postCallbackBaseline action=wait_in_detector_loop",
         )
-        if (fresh != null) {
-            try {
-                logDiagnostic(
-                    "[STATE_REDETECT]\n" +
-                        "previous=PARTY_RUN_SEASON_REWARDS\n" +
-                        "baselineGeneration=$postCallbackBaseline\n" +
-                        "freshFrameSequence=${fresh.generation}"
-                )
-                minimumFreshFrameGeneration = -1L
-                // Generic PRE_GAME redetection - screen is authoritative
-                updateGroup(DetectionGroup.PRE_GAME)
-                lastStage = null
-            } finally {
-                fresh.mat.release()
-            }
-        } else {
-            Log.w(
-                CookieRunBotApplication.TAG,
-                "[PARTY_RUN_SEASON_REWARDS] Waiting for fresh frame after callback generation>$postCallbackBaseline"
-            )
-            minimumFreshFrameGeneration = postCallbackBaseline
-        }
         pendingPartyRunSeasonRewardsTapGeneration = -1L
     }
 
@@ -793,24 +796,13 @@ class BotController(
         val postCallbackBaseline = LatestFrameProvider.currentGeneration()
         logDiagnostic("[POPUP] state=TIME_DEAL postCallbackBaselineGeneration=$postCallbackBaseline")
         recordRewardPopupAction(BotStage.TIME_DEAL)
-        val fresh = LatestFrameProvider.awaitNextSnapshot(postCallbackBaseline, POPUP_FRESH_FRAME_TIMEOUT_MS)
-        if (fresh != null) {
-            try {
-                logDiagnostic(
-                    "[STATE_REDETECT] previous=TIME_DEAL baselineGeneration=$postCallbackBaseline " +
-                        "freshFrameSequence=${fresh.generation}",
-                )
-                minimumFreshFrameGeneration = -1L
-                updateGroup(DetectionGroup.PRE_GAME)
-                lastStage = null
-            } finally {
-                fresh.mat.release()
-            }
-        } else {
-            minimumFreshFrameGeneration = postCallbackBaseline
-            updateGroup(DetectionGroup.PRE_GAME)
-            lastStage = null
-        }
+        minimumFreshFrameGeneration = postCallbackBaseline
+        lastStage = null
+        updateGroup(DetectionGroup.PRE_GAME)
+        logDiagnostic(
+            "[STATE_REDETECT] previous=TIME_DEAL baselineGeneration=$postCallbackBaseline " +
+                "action=wait_in_detector_loop",
+        )
     }
 
     private fun handlePreviousResults(
@@ -1037,14 +1029,17 @@ class BotController(
             delayOrStop(wait)
         }
         if (!revalidateMainMenu(detector, "BEFORE_MAINMENU_START")) return
-        isFirstGame = false
-        livesDoneForRound = false
-        livesPendingAfterGame = false
         if (!performTap("MAINMENU_START", LogicalPoint(955, 650), sourceWidth, sourceHeight)) {
             return
         }
+        isFirstGame = false
+        livesDoneForRound = false
+        livesPendingAfterGame = false
         delayOrStop(randomMs(800, 1400))
         updateGroup(DetectionGroup.PRE_GAME)
+        // If Play did not change the screen, a fresh MAINMENU detection may retry
+        // after the existing five-second revalidation path instead of staying suppressed.
+        lastStage = null
     }
 
     private fun revalidateMainMenu(detector: StateDetector, checkpoint: String): Boolean {
@@ -1121,15 +1116,6 @@ class BotController(
     }
 
     private fun handlePurchaseItem(detector: StateDetector, sourceWidth: Int, sourceHeight: Int) {
-        roundNumber += 1
-        postRelaySequenceDone = false
-        gameStartDetectedForRound = false
-        fastStartPollDeadlineNanos = 0L
-        gameCompleteImageSaved = false
-        mysteryBoxImageSaved = false
-        mysteryBoxCount = 0
-        autoTapper.resetForRound(options, sourceWidth, sourceHeight)
-        Log.i(CookieRunBotApplication.TAG, "[BOT] beginRound=$roundNumber")
         if (options.useDesiredRandomBoost) {
             val ready = purchaseDesiredBoost(detector, sourceWidth, sourceHeight)
             Log.i(
@@ -1141,7 +1127,21 @@ class BotController(
             )
         }
         val playAccepted = performTap("PLAY_GAME", LogicalPoint(895, 620), sourceWidth, sourceHeight)
-        if (playAccepted) roundResultCollector.beginRound(roundNumber)
+        if (!playAccepted) {
+            logDiagnostic("[PURCHASE_ITEM] PLAY_GAME dispatch rejected; staying in PRE_GAME")
+            lastStage = null
+            return
+        }
+        roundNumber += 1
+        postRelaySequenceDone = false
+        gameStartDetectedForRound = false
+        fastStartPollDeadlineNanos = 0L
+        gameCompleteImageSaved = false
+        mysteryBoxImageSaved = false
+        mysteryBoxCount = 0
+        autoTapper.resetForRound(options, sourceWidth, sourceHeight)
+        Log.i(CookieRunBotApplication.TAG, "[BOT] beginRound=$roundNumber")
+        roundResultCollector.beginRound(roundNumber)
         if (options.useFastStart) {
             // Python uses a dedicated short GAME_START poll immediately after Play.
             // Give that transient state first priority until detected or timed out.
@@ -1853,27 +1853,37 @@ class BotController(
     private fun handleQuickLives(detector: StateDetector, sourceWidth: Int, sourceHeight: Int): Boolean {
         Log.i(CookieRunBotApplication.TAG, "[LIVES] Safe tap jitter=10 canonical")
         if (!revalidateMainMenu(detector, "BEFORE_MAIL_BOX")) return false
-        if (!performTap("MAIL_BOX", AutomationConfig.MAIL_BOX, sourceWidth, sourceHeight, AutomationConfig.LIVES_JITTER)) {
+        if (!performQuickLivesTap("MAIL_BOX", AutomationConfig.MAIL_BOX, sourceWidth, sourceHeight)) {
             return false
         }
         delayOrStop(randomMs(800, 1400))
-        performTap("MAIL_LIVES_TAB", AutomationConfig.MAIL_LIVES_TAB, sourceWidth, sourceHeight, AutomationConfig.LIVES_JITTER)
-        delayOrStop(randomMs(800, 1400))
-        var snapshot = LatestFrameProvider.snapshot()
-        if (snapshot != null) {
-            val noLives = try {
-                detector.detectTemplate(snapshot.mat, "NO_LIVES_TO_RECEIVE_1.png", Rect(454, 223, 370, 352)).matched
-            } finally { snapshot.mat.release() }
-            if (noLives) {
-                performTap("MAIL_CLOSE", AutomationConfig.MAIL_CLOSE, sourceWidth, sourceHeight, AutomationConfig.LIVES_JITTER)
-                return true
-            }
+        quickLivesSnapshot(detector, "AFTER_MAIL_BOX", LatestFrameProvider.currentGeneration())
+            ?.mat?.release() ?: return false
+        if (!performQuickLivesTap("MAIL_LIVES_TAB", AutomationConfig.MAIL_LIVES_TAB, sourceWidth, sourceHeight)) {
+            return false
         }
-        performTap("QUICK_RECEIVE_SEND", AutomationConfig.QUICK_LIVES, sourceWidth, sourceHeight, AutomationConfig.LIVES_JITTER)
         delayOrStop(randomMs(800, 1400))
+        val initial = quickLivesSnapshot(detector, "AFTER_LIVES_TAB", LatestFrameProvider.currentGeneration())
+            ?: return false
+        val noLives = try {
+            detector.detectTemplate(initial.mat, "NO_LIVES_TO_RECEIVE_1.png", Rect(454, 223, 370, 352)).matched
+        } finally { initial.mat.release() }
+        if (noLives) {
+            return performQuickLivesTap("MAIL_CLOSE", AutomationConfig.MAIL_CLOSE, sourceWidth, sourceHeight)
+        }
+        if (!performQuickLivesTap("QUICK_RECEIVE_SEND", AutomationConfig.QUICK_LIVES, sourceWidth, sourceHeight)) {
+            return false
+        }
+        delayOrStop(randomMs(800, 1400))
+        val deadline = SystemClock.elapsedRealtime() + QUICK_LIVES_TIMEOUT_MS
+        var lastGeneration = LatestFrameProvider.currentGeneration()
         while (isRunning()) {
-            snapshot = LatestFrameProvider.snapshot()
-            if (snapshot == null) { delayOrStop(120L); continue }
+            if (QuickLivesSafetyPolicy.timedOut(SystemClock.elapsedRealtime(), deadline)) {
+                abortQuickLives("timeout")
+                return false
+            }
+            val snapshot = quickLivesSnapshot(detector, "WAITING_FOR_RESULT", lastGeneration) ?: return false
+            lastGeneration = snapshot.generation
             val allDone: Boolean
             val confirm: Boolean
             try {
@@ -1881,18 +1891,96 @@ class BotController(
                 confirm = detector.detectTemplate(snapshot.mat, "CONFIRM_SEND_LIFE_1.png", Rect(640, 402, 304, 113)).matched
             } finally { snapshot.mat.release() }
             if (allDone) {
-                performTap("ALL_LIVES_CONFIRM", AutomationConfig.ALL_LIVES_CONFIRM, sourceWidth, sourceHeight, AutomationConfig.LIVES_JITTER)
+                if (!performQuickLivesTap("ALL_LIVES_CONFIRM", AutomationConfig.ALL_LIVES_CONFIRM, sourceWidth, sourceHeight)) return false
                 delayOrStop(randomMs(800, 1400))
-                performTap("MAIL_CLOSE", AutomationConfig.MAIL_CLOSE, sourceWidth, sourceHeight, AutomationConfig.LIVES_JITTER)
+                quickLivesSnapshot(detector, "BEFORE_MAIL_CLOSE", LatestFrameProvider.currentGeneration())
+                    ?.mat?.release() ?: return false
+                if (!performQuickLivesTap("MAIL_CLOSE", AutomationConfig.MAIL_CLOSE, sourceWidth, sourceHeight)) return false
                 delayOrStop(randomMs(800, 1400))
                 return true
             }
             if (confirm) {
-                performTap("SEND_LIFE_CONFIRM", AutomationConfig.SEND_LIFE_CONFIRM, sourceWidth, sourceHeight, AutomationConfig.LIVES_JITTER)
+                if (!performQuickLivesTap("SEND_LIFE_CONFIRM", AutomationConfig.SEND_LIFE_CONFIRM, sourceWidth, sourceHeight)) return false
                 delayOrStop(randomMs(800, 1400))
-            } else delayOrStop(120L)
+                lastGeneration = LatestFrameProvider.currentGeneration()
+            } else {
+                delayOrStop(120L)
+            }
         }
         return false
+    }
+
+    private fun performQuickLivesTap(
+        name: String,
+        point: LogicalPoint,
+        sourceWidth: Int,
+        sourceHeight: Int,
+    ): Boolean {
+        logBotActionRequest(name)
+        val completed = CountDownLatch(1)
+        val succeeded = AtomicBoolean(false)
+        val result = synchronized(lock) {
+            if (!running) return actionSkippedBotStopped(name)
+            actionExecutor.tap(
+                name,
+                point,
+                sourceWidth,
+                sourceHeight,
+                AutomationConfig.LIVES_JITTER,
+                onGestureCompleted = { _, success ->
+                    succeeded.set(success)
+                    completed.countDown()
+                },
+            )
+        }
+        if (!reportActionResult(result)) return false
+        val gestureSucceeded = completed.await(QUICK_LIVES_GESTURE_TIMEOUT_MS, TimeUnit.MILLISECONDS) && succeeded.get()
+        logDiagnostic("[LIVES_GESTURE] action=$name callbackSuccess=$gestureSucceeded")
+        if (!gestureSucceeded) {
+            abortQuickLives("gesture_failed action=$name")
+        }
+        return gestureSucceeded
+    }
+
+    private fun quickLivesSnapshot(
+        detector: StateDetector,
+        checkpoint: String,
+        afterGeneration: Long,
+    ): FrameSnapshot? {
+        val snapshot = LatestFrameProvider.awaitNextSnapshot(afterGeneration, QUICK_LIVES_FRAME_TIMEOUT_MS)
+        if (snapshot == null) {
+            abortQuickLives("no_fresh_frame checkpoint=$checkpoint")
+            return null
+        }
+        val interrupt = try {
+            val alwaysState = detector.detectFirst(ALWAYS, snapshot.mat)?.state
+            val popupState = if (alwaysState == null) detector.detectFirst(
+                    PRE_GAME.filterNot { it == BotStage.MAINMENU || (!options.detectRelic && it in RELIC_STAGES) },
+                    snapshot.mat,
+                )?.state else null
+            QuickLivesSafetyPolicy.interruptState(
+                alwaysState,
+                popupState,
+                mainMenuMatched = if (alwaysState == null && popupState == null) {
+                    detector.detect(BotStage.MAINMENU, snapshot.mat).matched
+                } else false,
+            )
+        } catch (error: Exception) {
+            snapshot.mat.release()
+            throw error
+        }
+        if (interrupt != null) {
+            snapshot.mat.release()
+            abortQuickLives("state_changed checkpoint=$checkpoint state=$interrupt")
+            return null
+        }
+        return snapshot
+    }
+
+    private fun abortQuickLives(reason: String) {
+        logDiagnostic("[LIVES] Aborted reason=$reason; returning to PRE_GAME detection")
+        lastStage = null
+        updateGroup(DetectionGroup.PRE_GAME)
     }
 
     private fun popup(name: String, point: LogicalPoint, sourceWidth: Int, sourceHeight: Int, nextGroup: DetectionGroup, rearm: Boolean = false) {
@@ -2647,6 +2735,9 @@ class BotController(
         private const val PREVIOUS_RESULTS_CONFIRM_OFFSET_X = 153
         private const val PREVIOUS_RESULTS_CONFIRM_OFFSET_Y = 236
         private const val MAINMENU_REVALIDATE_FRAME_TIMEOUT_MS = 1_000L
+        private const val QUICK_LIVES_FRAME_TIMEOUT_MS = 2_500L
+        private const val QUICK_LIVES_GESTURE_TIMEOUT_MS = 3_000L
+        private const val QUICK_LIVES_TIMEOUT_MS = 120_000L
         private const val FRESH_FRAME_GATE_MAX_WAIT_MS = 7_500L
         private const val MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS = 3
         private val POST_GAME = listOf(BotStage.ANTI_BOT, BotStage.OVERTAKE_BREAK_SCORE, BotStage.MYSTERY_BOX, BotStage.MAINMENU)
