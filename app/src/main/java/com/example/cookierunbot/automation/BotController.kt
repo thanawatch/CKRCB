@@ -388,60 +388,28 @@ class BotController(
                     "center=(${center.x},${center.y}) tapRadius=5 " +
                     "logical=(${point.x},${point.y})",
             )
-            if (!synchronized(lock) {
-                    running && botRunGeneration == runGeneration &&
-                        GameProgressWatchdogManager.isCurrentRecovery(reservation) &&
-                        !PopupFreshFramePolicy.blocks(snapshot.generation, minimumFreshFrameGeneration) &&
-                        progressRecoveryGate.begin(runGeneration)
-                }) return
+            if (!beginProgressRecovery(runGeneration, reservation, snapshot.generation)) return
             try {
                 autoTapper.stop("GAME_PROGRESS_CONFIRM_SEND_LIFE")
                 val completion = CountDownLatch(1)
                 val gestureSucceeded = AtomicBoolean(false)
-                val action = synchronized(lock) {
-                    if (!running || botRunGeneration != runGeneration ||
-                        !GameProgressWatchdogManager.isCurrentRecovery(reservation) ||
-                        PopupFreshFramePolicy.blocks(snapshot.generation, minimumFreshFrameGeneration)
-                    ) return
-                    // Invalidate the timeout frame before dispatch so an active handler cannot
-                    // continue issuing actions based on the screen underneath the popup.
-                    minimumFreshFrameGeneration = maxOf(minimumFreshFrameGeneration, snapshot.generation)
-                    freshFrameGateWaitStartedAt = 0L
-                    lastStage = null
-                    actionExecutor.tapDetectedPhysicalCircle(
-                        "GAME_PROGRESS_CONFIRM_SEND_LIFE",
-                        point,
-                        0.0, // Logical radius was already applied before detector-content mapping.
-                        snapshot.sourceWidth,
-                        snapshot.sourceHeight,
-                        PROGRESS_RECOVERY_GESTURE_TIMEOUT_MS,
-                    ) { success, timedOut ->
-                        gestureSucceeded.set(success && !timedOut)
-                        completion.countDown()
-                    }.also { pendingProgressRecoveryGesture = it.pendingGesture }
-                }
+                val action = dispatchProgressRecoveryTap(
+                    runGeneration, reservation, snapshot, point, completion, gestureSucceeded,
+                ) ?: return
                 logDiagnostic("[GAME_PROGRESS_RECOVERY] dispatchAccepted=${action.accepted}")
                 if (!action.accepted) {
-                    synchronized(lock) { if (pendingProgressRecoveryGesture === action.pendingGesture) pendingProgressRecoveryGesture = null }
+                    clearPendingProgressRecoveryGesture(action.pendingGesture)
                     return
                 }
                 val callbackArrived = completion.await(PROGRESS_RECOVERY_GESTURE_TIMEOUT_MS + 500L, TimeUnit.MILLISECONDS)
                 action.pendingGesture?.let { pending ->
-                    synchronized(lock) {
-                        if (pendingProgressRecoveryGesture === pending) pendingProgressRecoveryGesture = null
-                    }
+                    clearPendingProgressRecoveryGesture(pending)
                     if (!callbackArrived) pending.cancel()
                 }
                 logDiagnostic("[GAME_PROGRESS_RECOVERY] gestureSuccess=${callbackArrived && gestureSucceeded.get()}")
                 if (!callbackArrived || !gestureSucceeded.get() || !recoveryRunIsCurrent(runGeneration, reservation)) return
                 val postTapBaseline = LatestFrameProvider.currentGeneration()
-                synchronized(lock) {
-                    if (!running || botRunGeneration != runGeneration) return
-                    minimumFreshFrameGeneration = maxOf(minimumFreshFrameGeneration, postTapBaseline)
-                    freshFrameGateWaitStartedAt = 0L
-                    lastStage = null
-                    lastDetectionAt = 0L // Next normal tick may scan every stage if its old group no longer matches.
-                }
+                if (!installProgressRecoveryBaseline(runGeneration, postTapBaseline)) return
                 val fresh = LatestFrameProvider.awaitNextSnapshot(postTapBaseline, PROGRESS_RECOVERY_FRAME_TIMEOUT_MS)
                 if (fresh == null) {
                     logDiagnostic("[GAME_PROGRESS_RECOVERY] failed=true reason=post_tap_frame_timeout")
@@ -449,17 +417,14 @@ class BotController(
                 }
                 val freshGeneration = fresh.generation
                 fresh.mat.release()
-                val resumed = synchronized(lock) {
-                    if (running && botRunGeneration == runGeneration &&
-                        GameProgressWatchdogManager.isCurrentRecovery(reservation)
-                    ) progressRecoveryGate.clearAfterFreshFrame(runGeneration, postTapBaseline, freshGeneration)
-                    else false
-                }
+                val resumed = finishProgressRecoveryAfterFresh(
+                    runGeneration, reservation, postTapBaseline, freshGeneration,
+                )
                 if (resumed) logDiagnostic("[GAME_PROGRESS_RECOVERY] freshGeneration=$freshGeneration resumed_detector=true")
             } finally {
                 // Failure/stop paths must not strand the loop. Ownership prevents an old
                 // worker from clearing a gate installed by a newer bot run.
-                synchronized(lock) { progressRecoveryGate.clearIfOwner(runGeneration) }
+                clearProgressRecoveryGate(runGeneration)
             }
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
@@ -467,6 +432,81 @@ class BotController(
         } catch (error: Exception) {
             logDiagnostic("[GAME_PROGRESS_RECOVERY] failed=true type=${error.javaClass.simpleName}")
         }
+    }
+
+    // Keep monitor scopes out of performProgressRecovery's nested try/finally. A non-local
+    // return from an inline synchronized block there produced invalid DEX monitor handling.
+    private fun beginProgressRecovery(
+        runGeneration: Long,
+        reservation: GameProgressRecoveryReservation,
+        frameGeneration: Long,
+    ): Boolean = synchronized(lock) {
+        running && botRunGeneration == runGeneration &&
+            GameProgressWatchdogManager.isCurrentRecovery(reservation) &&
+            !PopupFreshFramePolicy.blocks(frameGeneration, minimumFreshFrameGeneration) &&
+            progressRecoveryGate.begin(runGeneration)
+    }
+
+    private fun dispatchProgressRecoveryTap(
+        runGeneration: Long,
+        reservation: GameProgressRecoveryReservation,
+        snapshot: FrameSnapshot,
+        point: LogicalPoint,
+        completion: CountDownLatch,
+        gestureSucceeded: AtomicBoolean,
+    ): ActionResult? = synchronized(lock) {
+        if (!running || botRunGeneration != runGeneration ||
+            !GameProgressWatchdogManager.isCurrentRecovery(reservation) ||
+            PopupFreshFramePolicy.blocks(snapshot.generation, minimumFreshFrameGeneration)
+        ) {
+            null
+        } else {
+            // Invalidate the timeout frame before dispatch so an active handler cannot
+            // continue issuing actions based on the screen underneath the popup.
+            minimumFreshFrameGeneration = maxOf(minimumFreshFrameGeneration, snapshot.generation)
+            freshFrameGateWaitStartedAt = 0L
+            lastStage = null
+            actionExecutor.tapDetectedPhysicalCircle(
+                "GAME_PROGRESS_CONFIRM_SEND_LIFE",
+                point,
+                0.0, // Logical radius was already applied before detector-content mapping.
+                snapshot.sourceWidth,
+                snapshot.sourceHeight,
+                PROGRESS_RECOVERY_GESTURE_TIMEOUT_MS,
+            ) { success, timedOut ->
+                gestureSucceeded.set(success && !timedOut)
+                completion.countDown()
+            }.also { pendingProgressRecoveryGesture = it.pendingGesture }
+        }
+    }
+
+    private fun clearPendingProgressRecoveryGesture(gesture: GestureCancellation?) = synchronized(lock) {
+        if (pendingProgressRecoveryGesture === gesture) pendingProgressRecoveryGesture = null
+    }
+
+    private fun installProgressRecoveryBaseline(runGeneration: Long, baseline: Long): Boolean = synchronized(lock) {
+        if (!running || botRunGeneration != runGeneration) false else {
+            minimumFreshFrameGeneration = maxOf(minimumFreshFrameGeneration, baseline)
+            freshFrameGateWaitStartedAt = 0L
+            lastStage = null
+            lastDetectionAt = 0L // Next normal tick may scan every stage if its old group no longer matches.
+            true
+        }
+    }
+
+    private fun finishProgressRecoveryAfterFresh(
+        runGeneration: Long,
+        reservation: GameProgressRecoveryReservation,
+        baseline: Long,
+        freshGeneration: Long,
+    ): Boolean = synchronized(lock) {
+        running && botRunGeneration == runGeneration &&
+            GameProgressWatchdogManager.isCurrentRecovery(reservation) &&
+            progressRecoveryGate.clearAfterFreshFrame(runGeneration, baseline, freshGeneration)
+    }
+
+    private fun clearProgressRecoveryGate(runGeneration: Long) = synchronized(lock) {
+        progressRecoveryGate.clearIfOwner(runGeneration)
     }
 
     private fun waitForReadiness(): Boolean {
