@@ -88,4 +88,34 @@ class TelegramConfigTest {
             assertFalse("HTTP $code", decision.retry)
         }
     }
+
+    @Test fun commandReplyTargetAcceptsUnchangedAuthorizedConfig() {
+        val original = validConfig(token = "token-a", chatId = "123")
+        val target = TelegramCommandReplyTarget.from(original)
+        assertTrue(target.matches(original.copy()))
+    }
+
+    @Test fun commandReplyTargetRejectsDisabledTelegramBeforeRetry() {
+        val original = validConfig(token = "token-a", chatId = "123")
+        val target = TelegramCommandReplyTarget.from(original)
+        assertFalse(target.matches(original.copy(enabled = false)))
+    }
+
+    @Test fun commandReplyTargetRejectsChangedChatIdBeforeRetry() {
+        val original = validConfig(token = "token-a", chatId = "123")
+        val target = TelegramCommandReplyTarget.from(original)
+        assertFalse(target.matches(original.copy(chatId = "456")))
+    }
+
+    @Test fun commandReplyTargetRejectsChangedBotTokenBeforeRetry() {
+        val original = validConfig(token = "token-a", chatId = "123")
+        val target = TelegramCommandReplyTarget.from(original)
+        assertFalse(target.matches(original.copy(botToken = "token-b")))
+    }
+
+    private fun validConfig(token: String, chatId: String) = TelegramConfig(
+        enabled = true,
+        botToken = token,
+        chatId = chatId,
+    )
 }

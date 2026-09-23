@@ -43,7 +43,13 @@ object GameProgressWatchdogManager {
     }
 
     fun recordProgress(reason: GameProgressReason) {
-        val previousAge = watchdog.recordProgress(reason, SystemClock.elapsedRealtime())
+        val previousAge = watchdog.recordProgress(reason, SystemClock.elapsedRealtime()) ?: run {
+            log(
+                "[GAME_PROGRESS_WATCHDOG_PROGRESS] ignored=true " +
+                    "reason=watchdog_stopped progress=${reason.name}",
+            )
+            return
+        }
         log("[GAME_PROGRESS_WATCHDOG_RESET] reason=${reason.name} previousAgeMs=$previousAge")
     }
 

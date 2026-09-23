@@ -95,6 +95,34 @@ class GameProgressWatchdogTest {
         assertNull(watchdog.reserveIfDue(GAME_PROGRESS_TIMEOUT_MS * 2L))
     }
 
+    @Test fun lateFriendSendProgressAfterStopIsIgnored() {
+        val watchdog = GameProgressWatchdog()
+        watchdog.start(0L)
+        watchdog.recordProgress(GameProgressReason.GAME_COMPLETE, 100L)
+        watchdog.stop()
+        assertNull(watchdog.recordProgress(GameProgressReason.FRIEND_SEND_LIFE_TAP, 200L))
+        val stopped = watchdog.status(200L)
+        assertFalse(stopped.running)
+        assertEquals(GameProgressReason.GAME_COMPLETE, stopped.lastProgressReason)
+        assertEquals(100L, stopped.lastProgressAt)
+
+        watchdog.start(300L)
+        val restarted = watchdog.status(300L)
+        assertTrue(restarted.running)
+        assertEquals(GameProgressReason.BOT_START, restarted.lastProgressReason)
+        assertEquals(300L, restarted.lastProgressAt)
+    }
+
+    @Test fun gameCompleteProgressAfterStopIsIgnored() {
+        val watchdog = GameProgressWatchdog()
+        watchdog.start(0L)
+        watchdog.stop()
+        assertNull(watchdog.recordProgress(GameProgressReason.GAME_COMPLETE, 100L))
+        val status = watchdog.status(100L)
+        assertEquals(GameProgressReason.BOT_START, status.lastProgressReason)
+        assertEquals(0L, status.lastProgressAt)
+    }
+
     @Test fun staleDeliveryCallbackCannotMarkNewEpisodeDelivered() {
         val watchdog = GameProgressWatchdog()
         watchdog.start(0L)

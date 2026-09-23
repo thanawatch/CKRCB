@@ -10,6 +10,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
@@ -29,6 +30,30 @@ internal data class TelegramCommandReplyAttempt(
     val replyText: String,
     val attempt: Int = 1,
 )
+
+internal class TelegramCommandReplyTarget private constructor(
+    private val botTokenIdentity: String,
+    private val chatId: String,
+) {
+    fun matches(config: TelegramConfig): Boolean =
+        config.enabled && config.isValid &&
+            config.chatId.trim() == chatId &&
+            telegramBotTokenIdentity(config.botToken) == botTokenIdentity
+
+    companion object {
+        fun from(config: TelegramConfig) = TelegramCommandReplyTarget(
+            botTokenIdentity = telegramBotTokenIdentity(config.botToken),
+            chatId = config.chatId.trim(),
+        )
+    }
+}
+
+private fun telegramBotTokenIdentity(token: String): String =
+    MessageDigest.getInstance("SHA-256")
+        .digest(token.trim().toByteArray(StandardCharsets.UTF_8))
+        .joinToString(separator = "") { byte ->
+            (byte.toInt() and 0xff).toString(16).padStart(2, '0')
+        }
 
 internal data class TelegramCommandRetryDecision(
     val retry: Boolean,
@@ -101,18 +126,29 @@ class TelegramNotifier(context: Context) {
             callback(TelegramSendResult(false, if (!config.enabled) "disabled" else "invalid_config"))
             return
         }
-        scheduleCommandReply(config, TelegramCommandReplyAttempt(text), 0L, callback)
+        scheduleCommandReply(
+            TelegramCommandReplyTarget.from(config),
+            TelegramCommandReplyAttempt(text),
+            0L,
+            callback,
+        )
     }
 
     private fun scheduleCommandReply(
-        config: TelegramConfig,
+        target: TelegramCommandReplyTarget,
         state: TelegramCommandReplyAttempt,
         delayMs: Long,
         callback: (TelegramSendResult) -> Unit,
     ) {
         try {
             executor.schedule({
-                val result = sendTextBlocking(config, state.replyText, manualTest = true)
+                val currentConfig = TelegramConfigStore.load(appContext)
+                if (!target.matches(currentConfig)) {
+                    log("[TELEGRAM_COMMAND_REPLY] cancelled=true reason=config_changed")
+                    callback(TelegramSendResult(false, "config_changed"))
+                    return@schedule
+                }
+                val result = sendTextBlocking(currentConfig, state.replyText, manualTest = true)
                 val decision = telegramCommandRetryDecision(state, result)
                 if (decision.retry) {
                     log(
@@ -120,7 +156,7 @@ class TelegramNotifier(context: Context) {
                             "retryInMs=${decision.delayMs} code=${result.httpCode ?: "none"}",
                     )
                     scheduleCommandReply(
-                        config,
+                        target,
                         requireNotNull(decision.nextAttempt),
                         decision.delayMs,
                         callback,

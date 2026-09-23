@@ -49,7 +49,8 @@ class GameProgressWatchdog(
         alertInFlight = false
     }
 
-    @Synchronized fun recordProgress(progressReason: GameProgressReason, nowMs: Long): Long {
+    @Synchronized fun recordProgress(progressReason: GameProgressReason, nowMs: Long): Long? {
+        if (!running) return null
         val previousAge = (nowMs - lastProgressAt).coerceAtLeast(0L)
         generation += 1L
         lastProgressAt = nowMs
