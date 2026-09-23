@@ -20,11 +20,13 @@ object GameProgressWatchdogManager {
     private var appContext: Context? = null
     private var notifier: TelegramNotifier? = null
     private var encoder: NoMatchDebugFrameSaver? = null
+    private var recoveryRequester: ((GameProgressRecoveryReservation) -> Unit)? = null
 
-    fun start(context: Context) = synchronized(lock) {
+    fun start(context: Context, requestRecovery: (GameProgressRecoveryReservation) -> Unit) = synchronized(lock) {
         appContext = context.applicationContext
         notifier = notifier ?: TelegramNotifier(context.applicationContext)
         encoder = encoder ?: NoMatchDebugFrameSaver(context.applicationContext)
+        recoveryRequester = requestRecovery
         watchdog.start(SystemClock.elapsedRealtime())
         scheduler?.shutdownNow()
         scheduler = Executors.newSingleThreadScheduledExecutor { runnable ->
@@ -39,6 +41,7 @@ object GameProgressWatchdogManager {
         watchdog.stop()
         scheduler?.shutdownNow()
         scheduler = null
+        recoveryRequester = null
         log("[GAME_PROGRESS_WATCHDOG] stopped=true")
     }
 
@@ -55,8 +58,27 @@ object GameProgressWatchdogManager {
 
     fun status(): GameProgressStatus = watchdog.status(SystemClock.elapsedRealtime())
 
+    fun isCurrentRecovery(reservation: GameProgressRecoveryReservation): Boolean =
+        watchdog.isCurrentRecovery(reservation)
+
     private fun check() {
         val now = SystemClock.elapsedRealtime()
+        val recovery = watchdog.reserveRecoveryIfDue(now)
+        try {
+            sendAlertIfDue(now)
+        } finally {
+            if (recovery != null && watchdog.isCurrentRecovery(recovery)) {
+                val requester = synchronized(lock) { recoveryRequester }
+                try {
+                    requester?.invoke(recovery)
+                } catch (error: Exception) {
+                    log("[GAME_PROGRESS_RECOVERY] requestFailed=${error.javaClass.simpleName}")
+                }
+            }
+        }
+    }
+
+    private fun sendAlertIfDue(now: Long) {
         val reservation = watchdog.reserveIfDue(now) ?: return
         val status = watchdog.status(now)
         log("[GAME_PROGRESS_WATCHDOG_DUE] elapsedMs=${status.ageMs} lastReason=${status.lastProgressReason}")

@@ -18,6 +18,7 @@ data class GameProgressStatus(
 )
 
 data class GameProgressAlertReservation(val generation: Long)
+data class GameProgressRecoveryReservation(val generation: Long)
 
 class GameProgressWatchdog(
     private val timeoutMs: Long = GAME_PROGRESS_TIMEOUT_MS,
@@ -29,6 +30,7 @@ class GameProgressWatchdog(
     private var reason = GameProgressReason.BOT_START
     private var alertDelivered = false
     private var alertInFlight = false
+    private var recoveryReserved = false
     private var retryNotBefore = 0L
     private var generation = 0L
 
@@ -40,6 +42,7 @@ class GameProgressWatchdog(
         reason = GameProgressReason.BOT_START
         alertDelivered = false
         alertInFlight = false
+        recoveryReserved = false
         retryNotBefore = 0L
     }
 
@@ -47,6 +50,7 @@ class GameProgressWatchdog(
         running = false
         generation += 1L
         alertInFlight = false
+        recoveryReserved = false
     }
 
     @Synchronized fun recordProgress(progressReason: GameProgressReason, nowMs: Long): Long? {
@@ -57,6 +61,7 @@ class GameProgressWatchdog(
         reason = progressReason
         alertDelivered = false
         alertInFlight = false
+        recoveryReserved = false
         retryNotBefore = 0L
         return previousAge
     }
@@ -67,6 +72,16 @@ class GameProgressWatchdog(
         alertInFlight = true
         return GameProgressAlertReservation(generation)
     }
+
+    /** Independent of Telegram delivery/retry: at most one recovery attempt per progress episode. */
+    @Synchronized fun reserveRecoveryIfDue(nowMs: Long): GameProgressRecoveryReservation? {
+        if (!running || recoveryReserved || nowMs - lastProgressAt < timeoutMs) return null
+        recoveryReserved = true
+        return GameProgressRecoveryReservation(generation)
+    }
+
+    @Synchronized fun isCurrentRecovery(reservation: GameProgressRecoveryReservation): Boolean =
+        running && recoveryReserved && reservation.generation == generation
 
     @Synchronized fun confirmDelivered(reservation: GameProgressAlertReservation): Boolean {
         if (!reservationCurrent(reservation)) return false

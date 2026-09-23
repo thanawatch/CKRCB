@@ -30,6 +30,8 @@ import kotlin.random.Random
 private const val PARTY_RUN_SEASON_REWARDS_CALLBACK_TIMEOUT_MS = 3_000L
 private const val TIME_DEAL_CALLBACK_TIMEOUT_MS = 3_000L
 private const val PREVIOUS_RESULTS_CALLBACK_TIMEOUT_MS = 3_000L
+private const val PROGRESS_RECOVERY_GESTURE_TIMEOUT_MS = 3_000L
+private const val PROGRESS_RECOVERY_FRAME_TIMEOUT_MS = 2_500L
 
 enum class DetectionGroup { PRE_GAME, IN_GAME, POST_GAME }
 
@@ -54,6 +56,9 @@ class BotController(
     private val diagnosticExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "bot-diagnostics")
     }
+    private val recoveryExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "game-progress-recovery")
+    }
     private val roundResultCollector = RoundResultCollector(context.applicationContext)
     private var executor: ExecutorService? = null
     private var running = false
@@ -63,7 +68,7 @@ class BotController(
     private var options = BotOptions()
     @Volatile private var group = DetectionGroup.PRE_GAME
     @Volatile private var lastStage: BotStage? = null
-    private var lastDetectionAt = 0L
+    @Volatile private var lastDetectionAt = 0L
     private var lastLogAt = 0L
     private var lastSafetyLogAt = 0L
     private var lastTraceHeartbeatAt = 0L
@@ -98,6 +103,7 @@ class BotController(
     private var pendingTimeDealGesture: GestureCancellation? = null
     private var timeDealCallbackFailures = 0
     private var pendingPreviousResultsGesture: GestureCancellation? = null
+    private var pendingProgressRecoveryGesture: GestureCancellation? = null
     @Volatile private var previousResultsSettleUntilElapsedRealtime = 0L
     @Volatile private var pendingPreviousResultsRedetectBaseline = -1L
     /** Invalidates late accessibility callbacks and delayed timeout runnables across runs. */
@@ -196,8 +202,10 @@ class BotController(
             previousResultsSettleUntilElapsedRealtime = 0L
             pendingPreviousResultsRedetectBaseline = -1L
             resetNoMatchEpisode("bot_started")
-            GameProgressWatchdogManager.start(context)
             val runGeneration = botRunGeneration
+            GameProgressWatchdogManager.start(context) { reservation ->
+                requestProgressRecovery(runGeneration, reservation)
+            }
             executor = Executors.newSingleThreadExecutor { runnable ->
                 Thread(runnable, "cookierun-bot-loop").apply { priority = Thread.NORM_PRIORITY - 1 }
             }.also { it.submit { runLoop(runGeneration) } }
@@ -220,6 +228,7 @@ class BotController(
         val stoppedPartyGesture: GestureCancellation?
         val stoppedTimeDealGesture: GestureCancellation?
         val stoppedPreviousResultsGesture: GestureCancellation?
+        val stoppedRecoveryGesture: GestureCancellation?
         val worker = synchronized(lock) {
             if (expectedGeneration != null && botRunGeneration != expectedGeneration) return
             if (!running && executor == null) return
@@ -235,11 +244,14 @@ class BotController(
             pendingTimeDealGesture = null
             stoppedPreviousResultsGesture = pendingPreviousResultsGesture
             pendingPreviousResultsGesture = null
+            stoppedRecoveryGesture = pendingProgressRecoveryGesture
+            pendingProgressRecoveryGesture = null
             currentExecutor
         }
         stoppedPartyGesture?.cancel()
         stoppedTimeDealGesture?.cancel()
         stoppedPreviousResultsGesture?.cancel()
+        stoppedRecoveryGesture?.cancel()
         autoTapper.stop("BOT_EXIT")
         friendLifeScheduler.stop()
         GameProgressWatchdogManager.stop()
@@ -313,6 +325,136 @@ class BotController(
             logDiagnostic("[FRIEND_LIFE_TEST] queued=true reason=waiting_for_mainmenu")
         }
         return result
+    }
+
+    /** One-shot watchdog handoff; never runs a gameplay handler on the scheduler thread. */
+    private fun requestProgressRecovery(
+        runGeneration: Long,
+        reservation: GameProgressRecoveryReservation,
+    ) {
+        if (!recoveryRunIsCurrent(runGeneration, reservation)) return
+        recoveryExecutor.execute { performProgressRecovery(runGeneration, reservation) }
+    }
+
+    private fun recoveryRunIsCurrent(
+        runGeneration: Long,
+        reservation: GameProgressRecoveryReservation,
+    ): Boolean = synchronized(lock) {
+        running && botRunGeneration == runGeneration &&
+            GameProgressWatchdogManager.isCurrentRecovery(reservation)
+    }
+
+    private fun performProgressRecovery(
+        runGeneration: Long,
+        reservation: GameProgressRecoveryReservation,
+    ) {
+        try {
+            if (!recoveryRunIsCurrent(runGeneration, reservation)) return
+            val initialGeneration = LatestFrameProvider.currentGeneration()
+            val snapshot = LatestFrameProvider.awaitNextSnapshot(initialGeneration, PROGRESS_RECOVERY_FRAME_TIMEOUT_MS)
+            if (snapshot == null) {
+                logDiagnostic("[GAME_PROGRESS_RECOVERY] skipped=true reason=no_fresh_frame")
+                return
+            }
+            val frameWidth = snapshot.mat.cols()
+            val frameHeight = snapshot.mat.rows()
+            val match: TemplateMatch
+            try {
+                if (!recoveryRunIsCurrent(runGeneration, reservation) ||
+                    !LatestFrameProvider.diagnostics().captureRunning
+                ) return
+                StateDetector(context.applicationContext).use { detector ->
+                    match = detector.detectTemplate(
+                        snapshot.mat,
+                        GameProgressRecovery.TEMPLATE,
+                        Rect(0, 0, frameWidth, frameHeight),
+                    )
+                }
+            } finally {
+                snapshot.mat.release()
+            }
+            logDiagnostic(
+                "[GAME_PROGRESS_RECOVERY] template=CONFIRM_SEND_LIFE scan=FULL_FRAME " +
+                    "frameSize=${frameWidth}x${frameHeight} matched=${match.matched} " +
+                    "score=${format(match.score)}",
+            )
+            val center = GameProgressRecovery.centerIfMatched(match) ?: return
+            val point = GameProgressRecovery.pointInCircle(center)
+            logDiagnostic(
+                "[GAME_PROGRESS_RECOVERY] match=(${match.x},${match.y},${match.width},${match.height}) " +
+                    "center=(${center.x},${center.y}) tapRadius=5 " +
+                    "logical=(${point.x},${point.y})",
+            )
+            if (!synchronized(lock) {
+                    running && botRunGeneration == runGeneration &&
+                        GameProgressWatchdogManager.isCurrentRecovery(reservation) &&
+                        !PopupFreshFramePolicy.blocks(snapshot.generation, minimumFreshFrameGeneration)
+                }) return
+            autoTapper.stop("GAME_PROGRESS_CONFIRM_SEND_LIFE")
+            val completion = CountDownLatch(1)
+            val gestureSucceeded = AtomicBoolean(false)
+            val action = synchronized(lock) {
+                if (!running || botRunGeneration != runGeneration ||
+                    !GameProgressWatchdogManager.isCurrentRecovery(reservation) ||
+                    PopupFreshFramePolicy.blocks(snapshot.generation, minimumFreshFrameGeneration)
+                ) return
+                // Invalidate the timeout frame before dispatch so an active handler cannot
+                // continue issuing actions based on the screen underneath the popup.
+                minimumFreshFrameGeneration = maxOf(minimumFreshFrameGeneration, snapshot.generation)
+                freshFrameGateWaitStartedAt = 0L
+                lastStage = null
+                actionExecutor.tapDetectedPhysicalCircle(
+                    "GAME_PROGRESS_CONFIRM_SEND_LIFE",
+                    point,
+                    0.0, // Logical radius was already applied before detector-content mapping.
+                    snapshot.sourceWidth,
+                    snapshot.sourceHeight,
+                    PROGRESS_RECOVERY_GESTURE_TIMEOUT_MS,
+                ) { success, timedOut ->
+                    gestureSucceeded.set(success && !timedOut)
+                    completion.countDown()
+                }.also { pendingProgressRecoveryGesture = it.pendingGesture }
+            }
+            logDiagnostic("[GAME_PROGRESS_RECOVERY] dispatchAccepted=${action.accepted}")
+            if (!action.accepted) {
+                synchronized(lock) { if (pendingProgressRecoveryGesture === action.pendingGesture) pendingProgressRecoveryGesture = null }
+                return
+            }
+            val callbackArrived = completion.await(PROGRESS_RECOVERY_GESTURE_TIMEOUT_MS + 500L, TimeUnit.MILLISECONDS)
+            action.pendingGesture?.let { pending ->
+                synchronized(lock) {
+                    if (pendingProgressRecoveryGesture === pending) pendingProgressRecoveryGesture = null
+                }
+                if (!callbackArrived) pending.cancel()
+            }
+            logDiagnostic("[GAME_PROGRESS_RECOVERY] gestureSuccess=${callbackArrived && gestureSucceeded.get()}")
+            if (!callbackArrived || !gestureSucceeded.get() || !recoveryRunIsCurrent(runGeneration, reservation)) return
+            val postTapBaseline = LatestFrameProvider.currentGeneration()
+            synchronized(lock) {
+                if (!running || botRunGeneration != runGeneration) return
+                minimumFreshFrameGeneration = maxOf(minimumFreshFrameGeneration, postTapBaseline)
+                freshFrameGateWaitStartedAt = 0L
+                lastStage = null
+                lastDetectionAt = 0L // Next normal tick may scan every stage if its old group no longer matches.
+            }
+            val fresh = LatestFrameProvider.awaitNextSnapshot(postTapBaseline, PROGRESS_RECOVERY_FRAME_TIMEOUT_MS)
+            if (fresh == null) {
+                logDiagnostic("[GAME_PROGRESS_RECOVERY] failed=true reason=post_tap_frame_timeout")
+                return
+            }
+            try {
+                if (recoveryRunIsCurrent(runGeneration, reservation)) {
+                    logDiagnostic("[GAME_PROGRESS_RECOVERY] freshGeneration=${fresh.generation} resumed_detector=true")
+                }
+            } finally {
+                fresh.mat.release()
+            }
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            logDiagnostic("[GAME_PROGRESS_RECOVERY] failed=true reason=interrupted")
+        } catch (error: Exception) {
+            logDiagnostic("[GAME_PROGRESS_RECOVERY] failed=true type=${error.javaClass.simpleName}")
+        }
     }
 
     private fun waitForReadiness(): Boolean {

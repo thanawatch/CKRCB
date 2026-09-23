@@ -27,6 +27,29 @@ class GameProgressWatchdogTest {
         assertNotNull(watchdog.reserveIfDue(GAME_PROGRESS_TIMEOUT_MS))
     }
 
+    @Test fun recoveryRunsOncePerOverdueEpisodeAndProgressRearmsIt() {
+        val watchdog = GameProgressWatchdog()
+        watchdog.start(0L)
+        assertNull(watchdog.reserveRecoveryIfDue(GAME_PROGRESS_TIMEOUT_MS - 1L))
+        val first = requireNotNull(watchdog.reserveRecoveryIfDue(GAME_PROGRESS_TIMEOUT_MS))
+        assertTrue(watchdog.isCurrentRecovery(first))
+        assertNull(watchdog.reserveRecoveryIfDue(GAME_PROGRESS_TIMEOUT_MS + 30_000L))
+        assertEquals(0L, watchdog.status(GAME_PROGRESS_TIMEOUT_MS).lastProgressAt)
+        watchdog.recordProgress(GameProgressReason.GAME_COMPLETE, GAME_PROGRESS_TIMEOUT_MS + 31_000L)
+        assertFalse(watchdog.isCurrentRecovery(first))
+        assertNotNull(watchdog.reserveRecoveryIfDue(GAME_PROGRESS_TIMEOUT_MS * 2L + 31_000L))
+    }
+
+    @Test fun staleRecoveryFromStoppedRunCannotActInNewRun() {
+        val watchdog = GameProgressWatchdog()
+        watchdog.start(0L)
+        val old = requireNotNull(watchdog.reserveRecoveryIfDue(GAME_PROGRESS_TIMEOUT_MS))
+        watchdog.stop()
+        watchdog.start(GAME_PROGRESS_TIMEOUT_MS + 1L)
+        assertFalse(watchdog.isCurrentRecovery(old))
+        assertNull(watchdog.reserveRecoveryIfDue(GAME_PROGRESS_TIMEOUT_MS * 2L))
+    }
+
     @Test fun gameCompleteResetsTimer() {
         val watchdog = GameProgressWatchdog()
         watchdog.start(0L)
