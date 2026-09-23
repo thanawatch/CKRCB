@@ -103,11 +103,18 @@ class BotController(
     /** Invalidates late accessibility callbacks and delayed timeout runnables across runs. */
     private var botRunGeneration = 0L
     private val workerRunGeneration = ThreadLocal<Long?>()
+    private val detectionActionFrameGeneration = ThreadLocal<Long?>()
 
     private fun isCurrentWorkerRunLocked(): Boolean = BotRunGenerationPolicy.isActive(
         running,
         botRunGeneration,
         workerRunGeneration.get(),
+    )
+
+    private fun canDispatchActionLocked(): Boolean = PopupFreshFramePolicy.allowsActionDispatch(
+        isCurrentWorkerRunLocked(),
+        detectionActionFrameGeneration.get(),
+        minimumFreshFrameGeneration,
     )
 
     fun isRunning(): Boolean = synchronized(lock) { isCurrentWorkerRunLocked() }
@@ -610,7 +617,16 @@ class BotController(
         frameGeneration: Long,
         timing: FastPathTiming,
     ) {
-        if (!isRunning()) return
+        if (!synchronized(lock) {
+                PopupFreshFramePolicy.allowsActionDispatch(
+                    isCurrentWorkerRunLocked(),
+                    frameGeneration,
+                    minimumFreshFrameGeneration,
+                )
+            }
+        ) return
+        detectionActionFrameGeneration.set(frameGeneration)
+        try {
         when (result.state) {
             BotStage.MAINMENU -> handleMainMenu(detector, sourceWidth, sourceHeight)
             BotStage.PURCHASE_ITEM -> handlePurchaseItem(detector, sourceWidth, sourceHeight)
@@ -655,6 +671,9 @@ class BotController(
             BotStage.PREVIOUS_RESULTS -> handlePreviousResults(result, sourceWidth, sourceHeight, frameGeneration)
             BotStage.GAME_SETTINGS -> rewardPopup(result.state, "GAME_SETTINGS", AutomationConfig.GAME_SETTINGS_CLOSE, sourceWidth, sourceHeight, frameGeneration)
             BotStage.IN_GAME -> Unit
+        }
+        } finally {
+            detectionActionFrameGeneration.remove()
         }
     }
 
@@ -991,7 +1010,7 @@ class BotController(
     ): ActionResult {
         logBotActionRequest(name)
         val result = synchronized(lock) {
-            if (!isCurrentWorkerRunLocked() ||
+            if (!canDispatchActionLocked() ||
                 (name == "PARTY_RUN_SEASON_REWARDS" &&
                     PopupFreshFramePolicy.blocks(frameGeneration, minimumFreshFrameGeneration))
             ) {
@@ -1179,8 +1198,17 @@ class BotController(
                 ?: validation.blockingCandidate?.takeIf { validation.blockingMatched }?.name
                 ?: "NO_MATCH"
             abortMainMenuWorkflow(checkpoint, detectedState)
+            return false
         }
-        return valid
+        return synchronized(lock) {
+            val stillFresh = PopupFreshFramePolicy.allowsActionDispatch(
+                isCurrentWorkerRunLocked(),
+                snapshot.generation,
+                minimumFreshFrameGeneration,
+            )
+            if (stillFresh) detectionActionFrameGeneration.set(snapshot.generation)
+            stillFresh
+        }
     }
 
     private fun abortMainMenuWorkflow(checkpoint: String, detectedState: String) {
@@ -1344,10 +1372,13 @@ class BotController(
             if (!accepted) return
             delayOrStop(randomMs(800, 1200))
         }
-        gameStartDetectedForRound = true
-        fastStartPollDeadlineNanos = 0L
-        Log.i(CookieRunBotApplication.TAG, "[AUTO TAP] Trigger: GAME_START")
-        autoTapper.start()
+        synchronized(lock) {
+            if (!canDispatchActionLocked()) return
+            gameStartDetectedForRound = true
+            fastStartPollDeadlineNanos = 0L
+            Log.i(CookieRunBotApplication.TAG, "[AUTO TAP] Trigger: GAME_START")
+            autoTapper.start()
+        }
         updateGroup(DetectionGroup.IN_GAME)
     }
 
@@ -1408,17 +1439,22 @@ class BotController(
                 "[RESULT] Waiting ${waitMs / 1000.0}s before save",
             )
             delayOrStop(waitMs)
+            if (!synchronized(lock) { canDispatchActionLocked() }) return
             captureGameCompleteResult()
             gameCompleteImageSaved = true
         }
-        performTap("GAME_COMPLETE_FINISH", AutomationConfig.COMPLETE_FINISH, sourceWidth, sourceHeight)
+        val finishAccepted = performTap("GAME_COMPLETE_FINISH", AutomationConfig.COMPLETE_FINISH, sourceWidth, sourceHeight)
+        if (!finishAccepted && !synchronized(lock) { canDispatchActionLocked() }) return
         delayOrStop(randomMs(800, 1400))
         livesPendingAfterGame = options.receiveSendLivesAfterEachGame
         updateGroup(DetectionGroup.POST_GAME)
     }
 
     private fun handleMysteryBox(sourceWidth: Int, sourceHeight: Int, detectedFrame: Mat) {
-        mysteryBoxCount += 1
+        synchronized(lock) {
+            if (!canDispatchActionLocked()) return
+            mysteryBoxCount += 1
+        }
         Log.i(CookieRunBotApplication.TAG, "[RESULT] MYSTERY_BOX count=$mysteryBoxCount")
         if (MysteryBoxPhasePolicy.shouldClassify(mysteryBoxCount)) {
             roundResultCollector.classifyMysteryBoxes(roundNumber, detectedFrame)
@@ -1952,19 +1988,26 @@ class BotController(
     }
 
     private fun handleQuickLives(detector: StateDetector, sourceWidth: Int, sourceHeight: Int): Boolean {
+        val mailContext = QuickLivesSafetyPolicy.MailContext()
         Log.i(CookieRunBotApplication.TAG, "[LIVES] Safe tap jitter=10 canonical")
         if (!revalidateMainMenu(detector, "BEFORE_MAIL_BOX")) return false
         if (!performQuickLivesTap("MAIL_BOX", AutomationConfig.MAIL_BOX, sourceWidth, sourceHeight)) {
             return false
         }
         delayOrStop(randomMs(800, 1400))
-        quickLivesSnapshot(detector, "AFTER_MAIL_BOX", LatestFrameProvider.currentGeneration())
+        quickLivesSnapshot(
+            detector, "AFTER_MAIL_BOX", QuickLivesSafetyPolicy.Phase.AFTER_MAIL_BOX,
+            mailContext, LatestFrameProvider.currentGeneration(),
+        )
             ?.mat?.release() ?: return false
         if (!performQuickLivesTap("MAIL_LIVES_TAB", AutomationConfig.MAIL_LIVES_TAB, sourceWidth, sourceHeight)) {
             return false
         }
         delayOrStop(randomMs(800, 1400))
-        val initial = quickLivesSnapshot(detector, "AFTER_LIVES_TAB", LatestFrameProvider.currentGeneration())
+        val initial = quickLivesSnapshot(
+            detector, "AFTER_LIVES_TAB", QuickLivesSafetyPolicy.Phase.AFTER_LIVES_TAB,
+            mailContext, LatestFrameProvider.currentGeneration(),
+        )
             ?: return false
         val noLives = try {
             detector.detectTemplate(initial.mat, "NO_LIVES_TO_RECEIVE_1.png", Rect(454, 223, 370, 352)).matched
@@ -1983,7 +2026,10 @@ class BotController(
                 abortQuickLives("timeout")
                 return false
             }
-            val snapshot = quickLivesSnapshot(detector, "WAITING_FOR_RESULT", lastGeneration) ?: return false
+            val snapshot = quickLivesSnapshot(
+                detector, "WAITING_FOR_RESULT", QuickLivesSafetyPolicy.Phase.WAITING_FOR_RESULT,
+                mailContext, lastGeneration,
+            ) ?: return false
             lastGeneration = snapshot.generation
             val allDone: Boolean
             val confirm: Boolean
@@ -1994,7 +2040,10 @@ class BotController(
             if (allDone) {
                 if (!performQuickLivesTap("ALL_LIVES_CONFIRM", AutomationConfig.ALL_LIVES_CONFIRM, sourceWidth, sourceHeight)) return false
                 delayOrStop(randomMs(800, 1400))
-                quickLivesSnapshot(detector, "BEFORE_MAIL_CLOSE", LatestFrameProvider.currentGeneration())
+                quickLivesSnapshot(
+                    detector, "BEFORE_MAIL_CLOSE", QuickLivesSafetyPolicy.Phase.BEFORE_MAIL_CLOSE,
+                    mailContext, LatestFrameProvider.currentGeneration(),
+                )
                     ?.mat?.release() ?: return false
                 if (!performQuickLivesTap("MAIL_CLOSE", AutomationConfig.MAIL_CLOSE, sourceWidth, sourceHeight)) return false
                 delayOrStop(randomMs(800, 1400))
@@ -2021,7 +2070,7 @@ class BotController(
         val completed = CountDownLatch(1)
         val succeeded = AtomicBoolean(false)
         val result = synchronized(lock) {
-            if (!isCurrentWorkerRunLocked()) return actionSkippedBotStopped(name)
+            if (!canDispatchActionLocked()) return actionSkippedBotStopped(name)
             actionExecutor.tap(
                 name,
                 point,
@@ -2047,6 +2096,8 @@ class BotController(
     private fun quickLivesSnapshot(
         detector: StateDetector,
         checkpoint: String,
+        phase: QuickLivesSafetyPolicy.Phase,
+        mailContext: QuickLivesSafetyPolicy.MailContext,
         afterGeneration: Long,
     ): FrameSnapshot? {
         val snapshot = LatestFrameProvider.awaitNextSnapshot(afterGeneration, QUICK_LIVES_FRAME_TIMEOUT_MS)
@@ -2059,7 +2110,7 @@ class BotController(
             return null
         }
         val first = try {
-            quickLivesScreenSignal(detector, snapshot.mat)
+            quickLivesScreenSignal(detector, snapshot.mat, phase, mailContext)
         } catch (error: Exception) {
             snapshot.mat.release()
             throw error
@@ -2085,7 +2136,7 @@ class BotController(
             return null
         }
         val second = try {
-            quickLivesScreenSignal(detector, confirmation.mat)
+            quickLivesScreenSignal(detector, confirmation.mat, phase, mailContext)
         } catch (error: Exception) {
             confirmation.mat.release()
             throw error
@@ -2099,25 +2150,41 @@ class BotController(
         return confirmation
     }
 
-    private fun quickLivesScreenSignal(detector: StateDetector, frame: Mat): QuickLivesSafetyPolicy.ScreenSignal {
+    private fun quickLivesScreenSignal(
+        detector: StateDetector,
+        frame: Mat,
+        phase: QuickLivesSafetyPolicy.Phase,
+        mailContext: QuickLivesSafetyPolicy.MailContext,
+    ): QuickLivesSafetyPolicy.ScreenSignal {
         val always = detector.detectFirst(ALWAYS, frame)?.state
         val popup = if (always == null) detector.detectFirst(
             PRE_GAME.filterNot { it == BotStage.MAINMENU || (!options.detectRelic && it in RELIC_STAGES) },
             frame,
         )?.state else null
         val mainMenuMatched = if (always == null) detector.detect(BotStage.MAINMENU, frame).matched else false
-        // A known Mail-specific template is positive evidence that a conflicting
-        // PRE_GAME match is on the normal Mail screen, not a popup interruption.
-        val expectedMailScreenMatched = popup != null && mainMenuMatched && (
-            detector.detectTemplate(frame, "NO_LIVES_TO_RECEIVE_1.png", Rect(454, 223, 370, 352)).matched ||
+        val knownMailTemplateMatched = if (popup == null || !mainMenuMatched) false else when (phase) {
+            QuickLivesSafetyPolicy.Phase.AFTER_MAIL_BOX -> false // No general Mail template exists.
+            QuickLivesSafetyPolicy.Phase.AFTER_LIVES_TAB ->
+                detector.detectTemplate(frame, "NO_LIVES_TO_RECEIVE_1.png", Rect(454, 223, 370, 352)).matched
+            QuickLivesSafetyPolicy.Phase.WAITING_FOR_RESULT ->
                 detector.detectTemplate(frame, "CONFIRM_SEND_LIFE_1.png", Rect(640, 402, 304, 113)).matched ||
+                    detector.detectTemplate(frame, "ALL_LIVES_RECEIVED_AND_SENT_1.png", Rect(396, 267, 486, 79)).matched
+            QuickLivesSafetyPolicy.Phase.BEFORE_MAIL_CLOSE ->
                 detector.detectTemplate(frame, "ALL_LIVES_RECEIVED_AND_SENT_1.png", Rect(396, 267, 486, 79)).matched
-            )
+        }
+        val expectedMailContextValid = if (always == null) mailContext.expectedScreenVisible(
+            phase,
+            popupFingerprint(frame, BotStage.IN_GAME), // Existing central fallback region; no Mat retained.
+            popup,
+            mainMenuMatched,
+            knownMailTemplateMatched,
+        ) else false
         return QuickLivesSafetyPolicy.ScreenSignal(
+            phase = phase,
             alwaysState = always,
             popupState = popup,
             mainMenuMatched = mainMenuMatched,
-            expectedMailScreenMatched = expectedMailScreenMatched,
+            expectedMailContextValid = expectedMailContextValid,
         )
     }
 
@@ -2399,7 +2466,7 @@ class BotController(
             )
         }
         val result = synchronized(lock) {
-            if (!isCurrentWorkerRunLocked()) return actionSkippedBotStopped(name)
+            if (!canDispatchActionLocked()) return actionSkippedBotStopped(name)
             actionExecutor.tap(
                 name,
                 point,
@@ -2479,7 +2546,7 @@ class BotController(
     ): Boolean {
         logBotActionRequest(name)
         val result = synchronized(lock) {
-            if (!isCurrentWorkerRunLocked()) return actionSkippedBotStopped(name)
+            if (!canDispatchActionLocked()) return actionSkippedBotStopped(name)
             actionExecutor.tapDetectedPoint(name, point, sourceWidth, sourceHeight)
         }
         return reportActionResult(result)
@@ -2497,7 +2564,7 @@ class BotController(
         val actionRequestedAtNanos = SystemClock.elapsedRealtimeNanos()
         val dispatchTime = java.util.concurrent.atomic.AtomicLong(actionRequestedAtNanos)
         val result = synchronized(lock) {
-            if (!isCurrentWorkerRunLocked()) return actionSkippedBotStopped(name)
+            if (!canDispatchActionLocked()) return actionSkippedBotStopped(name)
             actionExecutor.tap(
                 name,
                 point,
@@ -2536,7 +2603,7 @@ class BotController(
     private fun performCircleTap(name: String, point: LogicalPoint, sourceWidth: Int, sourceHeight: Int): Boolean {
         logBotActionRequest(name)
         val result = synchronized(lock) {
-            if (!isCurrentWorkerRunLocked()) return actionSkippedBotStopped(name)
+            if (!canDispatchActionLocked()) return actionSkippedBotStopped(name)
             actionExecutor.tapLogicalCircle(name, point, AutomationConfig.POST_RELAY_RADIUS, sourceWidth, sourceHeight)
         }
         return reportActionResult(result)
@@ -2551,7 +2618,7 @@ class BotController(
     ): Boolean {
         logBotActionRequest(name)
         val result = synchronized(lock) {
-            if (!isCurrentWorkerRunLocked()) return actionSkippedBotStopped(name)
+            if (!canDispatchActionLocked()) return actionSkippedBotStopped(name)
             actionExecutor.tapAbsolutePhysicalCircle(
                 name,
                 logicalReference,
@@ -2567,7 +2634,7 @@ class BotController(
     private fun performPhysicalCircleTap(name: String, point: LogicalPoint, sourceWidth: Int, sourceHeight: Int): Boolean {
         logBotActionRequest(name)
         val result = synchronized(lock) {
-            if (!isCurrentWorkerRunLocked()) return actionSkippedBotStopped(name)
+            if (!canDispatchActionLocked()) return actionSkippedBotStopped(name)
             actionExecutor.tapPhysicalCircle(name, point, AutomationConfig.FRIEND_PHYSICAL_RADIUS, sourceWidth, sourceHeight)
         }
         return reportActionResult(result)
@@ -2581,7 +2648,7 @@ class BotController(
     ): Boolean {
         logBotActionRequest(name)
         val result = synchronized(lock) {
-            if (!isCurrentWorkerRunLocked()) return actionSkippedBotStopped(name)
+            if (!canDispatchActionLocked()) return actionSkippedBotStopped(name)
             actionExecutor.tapDetectedPhysicalCircle(
                 name,
                 point,
@@ -2595,6 +2662,7 @@ class BotController(
 
     private fun reportActionResult(result: ActionResult): Boolean {
         if (!isRunning()) return false
+        if (result.accepted) detectionActionFrameGeneration.remove()
         DebugLogStore.log(
             "[ACTION] state=${result.actionName} logical=(${result.logicalX},${result.logicalY}) " +
                 "physical=${result.physical?.let { "(${it.x},${it.y})" } ?: "unavailable"} " +
@@ -2649,7 +2717,7 @@ class BotController(
 
     private fun updateGroup(next: DetectionGroup) {
         synchronized(lock) {
-            if (!isCurrentWorkerRunLocked()) return
+            if (!canDispatchActionLocked()) return
             group = next
             resetNoMatchEpisode("group_changed")
             listener.onGroupChanged(next.name)

@@ -7,6 +7,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class QuickLivesSafetyPolicyTest {
+    private val phase = QuickLivesSafetyPolicy.Phase.WAITING_FOR_RESULT
+
     @Test fun mailScreenContinuesUntilDeadline() {
         assertNull(QuickLivesSafetyPolicy.interruptState(signal()))
         assertFalse(QuickLivesSafetyPolicy.timedOut(119_999L, 120_000L))
@@ -31,7 +33,7 @@ class QuickLivesSafetyPolicyTest {
         val mailSignal = signal(
             popupState = BotStage.PREVIOUS_RESULTS,
             mainMenuMatched = true,
-            expectedMailScreenMatched = true,
+            expectedMailContextValid = true,
         )
         assertNull(QuickLivesSafetyPolicy.interruptState(mailSignal, mailSignal))
     }
@@ -44,6 +46,47 @@ class QuickLivesSafetyPolicyTest {
     @Test fun realPopupStillInterruptsWhenMainMenuRemainsVisibleBehindIt() {
         val popup = signal(popupState = BotStage.TIME_DEAL, mainMenuMatched = true)
         assertEquals(BotStage.TIME_DEAL, QuickLivesSafetyPolicy.interruptState(popup, popup))
+    }
+
+    @Test fun earlyMailPhasesSuppressStableFalsePositiveWithoutResultTemplates() {
+        for (mailPhase in listOf(
+            QuickLivesSafetyPolicy.Phase.AFTER_MAIL_BOX,
+            QuickLivesSafetyPolicy.Phase.AFTER_LIVES_TAB,
+        )) {
+            val context = QuickLivesSafetyPolicy.MailContext()
+            val stableMail = PopupFingerprint(ByteArray(PopupFingerprinting.WIDTH * PopupFingerprinting.HEIGHT) { 42 })
+            assertTrue(context.expectedScreenVisible(mailPhase, stableMail, BotStage.PREVIOUS_RESULTS, true, false))
+            assertTrue(context.expectedScreenVisible(mailPhase, stableMail, BotStage.PREVIOUS_RESULTS, true, false))
+            val signal = signal(
+                phase = mailPhase,
+                popupState = BotStage.PREVIOUS_RESULTS,
+                mainMenuMatched = true,
+                expectedMailContextValid = true,
+            )
+            assertNull(QuickLivesSafetyPolicy.interruptState(signal, signal))
+        }
+    }
+
+    @Test fun genuinePopupChangesExpectedMailContextEvenIfMainMenuStillMatches() {
+        val context = QuickLivesSafetyPolicy.MailContext()
+        val normalMail = PopupFingerprint(ByteArray(PopupFingerprinting.WIDTH * PopupFingerprinting.HEIGHT))
+        val realPopup = PopupFingerprint(ByteArray(PopupFingerprinting.WIDTH * PopupFingerprinting.HEIGHT) { 127 })
+        context.expectedScreenVisible(phase, normalMail, null, true, false)
+        assertFalse(context.expectedScreenVisible(phase, realPopup, BotStage.TIME_DEAL, true, false))
+        assertFalse(context.expectedScreenVisible(phase, realPopup, BotStage.TIME_DEAL, true, false))
+        val signal = signal(popupState = BotStage.TIME_DEAL, mainMenuMatched = true)
+        assertEquals(BotStage.TIME_DEAL, QuickLivesSafetyPolicy.interruptState(signal, signal))
+    }
+
+    @Test fun waitingForResultKnownMailTemplateSuppressesFalsePositive() {
+        val context = QuickLivesSafetyPolicy.MailContext()
+        assertTrue(context.expectedScreenVisible(phase, null, BotStage.CONGRATULATIONS, true, true))
+        val signal = signal(
+            popupState = BotStage.CONGRATULATIONS,
+            mainMenuMatched = true,
+            expectedMailContextValid = true,
+        )
+        assertNull(QuickLivesSafetyPolicy.interruptState(signal, signal))
     }
 
     @Test fun alwaysStatesInterruptImmediately() {
@@ -60,6 +103,7 @@ class QuickLivesSafetyPolicyTest {
         alwaysState: BotStage? = null,
         popupState: BotStage? = null,
         mainMenuMatched: Boolean = false,
-        expectedMailScreenMatched: Boolean = false,
-    ) = QuickLivesSafetyPolicy.ScreenSignal(alwaysState, popupState, mainMenuMatched, expectedMailScreenMatched)
+        expectedMailContextValid: Boolean = false,
+        phase: QuickLivesSafetyPolicy.Phase = this.phase,
+    ) = QuickLivesSafetyPolicy.ScreenSignal(phase, alwaysState, popupState, mainMenuMatched, expectedMailContextValid)
 }

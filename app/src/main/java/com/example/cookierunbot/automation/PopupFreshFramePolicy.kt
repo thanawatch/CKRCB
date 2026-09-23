@@ -18,4 +18,12 @@ internal object PopupFreshFramePolicy {
         mutation()
         return true
     }
+
+    /** Detection-originated actions are checked again at the dispatch boundary. */
+    fun allowsActionDispatch(
+        currentRunActive: Boolean,
+        detectionFrameGeneration: Long?,
+        currentBaseline: Long,
+    ): Boolean = currentRunActive &&
+        (detectionFrameGeneration == null || !blocks(detectionFrameGeneration, currentBaseline))
 }

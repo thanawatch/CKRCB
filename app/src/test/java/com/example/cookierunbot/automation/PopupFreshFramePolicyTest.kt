@@ -54,4 +54,14 @@ class PopupFreshFramePolicyTest {
         assertTrue(freshApplied)
         assertTrue(retry.shouldPrepareBoost(true))
     }
+
+    @Test fun actionBoundaryRejectsFrameThatBecameStaleAfterFinalDetectorCheck() {
+        val detectedFrame = 100L
+        var baseline = -1L
+        assertTrue(PopupFreshFramePolicy.allowsActionDispatch(true, detectedFrame, baseline))
+        baseline = 101L // Accessibility callback completes before gesture dispatch.
+        assertFalse(PopupFreshFramePolicy.allowsActionDispatch(true, detectedFrame, baseline))
+        assertTrue(PopupFreshFramePolicy.allowsActionDispatch(true, 102L, baseline))
+        assertFalse(PopupFreshFramePolicy.allowsActionDispatch(false, 102L, baseline))
+    }
 }
