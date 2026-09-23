@@ -120,14 +120,13 @@ class TelegramNotifier(context: Context) {
         }
     }
 
-    fun sendCommandReply(text: String, callback: (TelegramSendResult) -> Unit = {}) {
-        val config = TelegramConfigStore.load(appContext)
-        if (!config.enabled || !config.isValid) {
-            callback(TelegramSendResult(false, if (!config.enabled) "disabled" else "invalid_config"))
-            return
-        }
+    internal fun sendCommandReply(
+        text: String,
+        target: TelegramCommandReplyTarget,
+        callback: (TelegramSendResult) -> Unit = {},
+    ) {
         scheduleCommandReply(
-            TelegramCommandReplyTarget.from(config),
+            target,
             TelegramCommandReplyAttempt(text),
             0L,
             callback,

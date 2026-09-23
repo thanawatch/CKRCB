@@ -31,6 +31,19 @@ class TelegramCommandReceiverTest {
         assertFalse(isAuthorizedTelegramChat("", "12345"))
     }
 
+    @Test fun receiverBindsReplyTargetToSameConfigThatAuthorizedCommand() {
+        val authorizingConfig = TelegramConfig(
+            enabled = true,
+            botToken = "token-a",
+            chatId = "123",
+        )
+        val target = requireNotNull(telegramCommandReplyTarget("123", authorizingConfig))
+        assertTrue(target.matches(authorizingConfig))
+        assertFalse(target.matches(authorizingConfig.copy(chatId = "456")))
+        assertFalse(target.matches(authorizingConfig.copy(botToken = "token-b")))
+        assertNull(telegramCommandReplyTarget("456", authorizingConfig))
+    }
+
     @Test fun consumedUpdateIdsAreNotProcessedAgain() {
         assertFalse(shouldProcessTelegramUpdate(42L, 42L))
         assertFalse(shouldProcessTelegramUpdate(42L, 41L))

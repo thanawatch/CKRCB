@@ -58,13 +58,14 @@ object TelegramCommandReceiver {
                 val lastConsumed = preferences.getLong("last_update_id", -1L)
                 if (!shouldProcessTelegramUpdate(lastConsumed, updateId)) return@poll
                 preferences.edit().putLong("last_update_id", updateId).apply()
-                if (!isAuthorizedTelegramChat(chatId, config.chatId)) {
+                val replyTarget = telegramCommandReplyTarget(chatId, config)
+                if (replyTarget == null) {
                     log("[TELEGRAM_COMMAND] ignored=true reason=unauthorized_chat")
                     return@poll
                 }
                 val command = parseTelegramCommand(text) ?: return@poll
-                val reply = telegramCommandReply(command)
-                if (reply != null) commandNotifier?.sendCommandReply(reply)
+                val reply = telegramCommandReply(command) ?: return@poll
+                commandNotifier?.sendCommandReply(reply, replyTarget)
             }
             if (refreshRequested.getAndSet(false)) continue
             if (retryMs > 0L) sleep(retryMs)
@@ -135,6 +136,17 @@ internal fun parseTelegramCommand(text: String): String? {
 
 internal fun isAuthorizedTelegramChat(incoming: String, configured: String): Boolean =
     incoming.trim().isNotEmpty() && incoming.trim() == configured.trim()
+
+internal fun telegramCommandReplyTarget(
+    incomingChatId: String,
+    authorizingConfig: TelegramConfig,
+): TelegramCommandReplyTarget? = if (
+    isAuthorizedTelegramChat(incomingChatId, authorizingConfig.chatId)
+) {
+    TelegramCommandReplyTarget.from(authorizingConfig)
+} else {
+    null
+}
 
 internal fun shouldProcessTelegramUpdate(lastConsumedUpdateId: Long, incomingUpdateId: Long): Boolean =
     incomingUpdateId > lastConsumedUpdateId
