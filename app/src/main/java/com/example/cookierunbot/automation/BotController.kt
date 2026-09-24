@@ -1851,82 +1851,101 @@ class BotController(
         logDiagnostic("[FRIEND_LIFE_WORKFLOW] start trigger=${friendTriggerText(trigger)}")
         var topSwipeCount = 0
         var topFound = false
-        for (round in 1..FRIEND_TOP_SEARCH_ROUNDS) {
-            val roundStartedAt = SystemClock.elapsedRealtime()
-            while (isRunning() && SystemClock.elapsedRealtime() - roundStartedAt < FRIEND_TOP_SCROLL_ROUND_MS) {
-                val elapsedMs = SystemClock.elapsedRealtime() - roundStartedAt
-                logDiagnostic(
-                    "[FRIEND_LIFE_TOP_ROUND] round=$round/$FRIEND_TOP_SEARCH_ROUNDS " +
-                        "action=SCROLL elapsedMs=$elapsedMs",
-                )
-                topSwipeCount += 1
-                val beforeTopScroll = LatestFrameProvider.snapshot()
-                    ?: return friendLifeAbort("FIND_TOP", "no_frame", topSwipeCount)
-                val beforeTopGeneration = beforeTopScroll.generation
-                val beforeTopSample = try {
-                    FriendScrollVerifier.capture(beforeTopScroll.mat, FRIEND_SCROLL_VERIFY_REGION)
-                } finally {
-                    beforeTopScroll.mat.release()
-                }
-                val topScroll = performFriendScroll(
-                        "FIND_TOP",
-                        topSwipeCount,
-                        "TOWARD_TOP",
-                        LogicalPoint(435, 350),
-                        LogicalPoint(435, 580),
-                        sourceWidth,
-                        sourceHeight,
-                        beforeTopSample,
-                    ) ?: return friendLifeAbort("FIND_TOP", "gesture_or_fresh_frame_timeout", topSwipeCount)
-                val verification = requireNotNull(topScroll.verification)
-                logDiagnostic(
-                    "[FRIEND_SCROLL_VERIFY] phase=FIND_TOP attempt=$topSwipeCount " +
-                        "beforeGeneration=$beforeTopGeneration afterGeneration=${topScroll.afterGeneration} " +
-                        "diff=${format(verification.difference)} " +
-                        "threshold=${format(FriendScrollVerifier.DIFFERENCE_THRESHOLD)} " +
-                        "changed=${verification.changed}",
-                )
-                val progressEvent = verifiedFriendScrollProgressEvent("FIND_TOP", verification.changed)
-                if (progressEvent != null) {
-                    recordFriendLifeProgress(progressEvent, 0, 0)
-                } else {
-                    logDiagnostic(
-                        "[FRIEND_LIFE_PROGRESS] event=TOP_SCROLL_UNCHANGED " +
-                            "topSwipeCount=$topSwipeCount noProgressMs=" +
-                            "${SystemClock.elapsedRealtime() - lastProgressElapsedRealtime}",
-                    )
-                }
-                val interrupt = detectFriendLifeInterrupt(detector)
-                interrupt?.let { return friendLifeInterrupt(it, "FIND_TOP") }
+        val findTopStartedAt = SystemClock.elapsedRealtime()
+        val initialBaseline = LatestFrameProvider.currentGeneration()
+        val initialFrame = LatestFrameProvider.awaitNextSnapshot(initialBaseline, FRIEND_RESCAN_TIMEOUT_MS)
+            ?: return friendLifeAbort("FIND_TOP", "initial_fresh_frame_timeout", topSwipeCount)
+        val initialScan = scanFriendFrame(detector, initialFrame)
+        initialScan.interrupt?.let { return friendLifeInterrupt(it, "FIND_TOP_INITIAL_CHECK") }
+        logDiagnostic(
+            "[FRIEND_LIFE_TOP_CHECK] phase=INITIAL score=${format(initialScan.top.score)} " +
+                "matched=${initialScan.top.matched} threshold=${format(FRIEND_LIFE_MATCH_THRESHOLD)} " +
+                "frameSequence=${initialFrame.generation}",
+        )
+        if (initialScan.top.matched) {
+            topFound = true
+            recordFriendLifeProgress("TOP_DETECTED", 0, 0)
+            logDiagnostic("[FRIEND_LIFE_TOP_FOUND] swipeCount=0 elapsedMs=${SystemClock.elapsedRealtime() - findTopStartedAt}")
+        }
+        while (!topFound && isRunning()) {
+            val elapsedMs = SystemClock.elapsedRealtime() - findTopStartedAt
+            if (friendLifeTopSearchDecision(false, elapsedMs) == FriendLifeTopSearchDecision.CONTINUE_TRAVERSAL) break
+            topSwipeCount += 1
+            val beforeTopScroll = LatestFrameProvider.snapshot()
+                ?: return friendLifeAbort("FIND_TOP", "no_frame", topSwipeCount)
+            val beforeTopGeneration = beforeTopScroll.generation
+            val beforeTopSample = try {
+                FriendScrollVerifier.capture(beforeTopScroll.mat, FRIEND_SCROLL_VERIFY_REGION)
+            } finally {
+                beforeTopScroll.mat.release()
             }
-            if (!isRunning()) return friendLifeAbort("FIND_TOP", "bot_stopped", topSwipeCount)
+            val topScroll = performFriendScroll(
+                "FIND_TOP",
+                topSwipeCount,
+                "TOWARD_TOP",
+                LogicalPoint(435, 350),
+                LogicalPoint(435, 580),
+                sourceWidth,
+                sourceHeight,
+                beforeTopSample,
+            ) ?: return friendLifeAbort("FIND_TOP", "gesture_or_fresh_frame_timeout", topSwipeCount)
+            val verification = requireNotNull(topScroll.verification)
             logDiagnostic(
-                "[FRIEND_LIFE_TOP_ROUND] round=$round/$FRIEND_TOP_SEARCH_ROUNDS " +
-                    "action=WAIT settleMs=$FRIEND_TOP_CHECK_SETTLE_MS",
+                "[FRIEND_SCROLL_VERIFY] phase=FIND_TOP attempt=$topSwipeCount " +
+                    "beforeGeneration=$beforeTopGeneration afterGeneration=${topScroll.afterGeneration} " +
+                    "diff=${format(verification.difference)} " +
+                    "threshold=${format(FriendScrollVerifier.DIFFERENCE_THRESHOLD)} " +
+                    "changed=${verification.changed}",
             )
-            delayOrStop(FRIEND_TOP_CHECK_SETTLE_MS)
+            val progressEvent = verifiedFriendScrollProgressEvent("FIND_TOP", verification.changed)
+            if (progressEvent != null) {
+                recordFriendLifeProgress(progressEvent, 0, 0)
+            } else {
+                logDiagnostic(
+                    "[FRIEND_LIFE_PROGRESS] event=TOP_SCROLL_UNCHANGED " +
+                        "topSwipeCount=$topSwipeCount noProgressMs=" +
+                        "${SystemClock.elapsedRealtime() - lastProgressElapsedRealtime}",
+                )
+            }
+            val interrupt = detectFriendLifeInterrupt(detector)
+            interrupt?.let { return friendLifeInterrupt(it, "FIND_TOP") }
+            if (!friendLifeTopCheckDue(topSwipeCount)) continue
+            val afterBatchElapsedMs = SystemClock.elapsedRealtime() - findTopStartedAt
+            logDiagnostic("[FRIEND_LIFE_TOP_SEARCH] swipeCount=$topSwipeCount elapsedMs=$afterBatchElapsedMs")
+            if (afterBatchElapsedMs >= FRIEND_TOP_SEARCH_TIMEOUT_MS) break
+            val waitMs = randomMs(FRIEND_TOP_CHECK_WAIT_MIN_MS, FRIEND_TOP_CHECK_WAIT_MAX_MS)
+            if (afterBatchElapsedMs + waitMs >= FRIEND_TOP_SEARCH_TIMEOUT_MS) break
+            logDiagnostic("[FRIEND_LIFE_TOP_WAIT] swipeCount=$topSwipeCount waitMs=$waitMs")
+            delayOrStop(waitMs)
+            if (!isRunning()) return friendLifeAbort("FIND_TOP", "bot_stopped", topSwipeCount)
+            val remainingMs = FRIEND_TOP_SEARCH_TIMEOUT_MS - (SystemClock.elapsedRealtime() - findTopStartedAt)
+            if (remainingMs <= 0L) break
             val baseline = LatestFrameProvider.currentGeneration()
-            val checkFrame = LatestFrameProvider.awaitNextSnapshot(baseline, FRIEND_RESCAN_TIMEOUT_MS)
-                ?: return friendLifeAbort("FIND_TOP", "round_check_fresh_frame_timeout", topSwipeCount)
+            val checkFrame = LatestFrameProvider.awaitNextSnapshot(baseline, minOf(FRIEND_RESCAN_TIMEOUT_MS, remainingMs))
+            if (checkFrame == null && SystemClock.elapsedRealtime() - findTopStartedAt >= FRIEND_TOP_SEARCH_TIMEOUT_MS) break
+            if (checkFrame == null) return friendLifeAbort("FIND_TOP", "batch_check_fresh_frame_timeout", topSwipeCount)
             val checkScan = scanFriendFrame(detector, checkFrame)
-            checkScan.interrupt?.let { return friendLifeInterrupt(it, "FIND_TOP_ROUND_CHECK") }
+            checkScan.interrupt?.let { return friendLifeInterrupt(it, "FIND_TOP_BATCH_CHECK") }
             logDiagnostic(
-                "[FRIEND_LIFE_TOP_ROUND_CHECK] round=$round/$FRIEND_TOP_SEARCH_ROUNDS " +
+                "[FRIEND_LIFE_TOP_CHECK] swipeCount=$topSwipeCount " +
                     "score=${format(checkScan.top.score)} matched=${checkScan.top.matched} " +
                     "threshold=${format(FRIEND_LIFE_MATCH_THRESHOLD)} frameSequence=${checkFrame.generation}",
             )
-            when (friendLifeTopRoundDecision(checkScan.top.matched, round)) {
-                FriendLifeTopRoundDecision.COMPLETE -> {
-                    topFound = true
-                    recordFriendLifeProgress("TOP_DETECTED", 0, 0)
-                    break
-                }
-                FriendLifeTopRoundDecision.NEXT_ROUND -> Unit
-                FriendLifeTopRoundDecision.CONTINUE_TRAVERSAL -> break
+            if (checkScan.top.matched) {
+                topFound = true
+                recordFriendLifeProgress("TOP_DETECTED", 0, 0)
+                logDiagnostic(
+                    "[FRIEND_LIFE_TOP_FOUND] swipeCount=$topSwipeCount " +
+                        "elapsedMs=${SystemClock.elapsedRealtime() - findTopStartedAt}",
+                )
             }
         }
+        if (!isRunning()) return friendLifeAbort("FIND_TOP", "bot_stopped", topSwipeCount)
         if (!topFound) {
-            logDiagnostic("[FRIEND_LIFE_TOP_CONTINUE] reason=top_not_found_after_2_rounds")
+            logDiagnostic(
+                "[FRIEND_LIFE_TOP_CONTINUE] reason=find_top_timeout " +
+                    "elapsedMs=${SystemClock.elapsedRealtime() - findTopStartedAt} swipeCount=$topSwipeCount",
+            )
         }
 
         var sentCount = 0

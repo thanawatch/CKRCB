@@ -301,24 +301,42 @@ class FriendLifeSchedulerTest {
         assertFalse(friendLifeRoiContainsTemplate(340, 80, 340, 81))
     }
 
-    @Test fun topRoundMatchedCompletesSearch() {
+    @Test fun initialTopMatchCompletesSearchWithoutSwiping() {
         assertEquals(
-            FriendLifeTopRoundDecision.COMPLETE,
-            friendLifeTopRoundDecision(matched = true, round = 1),
+            FriendLifeTopSearchDecision.TOP_FOUND,
+            friendLifeTopSearchDecision(matched = true, elapsedMs = 0),
+        )
+        assertFalse(friendLifeTopCheckDue(0))
+    }
+
+    @Test fun initialTopNoMatchRequiresSwiping() {
+        assertEquals(
+            FriendLifeTopSearchDecision.SWIPE,
+            friendLifeTopSearchDecision(matched = false, elapsedMs = 0),
         )
     }
 
-    @Test fun firstFailedTopRoundStartsSecondRound() {
+    @Test fun topIsCheckedAfterEveryFiveSwipes() {
+        for (swipeCount in 1..15) {
+            assertEquals(swipeCount % 5 == 0, friendLifeTopCheckDue(swipeCount))
+        }
+    }
+
+    @Test fun topMatchAfterFiveSwipesStopsFurtherSwiping() {
         assertEquals(
-            FriendLifeTopRoundDecision.NEXT_ROUND,
-            friendLifeTopRoundDecision(matched = false, round = 1),
+            FriendLifeTopSearchDecision.TOP_FOUND,
+            friendLifeTopSearchDecision(matched = true, elapsedMs = 12_000),
         )
     }
 
-    @Test fun twoFailedTopRoundsContinueToTraversalInsteadOfAborting() {
+    @Test fun tenMinuteTopTimeoutContinuesTraversal() {
         assertEquals(
-            FriendLifeTopRoundDecision.CONTINUE_TRAVERSAL,
-            friendLifeTopRoundDecision(matched = false, round = 2),
+            FriendLifeTopSearchDecision.SWIPE,
+            friendLifeTopSearchDecision(matched = false, elapsedMs = 599_999),
+        )
+        assertEquals(
+            FriendLifeTopSearchDecision.CONTINUE_TRAVERSAL,
+            friendLifeTopSearchDecision(matched = false, elapsedMs = 600_000),
         )
     }
 
@@ -335,9 +353,10 @@ class FriendLifeSchedulerTest {
         assertEquals(3_500L, FRIEND_GESTURE_TIMEOUT_MS)
         assertEquals(30_000L, FRIEND_LIFE_NO_PROGRESS_TIMEOUT_MS)
         assertEquals(1_800_000L, FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS)
-        assertEquals(60_000L, FRIEND_TOP_SCROLL_ROUND_MS)
-        assertEquals(2_800L, FRIEND_TOP_CHECK_SETTLE_MS)
-        assertEquals(2, FRIEND_TOP_SEARCH_ROUNDS)
+        assertEquals(5, FRIEND_TOP_SWIPES_PER_CHECK)
+        assertEquals(2_000, FRIEND_TOP_CHECK_WAIT_MIN_MS)
+        assertEquals(2_600, FRIEND_TOP_CHECK_WAIT_MAX_MS)
+        assertEquals(600_000L, FRIEND_TOP_SEARCH_TIMEOUT_MS)
         assertEquals(1_000, FRIEND_TRAVERSE_SETTLE_MIN_MS)
         assertEquals(1_600, FRIEND_TRAVERSE_SETTLE_MAX_MS)
         assertEquals(3_660_000L, FRIEND_LIFE_INTERVAL_MS)
