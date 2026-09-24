@@ -386,6 +386,7 @@ class BotController(
                 var lastPostTapBaseline = -1L
                 val center = GameProgressRecovery.centerIfMatched(match)
                 if (center != null) {
+                    logDiagnostic("[GAME_PROGRESS_RECOVERY_ROUTE] confirmMatched=true next=MAINMENU_CHECK")
                     val point = GameProgressRecovery.pointInCircle(center)
                     logDiagnostic(
                         "[GAME_PROGRESS_RECOVERY] match=(${match.x},${match.y},${match.width},${match.height}) " +
@@ -404,45 +405,60 @@ class BotController(
                     } ?: return
                     currentFrame = fresh.snapshot
                     lastPostTapBaseline = fresh.postTapBaseline
+                } else {
+                    logDiagnostic("[GAME_PROGRESS_RECOVERY_ROUTE] confirmMatched=false next=CLOSE_BUTTON")
                 }
 
-                for (attempt in 1..GameProgressCloseRecovery.MAX_ATTEMPTS) {
-                    if (!recoveryRunIsCurrent(runGeneration, reservation) ||
-                        !LatestFrameProvider.diagnostics().captureRunning
-                    ) return
-                    val frame = requireNotNull(currentFrame)
-                    val roi = GameProgressCloseRecovery.topRightRoi(frame.mat.cols(), frame.mat.rows())
-                    val closeMatch = detector.detectTemplate(frame.mat, GameProgressCloseRecovery.TEMPLATE, roi)
-                    val decision = GameProgressCloseRecovery.decision(attempt, closeMatch.matched)
-                    logDiagnostic(
-                        "[GAME_PROGRESS_CLOSE] attempt=$attempt scan=TOP_RIGHT matched=${closeMatch.matched} " +
-                            "score=${format(closeMatch.score)}" +
-                            if (decision == CloseRecoveryDecision.STOP_NO_MATCH) " action=STOP" else "",
-                    )
-                    if (decision == CloseRecoveryDecision.STOP_NO_MATCH) break
-                    val closeCenter = requireNotNull(GameProgressCloseRecovery.centerIfMatched(closeMatch))
-                    logDiagnostic(
-                        "[GAME_PROGRESS_CLOSE] attempt=$attempt roi=(${roi.x},${roi.y}," +
-                            "${roi.x + roi.width},${roi.y + roi.height}) " +
-                            "match=(${closeMatch.x},${closeMatch.y},${closeMatch.width},${closeMatch.height}) " +
-                            "center=(${closeCenter.x},${closeCenter.y})",
-                    )
-                    currentFrame = null
-                    val fresh = try {
-                        progressRecoveryTapAndFresh(
-                            runGeneration, reservation, frame, closeCenter,
-                            "GAME_PROGRESS_CLOSE_BUTTON", attempt,
+                if (GameProgressRecovery.shouldRunCloseFallback(match.matched)) {
+                    for (attempt in 1..GameProgressCloseRecovery.MAX_ATTEMPTS) {
+                        if (!recoveryRunIsCurrent(runGeneration, reservation) ||
+                            !LatestFrameProvider.diagnostics().captureRunning
+                        ) return
+                        val frame = requireNotNull(currentFrame)
+                        val roi = GameProgressCloseRecovery.topRightRoi(frame.mat.cols(), frame.mat.rows())
+                        val closeMatch = detector.detectTemplate(frame.mat, GameProgressCloseRecovery.TEMPLATE, roi)
+                        val decision = GameProgressCloseRecovery.decision(attempt, closeMatch.matched)
+                        logDiagnostic(
+                            "[GAME_PROGRESS_CLOSE] attempt=$attempt scan=TOP_RIGHT matched=${closeMatch.matched} " +
+                                "score=${format(closeMatch.score)}" +
+                                if (decision == CloseRecoveryDecision.STOP_NO_MATCH) " action=STOP" else "",
                         )
-                    } finally {
-                        frame.mat.release()
-                    } ?: return
-                    currentFrame = fresh.snapshot
-                    lastPostTapBaseline = fresh.postTapBaseline
-                    if (decision == CloseRecoveryDecision.TAP_AND_STOP) {
-                        logDiagnostic("[GAME_PROGRESS_CLOSE] attempt=$attempt matched=true action=MAX_ATTEMPTS_REACHED")
-                        break
+                        if (decision == CloseRecoveryDecision.STOP_NO_MATCH) break
+                        val closeCenter = requireNotNull(GameProgressCloseRecovery.centerIfMatched(closeMatch))
+                        logDiagnostic(
+                            "[GAME_PROGRESS_CLOSE] attempt=$attempt roi=(${roi.x},${roi.y}," +
+                                "${roi.x + roi.width},${roi.y + roi.height}) " +
+                                "match=(${closeMatch.x},${closeMatch.y},${closeMatch.width},${closeMatch.height}) " +
+                                "center=(${closeCenter.x},${closeCenter.y})",
+                        )
+                        currentFrame = null
+                        val fresh = try {
+                            progressRecoveryTapAndFresh(
+                                runGeneration, reservation, frame, closeCenter,
+                                "GAME_PROGRESS_CLOSE_BUTTON", attempt,
+                            )
+                        } finally {
+                            frame.mat.release()
+                        } ?: return
+                        currentFrame = fresh.snapshot
+                        lastPostTapBaseline = fresh.postTapBaseline
+                        if (decision == CloseRecoveryDecision.TAP_AND_STOP) {
+                            logDiagnostic("[GAME_PROGRESS_CLOSE] attempt=$attempt matched=true action=MAX_ATTEMPTS_REACHED")
+                            break
+                        }
                     }
+                    logDiagnostic("[GAME_PROGRESS_RECOVERY_ROUTE] closeRecoveryComplete=true next=MAINMENU_CHECK")
                 }
+                val menuFrame = requireNotNull(currentFrame)
+                val mainMenu = detector.detect(BotStage.MAINMENU, menuFrame.mat)
+                val previousGroup = routeProgressRecoveryMainMenu(
+                    runGeneration, reservation, mainMenu.matched,
+                ) ?: return
+                logDiagnostic(
+                    "[GAME_PROGRESS_MAINMENU_CHECK] matched=${mainMenu.matched} " +
+                        "score=${format(mainMenu.score)} previousGroup=$previousGroup " +
+                        "action=${if (mainMenu.matched) "SET_PRE_GAME" else "KEEP_GROUP"}",
+                )
                 if (lastPostTapBaseline >= 0L) {
                     finalPostTapBaseline = lastPostTapBaseline
                     finalFreshGeneration = requireNotNull(currentFrame).generation
@@ -605,6 +621,26 @@ class BotController(
         running && botRunGeneration == runGeneration &&
             GameProgressWatchdogManager.isCurrentRecovery(reservation) &&
             progressRecoveryGate.clearAfterFreshFrame(runGeneration, baseline, freshGeneration)
+    }
+
+    /** Repair only the detection group; the normal worker still owns MAINMENU handling. */
+    private fun routeProgressRecoveryMainMenu(
+        runGeneration: Long,
+        reservation: GameProgressRecoveryReservation,
+        matched: Boolean,
+    ): DetectionGroup? = synchronized(lock) {
+        if (!running || botRunGeneration != runGeneration ||
+            !GameProgressWatchdogManager.isCurrentRecovery(reservation) ||
+            !progressRecoveryGate.isActive()
+        ) return@synchronized null
+        val previousGroup = group
+        val nextGroup = groupAfterRecoveryMainMenu(previousGroup, matched)
+        if (nextGroup != previousGroup) commitGroupLocked(nextGroup)
+        if (matched) {
+            lastStage = null
+            lastDetectionAt = 0L
+        }
+        previousGroup
     }
 
     private fun clearProgressRecoveryGate(runGeneration: Long) = synchronized(lock) {
@@ -832,12 +868,11 @@ class BotController(
                     lastPreviousResultsDiagnosticAt = now
                 }
             }
-            // Check if DAILY_NEW was detected in recovery scan but group is not PRE_GAME
-            if (result != null && result.state == BotStage.DAILY_NEW && group != DetectionGroup.PRE_GAME) {
+            // Reward popups are valid in PRE_GAME and POST_GAME, but not IN_GAME.
+            if (result != null && result.state == BotStage.DAILY_NEW && group == DetectionGroup.IN_GAME) {
                 logDiagnostic("[DAILY_NEW_SKIP] reason=wrong_detection_group group=${group.name}")
             }
-            // Check if PARTY_RUN_SEASON_REWARDS was detected in recovery scan but group is not PRE_GAME
-            if (result != null && result.state == BotStage.PARTY_RUN_SEASON_REWARDS && group != DetectionGroup.PRE_GAME) {
+            if (result != null && result.state == BotStage.PARTY_RUN_SEASON_REWARDS && group == DetectionGroup.IN_GAME) {
                 logDiagnostic("[PARTY_RUN_SEASON_REWARDS_SKIP] reason=wrong_detection_group group=${group.name}")
             }
             if (!isRunning() || synchronized(lock) { progressRecoveryGate.isActive() }) return
@@ -942,8 +977,13 @@ class BotController(
             BotStage.GAME_START -> handleGameStart(result, frame, sourceWidth, sourceHeight, timing)
             BotStage.GAME_RELAY -> handleGameRelay(result, frame, sourceWidth, sourceHeight, timing)
             BotStage.GAME_COMPLETE -> {
-                GameProgressWatchdogManager.recordProgress(GameProgressReason.GAME_COMPLETE)
-                handleGameComplete(sourceWidth, sourceHeight)
+                runConfirmedGameComplete(
+                    recordProgress = {
+                        GameProgressWatchdogManager.recordProgress(GameProgressReason.GAME_COMPLETE)
+                    },
+                    commitGroup = { commitConfirmedGameCompleteGroup(it) },
+                    handleResult = { handleGameComplete(sourceWidth, sourceHeight) },
+                )
             }
             BotStage.MYSTERY_BOX -> handleMysteryBox(sourceWidth, sourceHeight, frame)
             BotStage.CONGRATULATIONS -> rewardPopup(result.state, "CONGRATULATIONS", AutomationConfig.CONGRATULATIONS_ACCEPT, sourceWidth, sourceHeight, frameGeneration)
@@ -992,6 +1032,7 @@ class BotController(
         sourceHeight: Int,
         frameGeneration: Long,
     ) {
+        val resumeGroup = rewardPopupResumeGroup(group)
         if (!isRunning() || PopupFreshFramePolicy.blocks(frameGeneration, minimumFreshFrameGeneration)) return
         if (synchronized(lock) { pendingPartyRunSeasonRewardsGesture?.isCompleted == false }) {
             logDiagnostic("[PARTY_RUN_SEASON_REWARDS_SKIP] reason=callback_pending")
@@ -1026,7 +1067,7 @@ class BotController(
             frameGeneration,
             callbackTimeoutMs = PARTY_RUN_SEASON_REWARDS_CALLBACK_TIMEOUT_MS,
             onCallback = { success, timedOut ->
-                handlePartyRunSeasonRewardsCallback(runGeneration, success, timedOut)
+                handlePartyRunSeasonRewardsCallback(runGeneration, success, timedOut, resumeGroup)
             },
         )
         if (!isRunning()) return
@@ -1052,7 +1093,9 @@ class BotController(
         }
     }
 
-    private fun handlePartyRunSeasonRewardsCallback(runGeneration: Long, success: Boolean, timedOut: Boolean) = synchronized(lock) {
+    private fun handlePartyRunSeasonRewardsCallback(
+        runGeneration: Long, success: Boolean, timedOut: Boolean, resumeGroup: DetectionGroup,
+    ) = synchronized(lock) {
         if (!running || botRunGeneration != runGeneration) return@synchronized
         pendingPartyRunSeasonRewardsGesture = null
         if (timedOut) {
@@ -1069,7 +1112,7 @@ class BotController(
             minimumFreshFrameGeneration = baseline
             freshFrameGateWaitStartedAt = 0L
             lastStage = null
-            updateGroup(DetectionGroup.PRE_GAME)
+            updatePopupGroupFromCallback(resumeGroup, runGeneration)
             return@synchronized
         }
 
@@ -1087,7 +1130,7 @@ class BotController(
         minimumFreshFrameGeneration = postCallbackBaseline
         freshFrameGateWaitStartedAt = 0L
         lastStage = null
-        updateGroup(DetectionGroup.PRE_GAME)
+        updatePopupGroupFromCallback(resumeGroup, runGeneration)
         logDiagnostic(
             "[STATE_REDETECT] previous=PARTY_RUN_SEASON_REWARDS " +
                 "baselineGeneration=$postCallbackBaseline action=wait_in_detector_loop",
@@ -1103,6 +1146,7 @@ class BotController(
         sourceHeight: Int,
         frameGeneration: Long,
     ) {
+        val resumeGroup = rewardPopupResumeGroup(group)
         if (!isRunning() || PopupFreshFramePolicy.blocks(frameGeneration, minimumFreshFrameGeneration)) return
         if (synchronized(lock) { pendingTimeDealGesture?.isCompleted == false }) {
             logDiagnostic("[TIME_DEAL_SKIP] reason=callback_pending")
@@ -1139,7 +1183,7 @@ class BotController(
                     callbackTimeoutMs = TIME_DEAL_CALLBACK_TIMEOUT_MS,
                     onGestureCompleted = { _, success, timedOut ->
                         logDiagnostic("[GESTURE] state=TIME_DEAL callbackSuccess=$success")
-                        handleTimeDealCallback(runGeneration, success, timedOut)
+                        handleTimeDealCallback(runGeneration, success, timedOut, resumeGroup)
                     },
                 )
             }
@@ -1160,7 +1204,9 @@ class BotController(
         }
     }
 
-    private fun handleTimeDealCallback(runGeneration: Long, success: Boolean, timedOut: Boolean) = synchronized(lock) {
+    private fun handleTimeDealCallback(
+        runGeneration: Long, success: Boolean, timedOut: Boolean, resumeGroup: DetectionGroup,
+    ) = synchronized(lock) {
         if (!running || botRunGeneration != runGeneration) return@synchronized
         pendingTimeDealGesture = null
         if (timedOut) logDiagnostic("[GESTURE] state=TIME_DEAL callback=TIMEOUT")
@@ -1170,7 +1216,7 @@ class BotController(
             minimumFreshFrameGeneration = baseline
             freshFrameGateWaitStartedAt = 0L
             lastStage = null
-            updateGroup(DetectionGroup.PRE_GAME)
+            updatePopupGroupFromCallback(resumeGroup, runGeneration)
             return@synchronized
         }
 
@@ -1181,7 +1227,7 @@ class BotController(
         minimumFreshFrameGeneration = postCallbackBaseline
         freshFrameGateWaitStartedAt = 0L
         lastStage = null
-        updateGroup(DetectionGroup.PRE_GAME)
+        updatePopupGroupFromCallback(resumeGroup, runGeneration)
         logDiagnostic(
             "[STATE_REDETECT] previous=TIME_DEAL baselineGeneration=$postCallbackBaseline " +
                 "action=wait_in_detector_loop",
@@ -1194,6 +1240,7 @@ class BotController(
         sourceHeight: Int,
         frameGeneration: Long,
     ) {
+        val resumeGroup = rewardPopupResumeGroup(group)
         if (!isRunning() || PopupFreshFramePolicy.blocks(frameGeneration, minimumFreshFrameGeneration)) return
         if (synchronized(lock) { pendingPreviousResultsGesture?.isCompleted == false }) {
             logDiagnostic("[PREVIOUS_RESULTS_SKIP] reason=callback_pending")
@@ -1256,6 +1303,7 @@ class BotController(
                             runGeneration,
                             success,
                             timedOut,
+                            resumeGroup,
                         )
                     },
                 )
@@ -1281,6 +1329,7 @@ class BotController(
         runGeneration: Long,
         success: Boolean,
         timedOut: Boolean,
+        resumeGroup: DetectionGroup,
     ) = synchronized(lock) {
         if (!running || botRunGeneration != runGeneration) return@synchronized
         pendingPreviousResultsGesture = null
@@ -1289,7 +1338,7 @@ class BotController(
             minimumFreshFrameGeneration = LatestFrameProvider.currentGeneration()
             freshFrameGateWaitStartedAt = 0L
             lastStage = null
-            updateGroup(DetectionGroup.PRE_GAME)
+            updatePopupGroupFromCallback(resumeGroup, runGeneration)
             return@synchronized
         }
 
@@ -1304,7 +1353,7 @@ class BotController(
                 "postCallbackBaselineGeneration=$postCallbackBaseline " +
                 "settlingMs=$PREVIOUS_RESULTS_SETTLE_MS",
         )
-        updateGroup(DetectionGroup.PRE_GAME)
+        updatePopupGroupFromCallback(resumeGroup, runGeneration)
         lastStage = null
     }
 
@@ -1756,7 +1805,6 @@ class BotController(
         if (!finishAccepted && !synchronized(lock) { canDispatchActionLocked() }) return
         delayOrStop(randomMs(800, 1400))
         livesPendingAfterGame = options.receiveSendLivesAfterEachGame
-        updateGroup(DetectionGroup.POST_GAME)
     }
 
     private fun handleMysteryBox(sourceWidth: Int, sourceHeight: Int, detectedFrame: Mat) {
@@ -1786,6 +1834,7 @@ class BotController(
     }
 
     private fun handleRelicClaim(sourceWidth: Int, sourceHeight: Int, frameGeneration: Long) {
+        val resumeGroup = rewardPopupResumeGroup(group)
         val fingerprint = capturePopupFingerprint(BotStage.RELIC_CLAIM)
         if (!allowVisualRewardPopupAction(BotStage.RELIC_CLAIM, fingerprint)) return
         if (!performTap("RELIC_CLAIM", AutomationConfig.RELIC_CLAIM, sourceWidth, sourceHeight)) return
@@ -1793,7 +1842,7 @@ class BotController(
         if (!performTap("RELIC_CLOSE", AutomationConfig.RELIC_CLOSE, sourceWidth, sourceHeight)) return
         recordVisualRewardPopupAttempt(BotStage.RELIC_CLAIM, fingerprint)
         delayOrStop(randomMs(10_000, 15_000))
-        finishRewardPopupAction(BotStage.RELIC_CLAIM, frameGeneration, fingerprint)
+        finishRewardPopupAction(BotStage.RELIC_CLAIM, frameGeneration, fingerprint, resumeGroup)
     }
 
     private fun handleConnectionLost(sourceWidth: Int, sourceHeight: Int) {
@@ -2617,6 +2666,7 @@ class BotController(
         frameGeneration: Long,
         jitter: Int = AutomationConfig.DEFAULT_SAFE_JITTER,
     ) {
+        val resumeGroup = rewardPopupResumeGroup(group)
         val fingerprint = capturePopupFingerprint(stage)
         pendingPopupAction = stage.name
         try {
@@ -2640,7 +2690,7 @@ class BotController(
             if (stage == BotStage.DAILY_NEW) pendingDailyNewTapGeneration = frameGeneration
             recordVisualRewardPopupAttempt(stage, fingerprint)
             delayOrStop(randomMs(800, 1400))
-            finishRewardPopupAction(stage, frameGeneration, fingerprint)
+            finishRewardPopupAction(stage, frameGeneration, fingerprint, resumeGroup)
         } finally {
             pendingPopupAction = "NONE"
         }
@@ -2718,10 +2768,10 @@ class BotController(
         stage: BotStage,
         detectedFrameGeneration: Long,
         beforeAction: PopupFingerprint?,
+        resumeGroup: DetectionGroup,
     ) {
-        // Every reward action returns to the same generic PRE_GAME scanner. No
-        // expected-next-popup ordering is encoded here; the screen is authoritative.
-        updateGroup(DetectionGroup.PRE_GAME)
+        // Re-scan the actual screen in the group that detected this popup.
+        updateGroup(resumeGroup)
         minimumFreshFrameGeneration = detectedFrameGeneration
         val fresh = LatestFrameProvider.awaitNextSnapshot(
             detectedFrameGeneration,
@@ -2741,10 +2791,10 @@ class BotController(
                 }
                 Log.i(
                     CookieRunBotApplication.TAG,
-                    "[POPUP] Fresh frame ready after=$stage generation=${fresh.generation}; generic PRE_GAME redetect",
+                    "[POPUP] Fresh frame ready after=$stage generation=${fresh.generation}; generic $resumeGroup redetect",
                 )
                 DebugLogStore.log(
-                    "[POPUP] state=$stage freshFrame=${fresh.generation} next=GENERIC_PRE_GAME_SCAN",
+                    "[POPUP] state=$stage freshFrame=${fresh.generation} next=GENERIC_${resumeGroup}_SCAN",
                 )
             } finally {
                 fresh.mat.release()
@@ -3128,15 +3178,33 @@ class BotController(
     private fun updateGroup(next: DetectionGroup) {
         synchronized(lock) {
             if (!canDispatchActionLocked()) return
-            group = next
-            resetNoMatchEpisode("group_changed")
-            listener.onGroupChanged(next.name)
-            Log.i(CookieRunBotApplication.TAG, "[BOT] detection_group=${next.name}")
-            DebugLogStore.log("[STATE] detection_group=${next.name}")
+            commitGroupLocked(next)
         }
     }
 
-    private fun stagesFor(group: DetectionGroup): List<BotStage> = when (group) {
+    private fun commitConfirmedGameCompleteGroup(next: DetectionGroup) = synchronized(lock) {
+        // GAME_COMPLETE is already confirmed. A concurrent recovery gate must not
+        // leave this run in IN_GAME if result handling exits without a tap.
+        if (isCurrentWorkerRunLocked()) commitGroupLocked(next)
+    }
+
+    private fun updatePopupGroupFromCallback(next: DetectionGroup, runGeneration: Long) = synchronized(lock) {
+        if (!running || botRunGeneration != runGeneration || progressRecoveryGate.isActive()) return@synchronized
+        // A late callback must not undo a newer state transition.
+        if (group != next) return@synchronized
+        commitGroupLocked(next)
+    }
+
+    /** Caller holds lock and has already checked its own worker/callback/recovery authority. */
+    private fun commitGroupLocked(next: DetectionGroup) {
+        group = next
+        resetNoMatchEpisode("group_changed")
+        listener.onGroupChanged(next.name)
+        Log.i(CookieRunBotApplication.TAG, "[BOT] detection_group=${next.name}")
+        DebugLogStore.log("[STATE] detection_group=${next.name}")
+    }
+
+    private fun stagesFor(group: DetectionGroup): List<BotStage> = filterRelicStages(when (group) {
         DetectionGroup.PRE_GAME -> ALWAYS + PRE_GAME
         DetectionGroup.IN_GAME -> {
             if (
@@ -3150,7 +3218,7 @@ class BotController(
             }
         }
         DetectionGroup.POST_GAME -> ALWAYS + POST_GAME
-    }.filterNot { !options.detectRelic && it in RELIC_STAGES }
+    }, options.detectRelic, RELIC_STAGES)
 
     private fun recoveryInterval(group: DetectionGroup): Long = when (group) {
         DetectionGroup.PRE_GAME -> 60_000L
@@ -3380,7 +3448,7 @@ class BotController(
         private const val QUICK_LIVES_TIMEOUT_MS = 120_000L
         private const val FRESH_FRAME_GATE_MAX_WAIT_MS = 7_500L
         private const val MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS = 3
-        private val POST_GAME = listOf(BotStage.ANTI_BOT, BotStage.OVERTAKE_BREAK_SCORE, BotStage.MYSTERY_BOX, BotStage.MAINMENU)
+        private val POST_GAME = postGameStages(PRE_GAME, REWARD_PRE_GAME_POPUPS)
         private val ALL_STAGE_ORDER = listOf(
             BotStage.GAME_START, BotStage.GAME_RELAY, BotStage.ANTI_BOT,
             BotStage.CONNECTION_LOST, BotStage.INACTIVE, BotStage.GAME_COMPLETE,

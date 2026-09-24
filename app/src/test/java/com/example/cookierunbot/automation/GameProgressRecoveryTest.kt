@@ -4,6 +4,7 @@ import com.example.cookierunbot.detection.TemplateMatch
 import kotlin.math.hypot
 import kotlin.random.Random
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -18,6 +19,11 @@ class GameProgressRecoveryTest {
 
     @Test fun noMatchNeverProducesTapTarget() {
         assertNull(GameProgressRecovery.centerIfMatched(TemplateMatch(0.1, false, 640, 402, 200, 100)))
+    }
+
+    @Test fun closeButtonIsFallbackOnlyWhenConfirmDoesNotMatch() {
+        assertFalse(GameProgressRecovery.shouldRunCloseFallback(confirmMatched = true))
+        assertTrue(GameProgressRecovery.shouldRunCloseFallback(confirmMatched = false))
     }
 
     @Test fun circularLogicalJitterNeverExceedsRadiusFive() {

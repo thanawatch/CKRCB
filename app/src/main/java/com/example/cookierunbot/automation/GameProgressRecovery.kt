@@ -13,6 +13,9 @@ internal object GameProgressRecovery {
     const val TEMPLATE = "CONFIRM_SEND_LIFE_1.png"
     const val RADIUS_LOGICAL = 5.0
 
+    /** A matched CONFIRM owns this incident even if its gesture subsequently fails. */
+    fun shouldRunCloseFallback(confirmMatched: Boolean): Boolean = !confirmMatched
+
     fun centerIfMatched(match: TemplateMatch): LogicalPoint? =
         if (match.matched) LogicalPoint(match.x + match.width / 2, match.y + match.height / 2)
         else null
