@@ -84,7 +84,7 @@ class BotDetectionFlowPolicyTest {
     }
 
     @Test fun mainMenuRecoveryCanMatchOnSecondFreshCheck() {
-        assertEquals(5_000L, PROGRESS_RECOVERY_MAINMENU_TIMEOUT_MS)
+        assertEquals(120_000L, PROGRESS_RECOVERY_MAINMENU_TIMEOUT_MS)
         assertEquals(
             MainMenuRecoveryDecision.ROUTE_PRE_GAME,
             mainMenuRecoveryDecision(matched = true, elapsedMs = 0L),
@@ -97,21 +97,25 @@ class BotDetectionFlowPolicyTest {
             MainMenuRecoveryDecision.ROUTE_PRE_GAME,
             mainMenuRecoveryDecision(matched = true, elapsedMs = 1_500L),
         )
+        assertEquals(
+            MainMenuRecoveryDecision.ROUTE_PRE_GAME,
+            mainMenuRecoveryDecision(matched = true, elapsedMs = 119_999L),
+        )
         assertEquals(DetectionGroup.PRE_GAME, groupAfterRecoveryMainMenu(DetectionGroup.IN_GAME, true))
     }
 
     @Test fun mainMenuRecoveryTimeoutKeepsTheOriginalGroup() {
         assertEquals(
             MainMenuRecoveryDecision.WAIT_FOR_FRESH_FRAME,
-            mainMenuRecoveryDecision(matched = false, elapsedMs = 4_999L),
+            mainMenuRecoveryDecision(matched = false, elapsedMs = 119_999L),
         )
         assertEquals(
             MainMenuRecoveryDecision.KEEP_GROUP,
-            mainMenuRecoveryDecision(matched = false, elapsedMs = 5_000L),
+            mainMenuRecoveryDecision(matched = false, elapsedMs = 120_000L),
         )
         assertEquals(
-            MainMenuRecoveryDecision.KEEP_GROUP,
-            mainMenuRecoveryDecision(matched = true, elapsedMs = 5_000L),
+            MainMenuRecoveryDecision.ROUTE_PRE_GAME,
+            mainMenuRecoveryDecision(matched = true, elapsedMs = 120_000L),
         )
         assertEquals(DetectionGroup.IN_GAME, groupAfterRecoveryMainMenu(DetectionGroup.IN_GAME, false))
         assertEquals(DetectionGroup.POST_GAME, groupAfterRecoveryMainMenu(DetectionGroup.POST_GAME, false))

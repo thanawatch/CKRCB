@@ -32,6 +32,7 @@ private const val TIME_DEAL_CALLBACK_TIMEOUT_MS = 3_000L
 private const val PREVIOUS_RESULTS_CALLBACK_TIMEOUT_MS = 3_000L
 private const val PROGRESS_RECOVERY_GESTURE_TIMEOUT_MS = 3_000L
 private const val PROGRESS_RECOVERY_FRAME_TIMEOUT_MS = 2_500L
+private const val PROGRESS_RECOVERY_MAINMENU_LOG_INTERVAL_MS = 5_000L
 
 enum class DetectionGroup { PRE_GAME, IN_GAME, POST_GAME }
 
@@ -456,25 +457,27 @@ class BotController(
                 val menuCheckStartedAt = SystemClock.elapsedRealtime()
                 var menuCheckAttempt = 0
                 var menuTimedOut = false
+                var lastMenuCheckLogAt = menuCheckStartedAt
+                logDiagnostic("[GAME_PROGRESS_MAINMENU_CHECK] searchStarted=true timeoutMs=$PROGRESS_RECOVERY_MAINMENU_TIMEOUT_MS")
                 while (recoveryRunIsCurrent(runGeneration, reservation) &&
                     LatestFrameProvider.diagnostics().captureRunning
                 ) {
-                    if (menuCheckAttempt > 0 &&
-                        SystemClock.elapsedRealtime() - menuCheckStartedAt >= PROGRESS_RECOVERY_MAINMENU_TIMEOUT_MS
-                    ) {
-                        menuTimedOut = true
-                        break
-                    }
                     val menuFrame = requireNotNull(currentFrame)
                     menuCheckAttempt += 1
                     val mainMenu = detector.detect(BotStage.MAINMENU, menuFrame.mat)
-                    val elapsedMs = SystemClock.elapsedRealtime() - menuCheckStartedAt
+                    val checkedAt = SystemClock.elapsedRealtime()
+                    val elapsedMs = checkedAt - menuCheckStartedAt
                     val decision = mainMenuRecoveryDecision(mainMenu.matched, elapsedMs)
-                    logDiagnostic(
-                        "[GAME_PROGRESS_MAINMENU_CHECK] attempt=$menuCheckAttempt " +
-                            "matched=${mainMenu.matched} score=${format(mainMenu.score)} " +
-                            "frameSequence=${menuFrame.generation}",
-                    )
+                    if (menuCheckAttempt == 1 || mainMenu.matched ||
+                        checkedAt - lastMenuCheckLogAt >= PROGRESS_RECOVERY_MAINMENU_LOG_INTERVAL_MS
+                    ) {
+                        logDiagnostic(
+                            "[GAME_PROGRESS_MAINMENU_CHECK] attempt=$menuCheckAttempt " +
+                                "matched=${mainMenu.matched} score=${format(mainMenu.score)} " +
+                                "frameSequence=${menuFrame.generation} elapsedMs=$elapsedMs",
+                        )
+                        lastMenuCheckLogAt = checkedAt
+                    }
                     if (decision == MainMenuRecoveryDecision.ROUTE_PRE_GAME) {
                         val previousGroup = routeProgressRecoveryMainMenu(
                             runGeneration, reservation, true,
@@ -506,6 +509,16 @@ class BotController(
                             checkedGeneration,
                             minOf(PROGRESS_RECOVERY_FRAME_TIMEOUT_MS, remainingMs),
                         )
+                        if (currentFrame == null) {
+                            val waitedUntil = SystemClock.elapsedRealtime()
+                            if (waitedUntil - lastMenuCheckLogAt >= PROGRESS_RECOVERY_MAINMENU_LOG_INTERVAL_MS) {
+                                logDiagnostic(
+                                    "[GAME_PROGRESS_MAINMENU_WAIT] elapsedMs=${waitedUntil - menuCheckStartedAt} " +
+                                        "lastCheckedFrameSequence=$checkedGeneration reason=no_fresh_frame",
+                                )
+                                lastMenuCheckLogAt = waitedUntil
+                            }
+                        }
                     }
                     if (currentFrame == null) break
                     if (lastPostTapBaseline >= 0L) finalFreshGeneration = requireNotNull(currentFrame).generation

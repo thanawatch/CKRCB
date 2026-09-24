@@ -38,13 +38,13 @@ internal fun groupAfterRecoveryMainMenu(
     mainMenuMatched: Boolean,
 ): DetectionGroup = if (mainMenuMatched) DetectionGroup.PRE_GAME else previousGroup
 
-internal const val PROGRESS_RECOVERY_MAINMENU_TIMEOUT_MS = 5_000L
+internal const val PROGRESS_RECOVERY_MAINMENU_TIMEOUT_MS = 120_000L
 
 internal enum class MainMenuRecoveryDecision { ROUTE_PRE_GAME, WAIT_FOR_FRESH_FRAME, KEEP_GROUP }
 
 internal fun mainMenuRecoveryDecision(matched: Boolean, elapsedMs: Long): MainMenuRecoveryDecision = when {
-    elapsedMs >= PROGRESS_RECOVERY_MAINMENU_TIMEOUT_MS -> MainMenuRecoveryDecision.KEEP_GROUP
     matched -> MainMenuRecoveryDecision.ROUTE_PRE_GAME
+    elapsedMs >= PROGRESS_RECOVERY_MAINMENU_TIMEOUT_MS -> MainMenuRecoveryDecision.KEEP_GROUP
     else -> MainMenuRecoveryDecision.WAIT_FOR_FRESH_FRAME
 }
 
