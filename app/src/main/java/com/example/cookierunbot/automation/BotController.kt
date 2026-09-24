@@ -449,19 +449,73 @@ class BotController(
                     }
                     logDiagnostic("[GAME_PROGRESS_RECOVERY_ROUTE] closeRecoveryComplete=true next=MAINMENU_CHECK")
                 }
-                val menuFrame = requireNotNull(currentFrame)
-                val mainMenu = detector.detect(BotStage.MAINMENU, menuFrame.mat)
-                val previousGroup = routeProgressRecoveryMainMenu(
-                    runGeneration, reservation, mainMenu.matched,
-                ) ?: return
-                logDiagnostic(
-                    "[GAME_PROGRESS_MAINMENU_CHECK] matched=${mainMenu.matched} " +
-                        "score=${format(mainMenu.score)} previousGroup=$previousGroup " +
-                        "action=${if (mainMenu.matched) "SET_PRE_GAME" else "KEEP_GROUP"}",
-                )
                 if (lastPostTapBaseline >= 0L) {
                     finalPostTapBaseline = lastPostTapBaseline
                     finalFreshGeneration = requireNotNull(currentFrame).generation
+                }
+                val menuCheckStartedAt = SystemClock.elapsedRealtime()
+                var menuCheckAttempt = 0
+                var menuTimedOut = false
+                while (recoveryRunIsCurrent(runGeneration, reservation) &&
+                    LatestFrameProvider.diagnostics().captureRunning
+                ) {
+                    if (menuCheckAttempt > 0 &&
+                        SystemClock.elapsedRealtime() - menuCheckStartedAt >= PROGRESS_RECOVERY_MAINMENU_TIMEOUT_MS
+                    ) {
+                        menuTimedOut = true
+                        break
+                    }
+                    val menuFrame = requireNotNull(currentFrame)
+                    menuCheckAttempt += 1
+                    val mainMenu = detector.detect(BotStage.MAINMENU, menuFrame.mat)
+                    val elapsedMs = SystemClock.elapsedRealtime() - menuCheckStartedAt
+                    val decision = mainMenuRecoveryDecision(mainMenu.matched, elapsedMs)
+                    logDiagnostic(
+                        "[GAME_PROGRESS_MAINMENU_CHECK] attempt=$menuCheckAttempt " +
+                            "matched=${mainMenu.matched} score=${format(mainMenu.score)} " +
+                            "frameSequence=${menuFrame.generation}",
+                    )
+                    if (decision == MainMenuRecoveryDecision.ROUTE_PRE_GAME) {
+                        val previousGroup = routeProgressRecoveryMainMenu(
+                            runGeneration, reservation, true,
+                        ) ?: return
+                        logDiagnostic(
+                            "[GAME_PROGRESS_MAINMENU_CHECK] attempt=$menuCheckAttempt matched=true " +
+                                "score=${format(mainMenu.score)} previousGroup=$previousGroup action=SET_PRE_GAME",
+                        )
+                        break
+                    }
+                    if (decision == MainMenuRecoveryDecision.KEEP_GROUP) {
+                        menuTimedOut = true
+                        break
+                    }
+
+                    val checkedGeneration = menuFrame.generation
+                    currentFrame = null
+                    menuFrame.mat.release()
+                    while (currentFrame == null && recoveryRunIsCurrent(runGeneration, reservation) &&
+                        LatestFrameProvider.diagnostics().captureRunning
+                    ) {
+                        val remainingMs = PROGRESS_RECOVERY_MAINMENU_TIMEOUT_MS -
+                            (SystemClock.elapsedRealtime() - menuCheckStartedAt)
+                        if (remainingMs <= 0L) {
+                            menuTimedOut = true
+                            break
+                        }
+                        currentFrame = LatestFrameProvider.awaitNextSnapshot(
+                            checkedGeneration,
+                            minOf(PROGRESS_RECOVERY_FRAME_TIMEOUT_MS, remainingMs),
+                        )
+                    }
+                    if (currentFrame == null) break
+                    if (lastPostTapBaseline >= 0L) finalFreshGeneration = requireNotNull(currentFrame).generation
+                }
+                if (menuTimedOut && recoveryRunIsCurrent(runGeneration, reservation)) {
+                    logDiagnostic(
+                        "[GAME_PROGRESS_MAINMENU_CHECK] matched=false action=KEEP_GROUP reason=timeout " +
+                            "previousGroup=${synchronized(lock) { group }} " +
+                            "elapsedMs=${SystemClock.elapsedRealtime() - menuCheckStartedAt}",
+                    )
                 }
             } finally {
                 detector.close()
@@ -982,7 +1036,7 @@ class BotController(
                         GameProgressWatchdogManager.recordProgress(GameProgressReason.GAME_COMPLETE)
                     },
                     commitGroup = { commitConfirmedGameCompleteGroup(it) },
-                    handleResult = { handleGameComplete(sourceWidth, sourceHeight) },
+                    handleResult = { handleGameComplete(detector, sourceWidth, sourceHeight) },
                 )
             }
             BotStage.MYSTERY_BOX -> handleMysteryBox(sourceWidth, sourceHeight, frame)
@@ -1787,7 +1841,7 @@ class BotController(
         Log.i(CookieRunBotApplication.TAG, "[COOKIE RELAY SEQUENCE] Completed")
     }
 
-    private fun handleGameComplete(sourceWidth: Int, sourceHeight: Int) {
+    private fun handleGameComplete(detector: StateDetector, sourceWidth: Int, sourceHeight: Int) {
         autoTapper.stop("GAME_COMPLETE")
         Log.i(CookieRunBotApplication.TAG, "[RESULT] GAME_COMPLETE detected")
         if (!gameCompleteImageSaved) {
@@ -1801,6 +1855,41 @@ class BotController(
             captureGameCompleteResult()
             gameCompleteImageSaved = true
         }
+        val baseline = LatestFrameProvider.currentGeneration()
+        val fresh = LatestFrameProvider.awaitNextSnapshot(baseline, POPUP_FRESH_FRAME_TIMEOUT_MS)
+        if (fresh == null) {
+            logDiagnostic("[GAME_COMPLETE_REVALIDATE] freshFrame=false action=SKIP_FINISH")
+            lastStage = null
+            return
+        }
+        val freshGeneration = fresh.generation
+        val revalidated = try {
+            detector.detect(BotStage.GAME_COMPLETE, fresh.mat)
+        } finally {
+            fresh.mat.release()
+        }
+        if (!gameCompleteFinishAllowed(true, revalidated.matched)) {
+            logDiagnostic(
+                "[GAME_COMPLETE_REVALIDATE] matched=false score=${format(revalidated.score)} action=SKIP_FINISH",
+            )
+            lastStage = null
+            return
+        }
+        val stillFresh = synchronized(lock) {
+            val valid = PopupFreshFramePolicy.allowsActionDispatch(
+                isCurrentWorkerRunLocked(),
+                freshGeneration,
+                minimumFreshFrameGeneration,
+            ) && !progressRecoveryGate.isActive()
+            if (valid) detectionActionFrameGeneration.set(freshGeneration)
+            valid
+        }
+        if (!stillFresh) {
+            logDiagnostic("[GAME_COMPLETE_REVALIDATE] matched=true action=SKIP_FINISH reason=stale_action")
+            lastStage = null
+            return
+        }
+        logDiagnostic("[GAME_COMPLETE_REVALIDATE] matched=true score=${format(revalidated.score)}")
         val finishAccepted = performTap("GAME_COMPLETE_FINISH", AutomationConfig.COMPLETE_FINISH, sourceWidth, sourceHeight)
         if (!finishAccepted && !synchronized(lock) { canDispatchActionLocked() }) return
         delayOrStop(randomMs(800, 1400))

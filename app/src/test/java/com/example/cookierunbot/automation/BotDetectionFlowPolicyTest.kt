@@ -82,4 +82,45 @@ class BotDetectionFlowPolicyTest {
             groupAfterRecoveryMainMenu(DetectionGroup.POST_GAME, false),
         )
     }
+
+    @Test fun mainMenuRecoveryCanMatchOnSecondFreshCheck() {
+        assertEquals(5_000L, PROGRESS_RECOVERY_MAINMENU_TIMEOUT_MS)
+        assertEquals(
+            MainMenuRecoveryDecision.ROUTE_PRE_GAME,
+            mainMenuRecoveryDecision(matched = true, elapsedMs = 0L),
+        )
+        assertEquals(
+            MainMenuRecoveryDecision.WAIT_FOR_FRESH_FRAME,
+            mainMenuRecoveryDecision(matched = false, elapsedMs = 0L),
+        )
+        assertEquals(
+            MainMenuRecoveryDecision.ROUTE_PRE_GAME,
+            mainMenuRecoveryDecision(matched = true, elapsedMs = 1_500L),
+        )
+        assertEquals(DetectionGroup.PRE_GAME, groupAfterRecoveryMainMenu(DetectionGroup.IN_GAME, true))
+    }
+
+    @Test fun mainMenuRecoveryTimeoutKeepsTheOriginalGroup() {
+        assertEquals(
+            MainMenuRecoveryDecision.WAIT_FOR_FRESH_FRAME,
+            mainMenuRecoveryDecision(matched = false, elapsedMs = 4_999L),
+        )
+        assertEquals(
+            MainMenuRecoveryDecision.KEEP_GROUP,
+            mainMenuRecoveryDecision(matched = false, elapsedMs = 5_000L),
+        )
+        assertEquals(
+            MainMenuRecoveryDecision.KEEP_GROUP,
+            mainMenuRecoveryDecision(matched = true, elapsedMs = 5_000L),
+        )
+        assertEquals(DetectionGroup.IN_GAME, groupAfterRecoveryMainMenu(DetectionGroup.IN_GAME, false))
+        assertEquals(DetectionGroup.POST_GAME, groupAfterRecoveryMainMenu(DetectionGroup.POST_GAME, false))
+    }
+
+    @Test fun gameCompleteFinishRequiresFreshPositiveMatch() {
+        assertTrue(gameCompleteFinishAllowed(freshFrameAvailable = true, gameCompleteMatched = true))
+        assertFalse(gameCompleteFinishAllowed(freshFrameAvailable = true, gameCompleteMatched = false))
+        assertFalse(gameCompleteFinishAllowed(freshFrameAvailable = false, gameCompleteMatched = true))
+        assertEquals(DetectionGroup.POST_GAME, groupAfterGameComplete())
+    }
 }
