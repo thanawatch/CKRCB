@@ -351,87 +351,188 @@ class BotController(
         runGeneration: Long,
         reservation: GameProgressRecoveryReservation,
     ) {
+        var currentFrame: FrameSnapshot? = null
+        var gateStarted = false
+        var finalPostTapBaseline: Long? = null
+        var finalFreshGeneration: Long? = null
         try {
             if (!recoveryRunIsCurrent(runGeneration, reservation)) return
             val initialGeneration = LatestFrameProvider.currentGeneration()
-            val snapshot = LatestFrameProvider.awaitNextSnapshot(initialGeneration, PROGRESS_RECOVERY_FRAME_TIMEOUT_MS)
-            if (snapshot == null) {
+            currentFrame = LatestFrameProvider.awaitNextSnapshot(initialGeneration, PROGRESS_RECOVERY_FRAME_TIMEOUT_MS)
+            if (currentFrame == null) {
                 logDiagnostic("[GAME_PROGRESS_RECOVERY] skipped=true reason=no_fresh_frame")
                 return
             }
-            val frameWidth = snapshot.mat.cols()
-            val frameHeight = snapshot.mat.rows()
-            val match: TemplateMatch
+            val initialFrame = requireNotNull(currentFrame)
+            if (!beginProgressRecovery(runGeneration, reservation, initialFrame.generation)) return
+            gateStarted = true
+            val detector = StateDetector(context.applicationContext)
             try {
                 if (!recoveryRunIsCurrent(runGeneration, reservation) ||
                     !LatestFrameProvider.diagnostics().captureRunning
                 ) return
-                StateDetector(context.applicationContext).use { detector ->
-                    match = detector.detectTemplate(
-                        snapshot.mat,
-                        GameProgressRecovery.TEMPLATE,
-                        Rect(0, 0, frameWidth, frameHeight),
-                    )
-                }
-            } finally {
-                snapshot.mat.release()
-            }
-            logDiagnostic(
-                "[GAME_PROGRESS_RECOVERY] template=CONFIRM_SEND_LIFE scan=FULL_FRAME " +
-                    "frameSize=${frameWidth}x${frameHeight} matched=${match.matched} " +
-                    "score=${format(match.score)}",
-            )
-            val center = GameProgressRecovery.centerIfMatched(match) ?: return
-            val point = GameProgressRecovery.pointInCircle(center)
-            logDiagnostic(
-                "[GAME_PROGRESS_RECOVERY] match=(${match.x},${match.y},${match.width},${match.height}) " +
-                    "center=(${center.x},${center.y}) tapRadius=5 " +
-                    "logical=(${point.x},${point.y})",
-            )
-            if (!beginProgressRecovery(runGeneration, reservation, snapshot.generation)) return
-            try {
-                autoTapper.stop("GAME_PROGRESS_CONFIRM_SEND_LIFE")
-                val completion = CountDownLatch(1)
-                val gestureSucceeded = AtomicBoolean(false)
-                val action = dispatchProgressRecoveryTap(
-                    runGeneration, reservation, snapshot, point, completion, gestureSucceeded,
-                ) ?: return
-                logDiagnostic("[GAME_PROGRESS_RECOVERY] dispatchAccepted=${action.accepted}")
-                if (!action.accepted) {
-                    clearPendingProgressRecoveryGesture(action.pendingGesture)
-                    return
-                }
-                val callbackArrived = completion.await(PROGRESS_RECOVERY_GESTURE_TIMEOUT_MS + 500L, TimeUnit.MILLISECONDS)
-                action.pendingGesture?.let { pending ->
-                    clearPendingProgressRecoveryGesture(pending)
-                    if (!callbackArrived) pending.cancel()
-                }
-                logDiagnostic("[GAME_PROGRESS_RECOVERY] gestureSuccess=${callbackArrived && gestureSucceeded.get()}")
-                if (!callbackArrived || !gestureSucceeded.get() || !recoveryRunIsCurrent(runGeneration, reservation)) return
-                val postTapBaseline = LatestFrameProvider.currentGeneration()
-                if (!installProgressRecoveryBaseline(runGeneration, postTapBaseline)) return
-                val fresh = LatestFrameProvider.awaitNextSnapshot(postTapBaseline, PROGRESS_RECOVERY_FRAME_TIMEOUT_MS)
-                if (fresh == null) {
-                    logDiagnostic("[GAME_PROGRESS_RECOVERY] failed=true reason=post_tap_frame_timeout")
-                    return
-                }
-                val freshGeneration = fresh.generation
-                fresh.mat.release()
-                val resumed = finishProgressRecoveryAfterFresh(
-                    runGeneration, reservation, postTapBaseline, freshGeneration,
+                val frameWidth = initialFrame.mat.cols()
+                val frameHeight = initialFrame.mat.rows()
+                val match = detector.detectTemplate(
+                    initialFrame.mat,
+                    GameProgressRecovery.TEMPLATE,
+                    Rect(0, 0, frameWidth, frameHeight),
                 )
-                if (resumed) logDiagnostic("[GAME_PROGRESS_RECOVERY] freshGeneration=$freshGeneration resumed_detector=true")
+                logDiagnostic(
+                    "[GAME_PROGRESS_RECOVERY] template=CONFIRM_SEND_LIFE scan=FULL_FRAME " +
+                        "frameSize=${frameWidth}x${frameHeight} matched=${match.matched} " +
+                        "score=${format(match.score)}",
+                )
+                var lastPostTapBaseline = -1L
+                val center = GameProgressRecovery.centerIfMatched(match)
+                if (center != null) {
+                    val point = GameProgressRecovery.pointInCircle(center)
+                    logDiagnostic(
+                        "[GAME_PROGRESS_RECOVERY] match=(${match.x},${match.y},${match.width},${match.height}) " +
+                            "center=(${center.x},${center.y}) tapRadius=5 " +
+                            "logical=(${point.x},${point.y})",
+                    )
+                    val frameForTap = requireNotNull(currentFrame)
+                    currentFrame = null
+                    val fresh = try {
+                        progressRecoveryTapAndFresh(
+                            runGeneration, reservation, frameForTap, point,
+                            "GAME_PROGRESS_CONFIRM_SEND_LIFE", null,
+                        )
+                    } finally {
+                        frameForTap.mat.release()
+                    } ?: return
+                    currentFrame = fresh.snapshot
+                    lastPostTapBaseline = fresh.postTapBaseline
+                }
+
+                for (attempt in 1..GameProgressCloseRecovery.MAX_ATTEMPTS) {
+                    if (!recoveryRunIsCurrent(runGeneration, reservation) ||
+                        !LatestFrameProvider.diagnostics().captureRunning
+                    ) return
+                    val frame = requireNotNull(currentFrame)
+                    val roi = GameProgressCloseRecovery.topRightRoi(frame.mat.cols(), frame.mat.rows())
+                    val closeMatch = detector.detectTemplate(frame.mat, GameProgressCloseRecovery.TEMPLATE, roi)
+                    val decision = GameProgressCloseRecovery.decision(attempt, closeMatch.matched)
+                    logDiagnostic(
+                        "[GAME_PROGRESS_CLOSE] attempt=$attempt scan=TOP_RIGHT matched=${closeMatch.matched} " +
+                            "score=${format(closeMatch.score)}" +
+                            if (decision == CloseRecoveryDecision.STOP_NO_MATCH) " action=STOP" else "",
+                    )
+                    if (decision == CloseRecoveryDecision.STOP_NO_MATCH) break
+                    val closeCenter = requireNotNull(GameProgressCloseRecovery.centerIfMatched(closeMatch))
+                    logDiagnostic(
+                        "[GAME_PROGRESS_CLOSE] attempt=$attempt roi=(${roi.x},${roi.y}," +
+                            "${roi.x + roi.width},${roi.y + roi.height}) " +
+                            "match=(${closeMatch.x},${closeMatch.y},${closeMatch.width},${closeMatch.height}) " +
+                            "center=(${closeCenter.x},${closeCenter.y})",
+                    )
+                    currentFrame = null
+                    val fresh = try {
+                        progressRecoveryTapAndFresh(
+                            runGeneration, reservation, frame, closeCenter,
+                            "GAME_PROGRESS_CLOSE_BUTTON", attempt,
+                        )
+                    } finally {
+                        frame.mat.release()
+                    } ?: return
+                    currentFrame = fresh.snapshot
+                    lastPostTapBaseline = fresh.postTapBaseline
+                    if (decision == CloseRecoveryDecision.TAP_AND_STOP) {
+                        logDiagnostic("[GAME_PROGRESS_CLOSE] attempt=$attempt matched=true action=MAX_ATTEMPTS_REACHED")
+                        break
+                    }
+                }
+                if (lastPostTapBaseline >= 0L) {
+                    finalPostTapBaseline = lastPostTapBaseline
+                    finalFreshGeneration = requireNotNull(currentFrame).generation
+                }
             } finally {
-                // Failure/stop paths must not strand the loop. Ownership prevents an old
-                // worker from clearing a gate installed by a newer bot run.
-                clearProgressRecoveryGate(runGeneration)
+                detector.close()
             }
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
             logDiagnostic("[GAME_PROGRESS_RECOVERY] failed=true reason=interrupted")
         } catch (error: Exception) {
             logDiagnostic("[GAME_PROGRESS_RECOVERY] failed=true type=${error.javaClass.simpleName}")
+        } finally {
+            try {
+                currentFrame?.mat?.release()
+            } finally {
+                if (gateStarted) {
+                    val baseline = finalPostTapBaseline
+                    val freshGeneration = finalFreshGeneration
+                    val resumed = baseline != null && freshGeneration != null &&
+                        finishProgressRecoveryAfterFresh(runGeneration, reservation, baseline, freshGeneration)
+                    // A stale worker cannot clear a gate owned by a newer bot run.
+                    if (!resumed) clearProgressRecoveryGate(runGeneration)
+                    if (resumed) {
+                        logDiagnostic("[GAME_PROGRESS_RECOVERY] freshGeneration=$freshGeneration resumed_detector=true")
+                    }
+                }
+            }
         }
+    }
+
+    private fun progressRecoveryTapAndFresh(
+        runGeneration: Long,
+        reservation: GameProgressRecoveryReservation,
+        snapshot: FrameSnapshot,
+        point: LogicalPoint,
+        actionName: String,
+        closeAttempt: Int?,
+    ): ProgressRecoveryFreshFrame? {
+        autoTapper.stop(actionName)
+        val completion = CountDownLatch(1)
+        val gestureSucceeded = AtomicBoolean(false)
+        val action = dispatchProgressRecoveryTap(
+            runGeneration, reservation, snapshot, point, completion, gestureSucceeded, actionName,
+        ) ?: return null
+        if (closeAttempt == null) {
+            logDiagnostic("[GAME_PROGRESS_RECOVERY] dispatchAccepted=${action.accepted}")
+        } else {
+            logDiagnostic("[GAME_PROGRESS_CLOSE] attempt=$closeAttempt dispatchAccepted=${action.accepted}")
+        }
+        if (!action.accepted) {
+            clearPendingProgressRecoveryGesture(action.pendingGesture)
+            return null
+        }
+        var callbackArrived = false
+        try {
+            callbackArrived = completion.await(PROGRESS_RECOVERY_GESTURE_TIMEOUT_MS + 500L, TimeUnit.MILLISECONDS)
+        } finally {
+            action.pendingGesture?.let { pending ->
+                clearPendingProgressRecoveryGesture(pending)
+                if (!callbackArrived) pending.cancel()
+            }
+        }
+        val gestureComplete = callbackArrived && gestureSucceeded.get()
+        if (closeAttempt == null) {
+            logDiagnostic("[GAME_PROGRESS_RECOVERY] gestureSuccess=$gestureComplete")
+        } else {
+            logDiagnostic(
+                "[GAME_PROGRESS_CLOSE] attempt=$closeAttempt gestureComplete=$gestureComplete" +
+                    if (gestureComplete) "" else " action=STOP",
+            )
+        }
+        if (!gestureComplete || !recoveryRunIsCurrent(runGeneration, reservation)) return null
+        val postTapBaseline = LatestFrameProvider.currentGeneration()
+        if (!installProgressRecoveryBaseline(runGeneration, postTapBaseline)) return null
+        val fresh = LatestFrameProvider.awaitNextSnapshot(postTapBaseline, PROGRESS_RECOVERY_FRAME_TIMEOUT_MS)
+        if (fresh == null) {
+            logDiagnostic(
+                if (closeAttempt == null) "[GAME_PROGRESS_RECOVERY] failed=true reason=post_tap_frame_timeout"
+                else "[GAME_PROGRESS_CLOSE] attempt=$closeAttempt freshFrame=false action=STOP",
+            )
+            return null
+        }
+        if (closeAttempt != null) {
+            logDiagnostic(
+                "[GAME_PROGRESS_CLOSE] attempt=$closeAttempt gestureComplete=true " +
+                    "postTapBaseline=$postTapBaseline freshGeneration=${fresh.generation}",
+            )
+        }
+        return ProgressRecoveryFreshFrame(fresh, postTapBaseline)
     }
 
     // Keep monitor scopes out of performProgressRecovery's nested try/finally. A non-local
@@ -454,6 +555,7 @@ class BotController(
         point: LogicalPoint,
         completion: CountDownLatch,
         gestureSucceeded: AtomicBoolean,
+        actionName: String,
     ): ActionResult? = synchronized(lock) {
         if (!running || botRunGeneration != runGeneration ||
             !GameProgressWatchdogManager.isCurrentRecovery(reservation) ||
@@ -467,7 +569,7 @@ class BotController(
             freshFrameGateWaitStartedAt = 0L
             lastStage = null
             actionExecutor.tapDetectedPhysicalCircle(
-                "GAME_PROGRESS_CONFIRM_SEND_LIFE",
+                actionName,
                 point,
                 0.0, // Logical radius was already applied before detector-content mapping.
                 snapshot.sourceWidth,
@@ -3315,6 +3417,11 @@ private data class FastPathTiming(
     val latestFramePublishedAtNanos: Long,
     val detectionStartedAtNanos: Long,
     val detectionMatchedAtNanos: Long,
+)
+
+private data class ProgressRecoveryFreshFrame(
+    val snapshot: FrameSnapshot,
+    val postTapBaseline: Long,
 )
 
 private enum class FriendLifeWorkflowResult { COMPLETED, INTERRUPTED, FAILED }
