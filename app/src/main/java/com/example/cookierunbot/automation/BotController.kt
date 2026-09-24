@@ -1875,17 +1875,19 @@ class BotController(
                         "[FRIEND_LIFE_SEND] buttonScore=${format(scan.send.score)} " +
                             "logicalCenter=(${center.x},${center.y}) sentCount=$sentCount",
                     )
-                    friendLifeTapStep(
+                    val sendStep = friendLifeTapStep(
                         detector, "SEND_BUTTON", center, true, sourceWidth, sourceHeight, randomMs(1000, 2000),
-                    ).let { step ->
+                    )
+                    sendStep.let { step ->
                         if (!step.success) return friendLifeAbort("SEND", step.failureReason, sentCount)
                         val decision = friendLifeSendDecision(FriendLifeSendStep.SEND_BUTTON, step.interrupt)
                         decision.interrupt?.let { return friendLifeInterrupt(it, "AFTER_SEND_BUTTON") }
                     }
-                    friendLifeTapStep(
-                        detector, "CONFIRM_1", AutomationConfig.MAINMENU_FRIEND_CONFIRM_1,
-                        false, sourceWidth, sourceHeight, randomMs(1000, 2000),
-                    ).let { step ->
+                    val confirm1 = friendLifeTemplateConfirmStep(
+                        detector, "CONFIRM_1", sendStep.freshGeneration,
+                        requireNewFrame = false, postTapPacingMs = randomMs(1000, 2000),
+                    )
+                    confirm1.let { step ->
                         if (!step.success) return friendLifeAbort("SEND", step.failureReason, sentCount)
                         val decision = friendLifeSendDecision(FriendLifeSendStep.CONFIRM_1, step.interrupt)
                         decision.interrupt?.let {
@@ -1893,9 +1895,9 @@ class BotController(
                             return friendLifeInterrupt(it, "AFTER_CONFIRM_1")
                         }
                     }
-                    friendLifeTapStep(
-                        detector, "CONFIRM_2", AutomationConfig.MAINMENU_FRIEND_CONFIRM_2,
-                        false, sourceWidth, sourceHeight, FRIEND_POST_TAP_SETTLE_MS,
+                    friendLifeTemplateConfirmStep(
+                        detector, "CONFIRM_2", confirm1.freshGeneration,
+                        requireNewFrame = confirm1.skipped, postTapPacingMs = FRIEND_POST_TAP_SETTLE_MS,
                     ).let { step ->
                         if (!step.success) return friendLifeAbort("SEND", step.failureReason, sentCount)
                         val decision = friendLifeSendDecision(FriendLifeSendStep.CONFIRM_2, step.interrupt)
@@ -2109,6 +2111,70 @@ class BotController(
         return FriendScrollExecution(fresh.generation, profile.durationMs, verification)
     }
 
+    private fun friendLifeTemplateConfirmStep(
+        detector: StateDetector,
+        step: String,
+        afterGeneration: Long,
+        requireNewFrame: Boolean,
+        postTapPacingMs: Long,
+    ): FriendLifeTapStepResult {
+        if (!synchronized(lock) { isCurrentWorkerRunLocked() && !progressRecoveryGate.isActive() }) {
+            return FriendLifeTapStepResult(false, null, "bot_stopped")
+        }
+        val snapshot = if (requireNewFrame) {
+            LatestFrameProvider.awaitNextSnapshot(afterGeneration, FRIEND_RESCAN_TIMEOUT_MS)
+        } else {
+            val latest = LatestFrameProvider.snapshot()
+            if (latest != null && latest.generation >= afterGeneration) latest else {
+                latest?.mat?.release()
+                LatestFrameProvider.awaitNextSnapshot(afterGeneration, FRIEND_RESCAN_TIMEOUT_MS)
+            }
+        } ?: return FriendLifeTapStepResult(false, null, "${step.lowercase()}_fresh_frame_timeout")
+
+        val frameGeneration = snapshot.generation
+        val sourceWidth = snapshot.sourceWidth
+        val sourceHeight = snapshot.sourceHeight
+        val interrupt: BotStage?
+        val match: TemplateMatch?
+        try {
+            interrupt = detector.detectFirst(friendLifeInterruptStages(), snapshot.mat)?.state
+            match = if (interrupt == null) detector.detectTemplate(
+                snapshot.mat,
+                FriendLifeConfirmPolicy.TEMPLATE,
+                FriendLifeConfirmPolicy.fullFrame(snapshot.mat.cols(), snapshot.mat.rows()),
+            ) else null
+        } finally {
+            snapshot.mat.release()
+        }
+        if (!synchronized(lock) { isCurrentWorkerRunLocked() && !progressRecoveryGate.isActive() }) {
+            return FriendLifeTapStepResult(false, null, "bot_stopped")
+        }
+        if (interrupt != null) return FriendLifeTapStepResult(
+            true, interrupt, "", freshGeneration = frameGeneration, skipped = true,
+        )
+        val confirmation = requireNotNull(match)
+        val center = FriendLifeConfirmPolicy.centerIfMatched(confirmation)
+        logDiagnostic(
+            "[FRIEND_LIFE_CONFIRM] step=$step scan=FULL_FRAME matched=${confirmation.matched} " +
+                "score=${format(confirmation.score)} frameSequence=$frameGeneration" +
+                if (center == null) " action=SKIP" else "",
+        )
+        if (center == null) return FriendLifeTapStepResult(
+            true, null, "", freshGeneration = frameGeneration, skipped = true,
+        )
+        val waitMs = randomMs(FriendLifeConfirmPolicy.WAIT_MIN_MS, FriendLifeConfirmPolicy.WAIT_MAX_MS)
+        logDiagnostic(
+            "[FRIEND_LIFE_CONFIRM] step=$step match=(${confirmation.x},${confirmation.y}," +
+                "${confirmation.width},${confirmation.height}) center=(${center.x},${center.y}) waitMs=$waitMs",
+        )
+        delayOrStop(waitMs)
+        val point = FriendLifeConfirmPolicy.pointInCircle(center)
+        return friendLifeTapStep(
+            detector, step, point, true, sourceWidth, sourceHeight, postTapPacingMs,
+            physicalRadius = 0.0, // The logical radius 5 was already applied above.
+        )
+    }
+
     private fun friendLifeTapStep(
         detector: StateDetector,
         step: String,
@@ -2117,6 +2183,7 @@ class BotController(
         sourceWidth: Int,
         sourceHeight: Int,
         pacingMs: Long,
+        physicalRadius: Double = AutomationConfig.FRIEND_PHYSICAL_RADIUS,
     ): FriendLifeTapStepResult {
         val gestureSucceeded = java.util.concurrent.atomic.AtomicReference<Boolean?>(null)
         logBotActionRequest("FRIEND_$step")
@@ -2125,17 +2192,23 @@ class BotController(
                 return FriendLifeTapStepResult(false, null, "bot_stopped")
             if (detectorCoordinates) {
                 actionExecutor.tapDetectedPhysicalCircle(
-                    "FRIEND_$step", point, AutomationConfig.FRIEND_PHYSICAL_RADIUS,
+                    "FRIEND_$step", point, physicalRadius,
                     sourceWidth, sourceHeight, FRIEND_GESTURE_TIMEOUT_MS,
                 ) { success, timedOut -> gestureSucceeded.set(success && !timedOut) }
             } else {
                 actionExecutor.tapPhysicalCircle(
-                    "FRIEND_$step", point, AutomationConfig.FRIEND_PHYSICAL_RADIUS,
+                    "FRIEND_$step", point, physicalRadius,
                     sourceWidth, sourceHeight, FRIEND_GESTURE_TIMEOUT_MS,
                 ) { success, timedOut -> gestureSucceeded.set(success && !timedOut) }
             }
         }
         reportActionResult(action)
+        if (step == "CONFIRM_1" || step == "CONFIRM_2") {
+            logDiagnostic(
+                "[FRIEND_LIFE_CONFIRM] step=$step tapRadiusLogical=${FriendLifeConfirmPolicy.RADIUS_LOGICAL.toInt()} " +
+                    "dispatchAccepted=${action.accepted}",
+            )
+        }
         if (!action.accepted) return FriendLifeTapStepResult(false, null, "${step.lowercase()}_tap_rejected")
         val deadline = SystemClock.elapsedRealtime() + FRIEND_GESTURE_TIMEOUT_MS
         while (isRunning() && gestureSucceeded.get() == null && SystemClock.elapsedRealtime() < deadline) {
@@ -2167,7 +2240,7 @@ class BotController(
                 "postGestureBaseline=$postGestureBaseline freshGeneration=$freshGeneration " +
                 "interrupt=${interrupt?.name ?: "NONE"}",
         )
-        return FriendLifeTapStepResult(true, interrupt, "")
+        return FriendLifeTapStepResult(true, interrupt, "", freshGeneration = freshGeneration)
     }
 
     private fun friendLifeInterruptStages(): List<BotStage> = friendLifeInterruptStages(
@@ -3250,6 +3323,8 @@ private data class FriendLifeTapStepResult(
     val success: Boolean,
     val interrupt: BotStage?,
     val failureReason: String,
+    val freshGeneration: Long = -1L,
+    val skipped: Boolean = false,
 )
 
 private data class FriendScrollExecution(
