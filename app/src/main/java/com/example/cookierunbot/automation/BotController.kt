@@ -417,7 +417,12 @@ class BotController(
                         ) return
                         val frame = requireNotNull(currentFrame)
                         val roi = GameProgressCloseRecovery.topRightRoi(frame.mat.cols(), frame.mat.rows())
-                        val closeMatch = detector.detectTemplate(\n                            frame.mat,\n                            GameProgressCloseRecovery.TEMPLATE,\n                            roi,\n                            GameProgressCloseRecovery.MATCH_THRESHOLD,\n                        )
+                        val closeMatch = detector.detectTemplate(
+                            frame.mat,
+                            GameProgressCloseRecovery.TEMPLATE,
+                            roi,
+                            GameProgressCloseRecovery.MATCH_THRESHOLD,
+                        )
                         val decision = GameProgressCloseRecovery.decision(attempt, closeMatch.matched)
                         logDiagnostic(
                             "[GAME_PROGRESS_CLOSE] attempt=$attempt scan=TOP_RIGHT matched=${closeMatch.matched} " +
