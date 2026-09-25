@@ -3,6 +3,17 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val ciKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
+val ciKeystorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+val ciKeyAlias = System.getenv("ANDROID_KEY_ALIAS")
+val ciKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+val hasCiSigning = listOf(
+    ciKeystorePath,
+    ciKeystorePassword,
+    ciKeyAlias,
+    ciKeyPassword,
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "com.example.cookierunbot"
     compileSdk = 36
@@ -15,7 +26,24 @@ android {
         versionName = "1.0"
     }
 
+    signingConfigs {
+        if (hasCiSigning) {
+            create("ci") {
+                storeFile = file(requireNotNull(ciKeystorePath))
+                storePassword = requireNotNull(ciKeystorePassword)
+                keyAlias = requireNotNull(ciKeyAlias)
+                keyPassword = requireNotNull(ciKeyPassword)
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            if (hasCiSigning) {
+                signingConfig = signingConfigs.getByName("ci")
+            }
+        }
+
         release {
             isMinifyEnabled = false
             proguardFiles(
