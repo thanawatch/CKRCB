@@ -7,6 +7,7 @@ internal enum class CloseRecoveryDecision { STOP_NO_MATCH, TAP_AND_CONTINUE, TAP
 
 internal object GameProgressCloseRecovery {
     const val TEMPLATE = "CLOSE_BUTTON_1.png"
+    const val MATCH_THRESHOLD = 0.45
     const val MAX_ATTEMPTS = 3
 
     fun topRightRoi(width: Int, height: Int): Rect =
