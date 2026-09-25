@@ -6,6 +6,10 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class GameProgressCloseRecoveryTest {
+    @Test fun closeRecoveryUsesDedicatedThreshold() {
+        assertEquals(0.45, GameProgressCloseRecovery.MATCH_THRESHOLD, 0.0)
+    }
+
     @Test fun topRightRoiUsesFrameDimensions() {
         val even = GameProgressCloseRecovery.topRightRoi(1280, 720)
         assertEquals(640, even.x)
