@@ -7,3 +7,5 @@
 .externalNativeBuild/
 .cxx/
 *.iml
+*.jks
+*.keystore
