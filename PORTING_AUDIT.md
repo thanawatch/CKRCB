@@ -18,6 +18,8 @@ Consumers receive cloned ownership through `snapshot()` or `awaitNextSnapshot(af
 
 A handler requests a logical gesture through `ActionExecutor`. `CoordinateMapper` uses the current `ContentTransform` to map normalized detector/action coordinates into the physical display. `GestureArbiter` grants a single lease; `BotAccessibilityService.dispatchGesture()` reports initial acceptance and later invokes completion/cancellation. `GestureCompletionContext` releases the lease on callback, cancellation, or timeout. Workflows that need visual proof establish their baseline after successful completion and wait for `generation > baseline`.
 
+The deliberately isolated paths that bypass `CoordinateMapper` are the three `POST_RELAY_*_PHYSICAL` points calibrated for 2400×1080, TIME_DEAL's absolute physical `(2000,70)` tap, and PARTY_RUN_SEASON_REWARDS' absolute physical `(1260,980)` tap. Other actions use normalized logical coordinates; these exceptions remain device-dependent.
+
 ## Controller loop and groups
 
 `BotController.start()` creates a new statistics session and run generation, initializes PRE_GAME state, scheduler/watchdog/popup/no-match fields, and submits `runLoop()` to a single executor. `waitForReadiness()` requires capture running, advancing/fresh frames, Accessibility setting enabled, live service instance, and service connection. The loop owns one `StateDetector` until stop.
@@ -57,7 +59,7 @@ Quick Lives is a separate mailbox transaction enabled per-round. It uses `ALL_LI
 
 The alert captures the latest normalized snapshot, optionally PNG-encodes it, and submits asynchronously to Telegram. Delivery is committed only on HTTP success; failure schedules eligibility 5 minutes later. A successful alert suppresses more alerts until new progress starts another episode.
 
-Recovery is handed to `BotController` and executed on its recovery executor. A current run/reservation check activates `ProgressRecoveryGate`, blocking normal dispatch. The workflow first seeks `CONFIRM_SEND_LIFE_1`; if absent, top-right `CLOSE_BUTTON_1` fallback is bounded to three attempts with 2-second retry delays. Callback success plus a newer frame is mandatory after every tap. It then scans successive fresh frames for MAINMENU for at most 120 seconds; a match routes the normal controller to PRE_GAME. Completion clears only the matching reservation/gate.
+Recovery is handed to `BotController` and executed on its recovery executor. A current run/reservation check activates `ProgressRecoveryGate`, blocking normal dispatch. The workflow first seeks `CONFIRM_SEND_LIFE_1`. If absent, it searches the top-right quarter for `CLOSE_BUTTON_1` with the ordinary grayscale `StateDetector.detectTemplate()` path: `TM_CCOEFF_NORMED`, threshold 0.8, with ROI-local results offset to full-frame coordinates. It does not call the available alpha-mask SQDIFF helper. A no-match stops the fallback; a match dispatches a tap, and no more than three taps are allowed. Each accepted tap must receive a successful completion callback. Attempts one and two then apply `RETRY_DELAY_MS = 2_000`, establish the generation baseline after that delay, and acquire a strictly newer frame for the next detection; attempt three skips the retry delay, but still establishes the baseline and acquires a newer frame. Recovery then tests the resulting frame and successive fresh frames for MAINMENU for at most 120 seconds; a match routes the normal controller to PRE_GAME. Completion clears only the matching reservation/gate.
 
 ## Configuration and UI audit
 

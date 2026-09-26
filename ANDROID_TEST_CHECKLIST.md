@@ -39,7 +39,7 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 - [ ] Verify concurrent actions serialize; rejected dispatch, callback cancellation, and callback timeout do not count as success.
 - [ ] Press **Stop Bot** during a wait/gesture callback and confirm no delayed follow-up tap occurs.
 - [ ] Confirm a state-changing action waits for a generation established after callback completion; a frame captured during the gesture must not satisfy the gate.
-- [ ] Verify the three post-relay absolute points only on their specifically calibrated 2400×1080 device path.
+- [ ] Verify all fixed-device exceptions separately from logical mapping: the three post-relay absolute points on their calibrated 2400×1080 path, TIME_DEAL at physical `(2000,70)`, and PARTY_RUN_SEASON_REWARDS at physical `(1260,980)`.
 
 ## Normal automation workflow
 
@@ -65,8 +65,9 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 ## Watchdog, recovery, and Telegram
 
 - [ ] Confirm progress timestamps for bot start, detected GAME_COMPLETE, and successful Friend Life Send-button gesture only.
-- [ ] Use the overlay recovery test to exercise confirm-template recovery and top-right close fallback (maximum three attempts).
-- [ ] During recovery confirm normal detection/actions are gated; callback success and fresh frame are required, and MAINMENU routes to PRE_GAME.
+- [ ] Use the overlay recovery test to exercise confirm-template recovery and the top-right-quarter CLOSE_BUTTON fallback. Confirm its current grayscale `TM_CCOEFF_NORMED` threshold is 0.8 (not alpha-mask SQDIFF), a no-match stops it, and at most three matched taps occur.
+- [ ] During CLOSE_BUTTON recovery, confirm each tap waits for callback success; attempts that continue wait 2 seconds before taking the generation baseline and acquiring a newer frame, while the final attempt skips the retry delay but still acquires a newer frame.
+- [ ] During recovery confirm normal detection/actions are gated; after fallback, the resulting frame and successive fresh frames are checked for MAINMENU for at most 120 seconds, and a match routes to PRE_GAME.
 - [ ] Exercise new progress/Stop/restart during recovery and confirm stale reservation/callback work is discarded.
 - [ ] Configure Telegram without exposing credentials. Test disabled, missing token, missing Chat ID, valid text-only, valid image, network failure, HTTP failure/rate limit, and changed-config cancellation.
 - [ ] At an overdue episode, verify at most one **successfully delivered** alert; failed delivery becomes retry-eligible after 5 minutes. Verify a new progress event permits a later episode.

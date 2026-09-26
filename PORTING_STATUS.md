@@ -20,7 +20,8 @@
 
 - MediaProjection, overlay, Accessibility, notification, and battery settings still require user action; automation cannot silently grant them.
 - Detection is calibrated for normalized 1280×720 content and current assets/ROIs. Device/cutout behavior and gesture calibration require real-phone validation.
-- `POST_RELAY_*_PHYSICAL` are isolated absolute 2400×1080 calibration points; they are not general coordinate policy.
+- Fixed-device gesture exceptions are the isolated absolute 2400×1080 `POST_RELAY_*_PHYSICAL` points, TIME_DEAL at physical `(2000,70)`, and PARTY_RUN_SEASON_REWARDS at physical `(1260,980)`; they bypass normalized mapping and are not general coordinate policy.
+- The current watchdog CLOSE_BUTTON fallback uses grayscale `detectTemplate()` / `TM_CCOEFF_NORMED` with threshold 0.8 in the top-right quarter, not the alpha-mask SQDIFF helper. It stops on no-match or after three matched taps; a successful callback is followed by the 2-second retry delay when another attempt remains, then a post-delay generation baseline and a strictly newer frame (the final tap has no retry delay but still gets a fresh frame). MAINMENU detection then examines that frame and subsequent fresh frames for up to 120 seconds and routes a match to PRE_GAME.
 - Connection Lost/Inactive use Reload taps only. The app does not force-stop or restart Cookie Run or RobotRun.
 - No-match and detector-stall signals save/log local diagnostics and do not create a second Telegram alert path.
 - Telegram commands are read-only and restricted to the configured Chat ID; there is no remote Start/Stop/gameplay control.

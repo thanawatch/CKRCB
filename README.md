@@ -69,7 +69,7 @@ The overlay persists Fast Start, Cookie Relay/post-relay sequence, desired boost
 
 ## Fresh frames and gesture safety
 
-Normal coordinates are expressed in logical 1280×720 space. The crop transform used to normalize the image is also used to map gestures to the display. Three explicitly named post-relay physical points are the only fixed-device exception.
+Normal coordinates are expressed in logical 1280×720 space. The crop transform used to normalize the image is also used to map gestures to the display. Fixed-device exceptions bypassing that mapping are the three explicitly named post-relay physical points (calibrated for 2400×1080), the TIME_DEAL tap at absolute physical `(2000,70)`, and the PARTY_RUN_SEASON_REWARDS tap at absolute physical `(1260,980)`; each requires device-specific verification.
 
 Android accepting `dispatchGesture()` is not the same as completion. Actions are globally serialized, callback timeouts/cancellations are failures, Stop invalidates delayed callbacks, and state-changing workflows wait for a frame generation established after successful gesture completion. This prevents a frame captured during a gesture from being treated as its result.
 
@@ -79,7 +79,7 @@ Scheduled Friend Life becomes due every 61 minutes and, like a queued manual tes
 
 Quick Receive/Send Lives is a separate after-round mailbox workflow with its own templates, callback/fresh-frame rules, interrupts, and timeout.
 
-The game-progress watchdog checks independently every 30 seconds. If no bot-start, confirmed GAME_COMPLETE, or Friend Send event occurs for 15 minutes, it may run a gated confirmation/close recovery and send one successfully delivered Telegram warning for that overdue episode. Failed alerts can retry after five minutes. Local no-match/DETECT_STALL diagnostics do not send their own alerts.
+The game-progress watchdog checks independently every 30 seconds. If no bot-start, confirmed GAME_COMPLETE, or Friend Send event occurs for 15 minutes, it may run a gated confirmation/close recovery and send one successfully delivered Telegram warning for that overdue episode. The current CLOSE_BUTTON fallback uses ordinary grayscale `TM_CCOEFF_NORMED` matching at threshold 0.8 in the top-right quarter, not alpha-masked SQDIFF matching. It stops on a no-match and permits at most three matched taps. Each tap must complete successfully; continuing attempts wait 2 seconds before establishing a generation baseline and acquiring a newer frame, while the final tap omits the retry delay but still requires a newer frame. Recovery then checks that frame and successive fresh frames for MAINMENU for up to 120 seconds and routes a match to PRE_GAME. Failed alerts can retry after five minutes. Local no-match/DETECT_STALL diagnostics do not send their own alerts.
 
 ## Statistics, images, and logs
 
