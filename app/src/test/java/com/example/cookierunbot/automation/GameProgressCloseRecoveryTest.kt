@@ -7,7 +7,7 @@ import org.junit.Test
 
 class GameProgressCloseRecoveryTest {
     @Test fun closeRecoveryUsesDedicatedThreshold() {
-        assertEquals(0.10, GameProgressCloseRecovery.MATCH_THRESHOLD, 0.0)
+        assertEquals(0.20, GameProgressCloseRecovery.MATCH_THRESHOLD, 0.0)
     }
 
     @Test fun closeRecoveryWaitsTwoSecondsBetweenAttempts() {
