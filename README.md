@@ -1,130 +1,113 @@
 # RobotRun Android
 
-RobotRun is a native Android Cookie Run Classic automation app. It captures the device display with MediaProjection, normalizes the game image to a logical 1280×720 frame, detects known screens with OpenCV templates, and performs configured gestures through an Android AccessibilityService.
+RobotRun is a native Android automation app for Cookie Run Classic. With explicit user permission it captures the screen through MediaProjection, normalizes the game viewport to 1280×720, identifies current screens with OpenCV template matching, and dispatches configured taps/swipes through an AccessibilityService.
 
-The Android source under `app/src/main` is the source of truth for current behavior. Historical porting notes such as `PORTING_STATUS.md` describe an audit at a particular date and may not reflect later edits. See [AGENTS.md](AGENTS.md) before changing code.
+The current Android source is authoritative. Coding agents should read [AGENTS.md](AGENTS.md); deeper current-code flow is in [PORTING_AUDIT.md](PORTING_AUDIT.md), the concise capability map is [PORTING_STATUS.md](PORTING_STATUS.md), and phone verification is in [ANDROID_TEST_CHECKLIST.md](ANDROID_TEST_CHECKLIST.md).
 
-## Project facts
+## Requirements and build
 
-- Application ID / namespace: `com.example.cookierunbot`
-- Display name: RobotRun
-- Language: Kotlin
-- Minimum Android API: 26
-- Compile and target SDK: 36
-- Java/Kotlin target: 17
-- OpenCV Android dependency: `org.opencv:opencv:4.13.0`
-- Gradle wrapper: 8.11.1
+- Android API 26 minimum; compile/target SDK 36
+- JDK 17; Gradle wrapper 8.11.1
+- Kotlin 2.1.20 / Android Gradle Plugin 8.10.1
+- OpenCV Android 4.13.0
 
-## Build
+From the repository root:
 
-Open `C:\bot\CookieRunBotAndroid` in Android Studio and allow Gradle sync. Install a JDK 17 runtime and Android SDK platform/build tools for API 36.
-
-From PowerShell at the project root:
-
-```powershell
-.\gradlew.bat test
-.\gradlew.bat lint
-.\gradlew.bat assembleDebug
+```bash
+./gradlew test
+./gradlew lint
+./gradlew assembleDebug
 ```
 
-The debug APK is written to:
+Windows PowerShell equivalents use `gradlew.bat`. The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+
+The app module optionally signs the debug build with a CI keystore only when all required `ANDROID_KEYSTORE_*` environment variables are set. The manual GitHub Actions workflow tests, creates and verifies that signed debug APK, then uploads it as a 14-day artifact. No release signing/publishing workflow is defined.
+
+## First use
+
+1. Launch RobotRun and enable its Accessibility service from **Open Accessibility Settings**.
+2. Grant **Display over other apps** so the floating bubble can be shown.
+3. Optionally grant battery-optimization exemption to reduce background interruption.
+4. Press **Start Screen Capture** and accept Android's MediaProjection prompt. On Android 13+, allow notifications for the required foreground-service notification.
+5. Open Cookie Run Classic, open the floating **BOT** bubble, configure options, and press **Start Bot**.
+6. **Stop Bot** stops automation. **Stop Screen Capture** independently tears down capture and also stops the bot/dismisses the overlay.
+
+Permissions remain user-controlled. RobotRun cannot silently enable Accessibility, overlay, MediaProjection, notification, or battery settings.
+
+## Runtime in one view
 
 ```text
-app/build/outputs/apk/debug/app-debug.apk
+CookieRunBotApplication
+  -> BotRuntime (process-owned BotController)
+
+MainActivity --MediaProjection consent--> ScreenCaptureService + floating BotControlOverlay
+                                          |
+                                          v
+ScreenCaptureManager (latest Image on capture thread)
+  -> FrameNormalizer (cutout-safe 16:9 crop -> 1280x720)
+  -> LatestFrameProvider (latest only + monotonic generation)
+  -> BotController / StateDetector (OpenCV grayscale ROI matching)
+  -> ActionExecutor / GestureArbiter
+  -> CoordinateMapper (same content transform)
+  -> BotAccessibilityService gesture + completion callback
 ```
 
-Install from Android Studio or with `adb install -r app/build/outputs/apk/debug/app-debug.apk`.
+The service runs an idle MAINMENU diagnostic detector every 750 ms only while the bot is stopped. Starting the bot creates one detector-loop worker. It first waits for an advancing fresh frame and for Accessibility to be both enabled and connected. PRE_GAME and POST_GAME poll the latest snapshot; IN_GAME waits for each newer generation. Snapshots are cloned OpenCV Mats owned and released by the consumer.
 
-## First run on a phone
+## Current automation
 
-1. Open RobotRun and enable its service from **Open Accessibility Settings**. Android requires the user to grant this permission manually.
-2. Grant **Display over other apps** so the floating controls can appear.
-3. Grant unrestricted battery access if the device's power manager would otherwise restrict background operation.
-4. Tap **Start Screen Capture** and accept Android's screen recording prompt. On Android 13 and later, also allow the capture notification permission when requested.
-5. Open Cookie Run Classic. Use the floating **BOT** bubble to review options and press **Start Bot**. Press **Stop Bot** to stop automation; **Stop Screen Capture** separately stops capture.
+The controller scans ordered groups rather than every state indiscriminately:
 
-The main screen shows capture state, source and normalized frame dimensions, orientation, frame age, Accessibility permission/connection state, and detection diagnostics. The overlay exposes options, session summary, and bot Start/Stop controls while capture is active. A manual **Test Tap** is available from the main screen.
+- **PRE_GAME:** reward/daily/league/relic/party/settings screens, MAINMENU, PURCHASE_ITEM.
+- **IN_GAME:** GAME_RELAY, GAME_COMPLETE, GAME_START, with a temporary Fast Start priority path.
+- **POST_GAME:** anti-bot, score/mystery-box/result/reward screens, then MAINMENU.
+- **Always priority:** CONNECTION_LOST and INACTIVE.
 
-Screen capture permission is granted for a capture session and must be requested through Android's MediaProjection flow. The manifest does not lock the activity to portrait. The capture pipeline responds to display geometry changes; the output detection frame remains 1280×720.
+At MAINMENU the app obtains a newer frame and revalidates the screen before scheduled Friend Life, per-round Quick Lives, or Start Game. PURCHASE_ITEM can search up to 30 seconds for the selected boost, then Play enters IN_GAME and configured jump tapping begins. Confirmed GAME_COMPLETE records progress, commits POST_GAME, analyzes a cloned result frame asynchronously, and requires a newer frame that still matches before Finish. Reward handling returns to general redetection; it does not assume a fixed next-popup chain. Connection Lost/Inactive only tap Reload.
 
-## Runtime architecture
+The overlay persists Fast Start, Cookie Relay/post-relay sequence, desired boost, relic detection, scheduled Friend Life, per-round receive/send lives, debug/result image saving, and jump mode/count/interval. Most options are snapshotted at Start Bot; image-save switches are read live.
 
-```text
-MainActivity / BotControlOverlay
-          │ user starts capture or bot
-          ▼
-ScreenCaptureService (foreground MediaProjection service)
-  ├─ ScreenCaptureManager → latest raw screen frame
-  ├─ FrameNormalizer → logical 1280×720 frame
-  └─ detection worker → BotRuntime / BotController
-                              ├─ StateDetector / OpenCV templates
-                              ├─ ActionExecutor
-                              ├─ AccessibilityService gestures
-                              └─ round results and diagnostics
-```
+## Fresh frames and gesture safety
 
-`BotRuntime` owns the controller at process scope so an Activity recreation does not own or cancel the bot loop. `LatestFrameProvider` keeps the newest normalized frame and publishes a generation number. Consumers request a snapshot or wait for a generation newer than a baseline; intermediate frames are discarded rather than queued for later detection.
+Normal coordinates are expressed in logical 1280×720 space. The crop transform used to normalize the image is also used to map gestures to the display. Fixed-device exceptions bypassing that mapping are the three explicitly named post-relay physical points (calibrated for 2400×1080), the TIME_DEAL tap at absolute physical `(2000,70)`, and the PARTY_RUN_SEASON_REWARDS tap at absolute physical `(1260,980)`; each requires device-specific verification.
 
-`FrameNormalizer` derives a 16:9 content rectangle from source dimensions and display cutout insets, then resizes the crop to 1280×720. The same `ContentTransform` is shared with `CoordinateMapper` for logical actions. The detector uses grayscale OpenCV template matching (`TM_CCOEFF_NORMED`) and the configured threshold/ROI for each stage. Do not infer physical tap locations from the logical frame dimensions alone.
+Android accepting `dispatchGesture()` is not the same as completion. Actions are globally serialized, callback timeouts/cancellations are failures, Stop invalidates delayed callbacks, and state-changing workflows wait for a frame generation established after successful gesture completion. This prevents a frame captured during a gesture from being treated as its result.
 
-## Bot behavior and options
+## Friend Life, Quick Lives, and progress recovery
 
-The controller scans three groups: `PRE_GAME`, `IN_GAME`, and `POST_GAME`. `CONNECTION_LOST` and `INACTIVE` are checked as always-priority states. In-game ordering prioritizes `GAME_RELAY`, then `GAME_COMPLETE`, then `GAME_START`; the controller may use a short-lived `GAME_START` priority window for Fast Start. Exact stage lists and policies live in `BotController` and `StateDetector`.
+Scheduled Friend Life becomes due every 61 minutes and, like a queued manual test, starts only from a revalidated MAINMENU. It searches the leaderboard, visually verifies each naturalized scroll, scans Send buttons, and checks interrupt states between Send and two confirmations. It has independent no-progress/top-search/absolute bounds. A successful Send-button gesture immediately counts as game progress.
 
-The floating controls currently persist options through `BotOptionsStore`, including:
+Quick Receive/Send Lives is a separate after-round mailbox workflow with its own templates, callback/fresh-frame rules, interrupts, and timeout.
 
-- use owned Fast Start and Cookie Relay;
-- run the optional action sequence after Cookie Relay;
-- use a selected Desired Random Boost;
-- detect Relic screens;
-- scheduled Friend Life and receive/send lives after each game;
-- save-debug-image option;
-- jump mode (`NONE`, fixed count, or continuous) and tap interval.
-
-The controller also handles result/reward popups, Mystery Box classification, result screenshots, MAINMENU revalidation, and automatic progression through its current grouped state machine. Desired Boost waits for the selected boost template or the existing timeout behavior. Reward popups return to generic `PRE_GAME` detection after a fresh frame, with an instance guard against repeated taps on an unchanged dialog. Connection Lost handling taps **Reload** and returns to detection; it does not restart the game process.
-
-Friend Life is a separate scheduled/test workflow from Quick Receive/Send Lives. Its scheduler interval, fresh-frame interrupt checks, leaderboard scan regions, bounded swipe generation, visual scroll verification, and progress/absolute timeouts are implemented in `FriendLifeScheduler.kt`, `FriendSwipeProfile.kt`, `FriendScrollVerifier.kt`, and `BotController.kt`. Consult those files before changing timing or gestures.
+The game-progress watchdog checks independently every 30 seconds. If no bot-start, confirmed GAME_COMPLETE, or Friend Send event occurs for 15 minutes, it may run a gated confirmation/close recovery and send one successfully delivered Telegram warning for that overdue episode. The current CLOSE_BUTTON fallback uses ordinary grayscale `TM_CCOEFF_NORMED` matching at threshold 0.8 in the top-right quarter, not alpha-masked SQDIFF matching. It stops on a no-match and permits at most three matched taps. Each tap must complete successfully; continuing attempts wait 2 seconds before establishing a generation baseline and acquiring a newer frame, while the final tap omits the retry delay but still requires a newer frame. Recovery then checks that frame and successive fresh frames for MAINMENU for up to 120 seconds and routes a match to PRE_GAME. Failed alerts can retry after five minutes. Local no-match/DETECT_STALL diagnostics do not send their own alerts.
 
 ## Statistics, images, and logs
 
-- A new bot run starts a new statistics session. `RoundResultStore` retains up to 50 recent rounds for history and separately maintains cumulative session totals. `RoundResultCollector` analyzes result frames off the detector thread and uses session generations to discard stale asynchronous results.
-- Result images are saved under the public `Pictures/CookieRunBot/results/` directory. Prolonged no-match diagnostics save raw and normalized frames under `Pictures/CookieRunBot/debug/`.
-- The in-app Debug Log keeps up to 500 recent event lines in memory. **Save Log** writes a text file under `Download/RobotRun/` (with app-specific storage fallback on failure).
-- A persistent lifecycle trace is stored in the app-specific external files directory under `diagnostics/coldstart_trace.txt` (or internal files storage if external app storage is unavailable); it rotates the previous trace when the configured size limit is reached.
+A new Start Bot creates a new statistics session. Result OCR/classification runs on a separate executor and cannot write across session generations. Up to 50 recent rounds are kept, while cumulative totals use contribution replacement so late Mystery Box classification does not double-count.
 
-Use the **Statistics / Round History**, **Open Debug Log**, and **Telegram Notifications** screens to inspect their respective features. Filenames and storage details are defined by `PublicImageStore`, `ResultImageSaver`, `NoMatchDebugFrameSaver`, and `DebugLogActivity`.
+- Result images: public `Pictures/CookieRunBot/results/`
+- No-match raw/normalized pairs: public `Pictures/CookieRunBot/debug/`
+- Saved text logs: public `Download/RobotRun/`, with app-specific fallback
+- Persistent trace: app-specific `diagnostics/coldstart_trace.txt`, with internal fallback
+- In-memory Debug Log: latest 500 lines
+
+Captured images may contain personal information and can be visible to gallery/file applications. Do not share them or logs without inspection.
 
 ## Telegram
 
-Telegram settings are managed in the existing Telegram Settings screen. The bot token is stored through `TelegramSecureTokenStore`; the configured Chat ID is also the only authorized incoming-command chat. Never commit or paste credentials into source, documentation, or logs.
+Telegram settings store the bot token encrypted with an Android Keystore-backed AES-GCM key. The configured Chat ID is both the notification destination and the only authorized incoming-command chat. Networking and encoding run asynchronously and failures do not stop gameplay.
 
-The current read-only commands are `/help`, `/status`, `/stats`, `/last`, and `/boxes`; group command forms with an `@BotUsername` suffix are accepted. `TelegramCommandReceiver` long-polls `getUpdates` from the app process and persists update progress. It does not expose remote bot control commands.
-
-`GameProgressWatchdogManager` runs independently of the detector loop. It starts when the bot starts and measures time since bot start, a detected `GAME_COMPLETE`, or a successful tap of the detected Friend Life Send button. At 15 minutes without one of those events it may send one warning for that overdue episode, with the latest normalized screenshot when debug images are enabled; failed delivery can be retried. Normal text notifications and debug image preferences are controlled in Telegram Settings. A successful friend-button gesture is the progress event; the app does not perform an additional server-side delivery verification.
-
-Prolonged `NO_MATCH` captures and `[DETECT_STALL]` are local diagnostics. They do not independently trigger Telegram alerts in the current implementation.
+Supported read-only commands are `/help`, `/status`, `/stats`, `/last`, and `/boxes`, including group-chat `@BotUsername` forms. There is no remote Start/Stop or gameplay control. Never commit credentials or paste token-bearing URLs into logs/issues.
 
 ## Troubleshooting
 
-| Symptom | Check |
+| Symptom | Verify |
 | --- | --- |
-| Capture stays stopped or no frames arrive | Start Screen Capture again, accept the system recording prompt, check its foreground notification, and verify `LatestFrameProvider` diagnostics. |
-| Floating BOT bubble is missing | Allow RobotRun to display over other apps, then restart screen capture. |
-| Test Tap or bot actions are skipped | Check both Accessibility permission **and** service connection status. Enabled permission alone does not mean the service is connected. |
-| Detection does not match the visible screen | Inspect source resolution, content rectangle/normalized frame diagnostics, current stage score, and local debug images. Do not lower thresholds or alter templates before establishing the geometry/input frame is correct. |
-| Bot pauses on a popup | Check fresh-frame, callback, popup-instance, and interrupt logs. The detector can be inside a synchronous workflow; `[DETECT_STALL]` is diagnostic and is not itself a recovery action. |
-| Telegram command gets no response | Confirm notifications are enabled, token/Chat ID are valid, the message comes from the configured Chat ID, and network polling/send logs contain no failure. |
+| No capture/frames | Re-consent to MediaProjection, check foreground notification, source size, generation, FPS, and frame age. |
+| Bubble missing | Grant overlay permission and restart capture. |
+| Actions skipped | Accessibility must be enabled **and** its service connected; also inspect gesture-busy/callback/fresh-frame state. |
+| Wrong detection | Establish source/content geometry and inspect scores/debug frames before changing templates, ROIs, order, or threshold. |
+| Popup appears stuck | Inspect callback, minimum-fresh-generation, popup fingerprint/attempt, interrupt, and DETECT_STALL logs. |
+| Telegram command ignored | Check enabled/valid configuration, exact Chat ID authorization, supported command syntax, and poll/send logs. |
 
-Useful Logcat filter:
-
-```text
-CookieRunBot
-```
-
-Useful prefixes include `[CAPTURE]`, `[NORMALIZER]`, `[DETECT]`, `[STATE_MATCH]`, `[BOT]`, `[ACTION]`, `[GESTURE]`, `[FRIEND_LIFE]`, `[ROUND_]`, `[GAME_PROGRESS_WATCHDOG]`, `[TELEGRAM]`, `[NO_MATCH]`, and `[DETECT_STALL]`.
-
-## Privacy and known limits
-
-MediaProjection captures visible device content while the user-authorized capture service is active. Result/debug images are placed in public Pictures folders and can be visible to gallery/file apps. Telegram sends only occur when configured and enabled; incoming commands are limited to the configured Chat ID. Avoid sharing debug images or logs that may contain personal game/account information.
-
-Bot detection depends on the included templates, their ROIs, the normalized game viewport, and current game UI. Device-specific geometry or game UI changes may require source-grounded calibration. The `Save Debug Images` option exists in the overlay and is persisted, but the current controller does not read that option; do not assume it gates the prolonged no-match diagnostic captures. The project has unit tests for policies, coordinates, Friend Life helpers, watchdogs, Telegram helpers, popup guards, and statistics; device-level capture, permission, and gesture behavior still needs testing on a phone.
+Useful Logcat tag: `CookieRunBot`. Common prefixes include `[CAPTURE]`, `[NORMALIZER]`, `[DETECT]`, `[STATE_MATCH]`, `[BOT]`, `[ACTION]`, `[GESTURE]`, `[FRIEND_LIFE]`, `[ROUND_]`, `[GAME_PROGRESS_WATCHDOG]`, `[TELEGRAM]`, `[NO_MATCH]`, and `[DETECT_STALL]`.

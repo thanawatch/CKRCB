@@ -1,61 +1,83 @@
-# Android parity test checklist
+# Android verification checklist
 
-Use a real landscape device with Cookie Run Classic. Mark each item only after observing Logcat/UI and the game screen.
+Use this after changes that touch runtime behavior. Mark only checks actually performed; emulator/unit checks do not substitute for MediaProjection and Accessibility validation on a target phone.
 
-## Capture
+## Automated checks
 
-- [ ] Start Screen Capture asks for MediaProjection permission.
-- [ ] Capture service remains active while MainActivity is backgrounded.
-- [ ] Latest-frame age remains low; old frames are replaced, not queued.
-- [ ] Rotate portrait ↔ landscape; ImageReader/VirtualDisplay resolution and orientation update.
-- [ ] Stop Screen Capture releases projection, virtual display and reader.
+- [ ] `./gradlew test` (or `.\gradlew.bat test`)
+- [ ] `./gradlew lint` (or `.\gradlew.bat lint`)
+- [ ] `./gradlew assembleDebug` (or `.\gradlew.bat assembleDebug`)
+- [ ] `git diff --check`
+- [ ] Review test reports under `app/build/reports/tests/` and lint output; do not commit generated artifacts.
+- [ ] Confirm the APK exists at `app/build/outputs/apk/debug/app-debug.apk`.
 
-## Detection
+## Install, permissions, and lifecycle
 
-- [ ] Normalized frame is exactly 1280x720.
-- [ ] MAINMENU score/match agrees with Python template at the same screen.
-- [ ] Threshold remains 0.8; no template is silently resized or regenerated.
-- [ ] Each stage logs template, score, ROI and match position without UI-thread blocking.
+- [ ] Clean install and upgrade install both launch RobotRun.
+- [ ] Enable the RobotRun Accessibility service and verify diagnostics distinguish permission enabled from service connected.
+- [ ] Grant overlay permission; start capture and confirm the floating **BOT** bubble appears.
+- [ ] On Android 13+, grant notification permission. Confirm foreground capture notification remains present.
+- [ ] Exercise battery-optimization prompt/status without assuming exemption was granted.
+- [ ] Start/stop/restart MediaProjection. Deny/cancel consent once and verify safe stopped/error UI.
+- [ ] Rotate/reverse landscape or otherwise change display geometry; verify capture resources rebuild and normalized output remains 1280×720.
+- [ ] Recreate/close `MainActivity` while capture/bot runs; verify process-owned controller continues. Stop capture and verify overlay plus bot stop.
+- [ ] Power connect/disconnect while capturing; verify no crash/resource leak.
 
-## Pre-game
+## Capture, geometry, and detection
 
-- [ ] MAINMENU action taps the Python start coordinate after a positive detection.
-- [ ] Duplicate MAINMENU detections do not tap repeatedly.
-- [ ] PURCHASE_ITEM detection and all selected purchase/use options work.
-- [ ] GAME_START is polled promptly and Fast Start is used only when selected.
-- [ ] Desired boost polling reports score and uses the selected boost only.
+- [ ] Diagnostics show correct source dimensions, orientation, content rectangle, advancing generation/FPS, and frame age below 1 second during normal operation.
+- [ ] Test a device with a cutout/inset. Confirm the visible game viewport and physical gesture mapping share the same crop.
+- [ ] Validate MAINMENU detection while bot is stopped; verify the service's idle detector yields while bot runs.
+- [ ] Validate representative PRE_GAME, IN_GAME, and POST_GAME templates at current threshold/ROI; include scaled GAME_START/GAME_RELAY animation frames.
+- [ ] Confirm raw/normalized no-match pairs are saved only when debug images are enabled and only after watchdog delay; verify they cause no Telegram alert or automatic tap/restart.
+- [ ] Inspect memory during repeated capture restarts and long detection runs for unreleased Image/Mat growth.
 
-## In-game
+## Gesture safety and fresh-frame behavior
 
-- [ ] GAME_RELAY is prioritized and Cookie Relay is used once per appearance.
-- [ ] Optional post-relay sequence uses circular radius 5 and exact randomized delays.
-- [ ] Jump-by-count waits 1.7s, taps validated count, then stops.
-- [ ] Auto Jump runs off the detection loop with configured interval and circular 100-phone-pixel radius.
-- [ ] GAME_COMPLETE stops jump worker immediately.
+- [ ] With Accessibility disabled, enabled-but-not-connected, and connected, verify action readiness messages and no unsafe dispatch.
+- [ ] Use **Test Tap** to validate logical-to-physical mapping.
+- [ ] Verify concurrent actions serialize; rejected dispatch, callback cancellation, and callback timeout do not count as success.
+- [ ] Press **Stop Bot** during a wait/gesture callback and confirm no delayed follow-up tap occurs.
+- [ ] Confirm a state-changing action waits for a generation established after callback completion; a frame captured during the gesture must not satisfy the gate.
+- [ ] Verify all fixed-device exceptions separately from logical mapping: the three post-relay absolute points on their calibrated 2400×1080 path, TIME_DEAL at physical `(2000,70)`, and PARTY_RUN_SEASON_REWARDS at physical `(1260,980)`.
 
-## Post-game / results
+## Normal automation workflow
 
-- [ ] GAME_COMPLETE waits 7s, saves normalized image before Finish, then continues.
-- [ ] MYSTERY_BOX first detect taps without saving; second detect waits 3s, saves once, then taps.
-- [ ] Per-round flags/counters reset exactly when a new game begins.
-- [ ] Popup/reward sequence returns to MAINMENU.
+- [ ] Start Bot waits for fresh capture and connected Accessibility, then begins in PRE_GAME.
+- [ ] MAINMENU is revalidated before Friend Life, Quick Lives, or Start Game. Present a blocking popup during revalidation and confirm stale menu work aborts.
+- [ ] PURCHASE_ITEM: validate Play, selected boost found path, 30-second boost timeout path, and retry behavior.
+- [ ] Validate Fast Start priority window, Cookie Relay, optional post-relay sequence, fixed jump count, continuous jumping, and Stop cancellation.
+- [ ] GAME_COMPLETE immediately changes to POST_GAME, resets progress, analyzes results off-loop, requires a fresh re-match before Finish, and honors result-image preference.
+- [ ] Validate Mystery Box late update changes the existing round without double-counting aggregates.
+- [ ] Validate reward popup redetection and unchanged-popup attempt guard; do not expect a hard-coded next-popup chain.
+- [ ] Validate Connection Lost and Inactive only tap Reload and never restart/kill either application.
 
-## Optional features
+## Friend Life and Quick Lives
 
-- [ ] Quick Receive/Send Lives is asked/configured only when enabled, waits 5–6s at MAINMENU and runs once per round.
-- [ ] Friend Life sequence searches template, confirms only when found, and handles multiple buttons without hard-coded blind taps.
-- [ ] Relic, daily, league, treasure, party/settings and announcement handlers work.
+- [ ] Scheduled Friend Life is not due immediately; it queues at the 61-minute interval and begins only at safe MAINMENU.
+- [ ] Manual Friend Life test returns correct stopped/queued/already queued/in-progress state and coalesces safely with scheduled work.
+- [ ] Verify top search, send-region scanning, Send/confirmation interrupt checks, relic filtering, and bottom completion.
+- [ ] Verify swipe acceptance alone is not progress: unchanged verification ROI drives the 30-second no-progress abort; also exercise absolute/top-search bounds where practical.
+- [ ] Confirm only successful Send-button gesture resets game progress, before confirmations.
+- [ ] Force a scheduled failure and verify pending work respects the 15-minute retry-not-before.
+- [ ] Test Quick Receive/Send Lives independently: all-received, none-to-receive, confirmation, interrupt, timeout, and next-round reset paths.
 
-## Recovery
+## Watchdog, recovery, and Telegram
 
-- [ ] CONNECTION_LOST uses reload gesture without force-stopping the game.
-- [ ] INACTIVE uses its configured reload/recovery gesture.
-- [ ] Anti-bot handling is safe and observable; failure stops or requests user help.
-- [ ] Accessibility disabled / capture stopped / stale frame never causes a tap.
+- [ ] Confirm progress timestamps for bot start, detected GAME_COMPLETE, and successful Friend Life Send-button gesture only.
+- [ ] Use the overlay recovery test to exercise confirm-template recovery and the top-right-quarter CLOSE_BUTTON fallback. Confirm its current grayscale `TM_CCOEFF_NORMED` threshold is 0.8 (not alpha-mask SQDIFF), a no-match stops it, and at most three matched taps occur.
+- [ ] During CLOSE_BUTTON recovery, confirm each tap waits for callback success; attempts that continue wait 2 seconds before taking the generation baseline and acquiring a newer frame, while the final attempt skips the retry delay but still acquires a newer frame.
+- [ ] During recovery confirm normal detection/actions are gated; after fallback, the resulting frame and successive fresh frames are checked for MAINMENU for at most 120 seconds, and a match routes to PRE_GAME.
+- [ ] Exercise new progress/Stop/restart during recovery and confirm stale reservation/callback work is discarded.
+- [ ] Configure Telegram without exposing credentials. Test disabled, missing token, missing Chat ID, valid text-only, valid image, network failure, HTTP failure/rate limit, and changed-config cancellation.
+- [ ] At an overdue episode, verify at most one **successfully delivered** alert; failed delivery becomes retry-eligible after 5 minutes. Verify a new progress event permits a later episode.
+- [ ] Send `/help`, `/status`, `/stats`, `/last`, `/boxes`, and `@BotUsername` forms from the configured Chat ID; verify other chats and unsupported/gameplay commands cannot control the bot.
 
-## Result storage and stop behavior
+## Statistics, storage, and diagnostics
 
-- [ ] Result directory is created automatically and filenames include round, stage and timestamp.
-- [ ] Stop Bot cancels state loop and tap workers; no tap occurs after stop.
-- [ ] Stop Capture does not leave ImageReader/VirtualDisplay resources or background callbacks.
-- [ ] Logcat filters `CookieRunBot`, `[BOT]`, `[DETECT]`, `[ACTION]`, `[CAPTURE]`, `[RESULT]`, `[RECOVERY]`, `[ACCESSIBILITY]` show enough evidence to compare with Python `bot_log.txt`.
+- [ ] Each Start Bot creates a new statistics session; opening/closing Statistics does not reset it.
+- [ ] Verify score/coins/XP, round duration, box grades, recent-history limit (50), cumulative totals, and stale old-session analysis rejection.
+- [ ] Toggle debug/result image switches during a run and confirm live save behavior.
+- [ ] Verify result images in `Pictures/CookieRunBot/results/` and no-match pairs in `Pictures/CookieRunBot/debug/` (including legacy storage behavior where supported).
+- [ ] Verify Debug Log refresh/copy/clear/save; saved logs use `Download/RobotRun/` or documented app-specific fallback.
+- [ ] Verify persistent trace path/fallback/rotation and throttled health/DETECT_STALL logging without per-frame spam.
