@@ -27,6 +27,12 @@ object BotRuntime : BotController.Listener {
     fun isRunning(): Boolean = controller?.isRunning() == true
     fun requestFriendLifeTest(): FriendLifeTestRequest =
         controller?.requestFriendLifeTest() ?: FriendLifeTestRequest.BOT_STOPPED
+    fun requestWatchdogRecoveryTest(): WatchdogRecoveryTestRequest =
+        if (controller?.isRunning() == true) {
+            GameProgressWatchdogManager.requestRecoveryTest()
+        } else {
+            WatchdogRecoveryTestRequest.BOT_STOPPED
+        }
     fun diagnostics(): BotControllerDiagnostics = controller?.diagnostics()
         ?: BotControllerDiagnostics(
             running = false,
