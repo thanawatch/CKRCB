@@ -19,6 +19,7 @@ class StateDetector(context: Context) : AutoCloseable {
     private val appContext = context.applicationContext
     private val templates = EnumMap<BotStage, List<Mat>>(BotStage::class.java)
     private val auxiliaryTemplates = mutableMapOf<String, Mat>()
+    private val maskedAuxiliaryTemplates = mutableMapOf<String, MaskedTemplate>()
     private val reusableScreenGray = Mat()
     private val reusableStageMatch = Mat()
 
@@ -75,6 +76,54 @@ class StateDetector(context: Context) : AutoCloseable {
                     match.maxLoc.y.toInt() + roiRect.y,
                     template.cols(),
                     template.rows(),
+                )
+            } finally {
+                result.release()
+            }
+        } finally {
+            roiGray.release()
+            roiRgba.release()
+        }
+    }
+
+    /**
+     * Matches an RGBA PNG template using its alpha channel as an OpenCV mask.
+     * Transparent pixels are ignored. This is intentionally separate from detectTemplate()
+     * so existing TM_CCOEFF_NORMED matching remains unchanged everywhere else.
+     */
+    fun detectTemplateWithAlphaMask(
+        normalizedRgba: Mat,
+        assetName: String,
+        roiRect: Rect,
+        threshold: Double,
+    ): TemplateMatch {
+        val roiRgba = normalizedRgba.submat(roiRect)
+        val roiGray = Mat()
+        try {
+            Imgproc.cvtColor(roiRgba, roiGray, Imgproc.COLOR_RGBA2GRAY)
+            val template = maskedAuxiliaryTemplates.getOrPut(assetName) {
+                loadMaskedGrayTemplate(appContext, "templates/$assetName")
+            }
+            if (roiGray.cols() < template.gray.cols() || roiGray.rows() < template.gray.rows()) {
+                return TemplateMatch(-1.0, false, -1, -1, 0, 0)
+            }
+            val result = Mat()
+            return try {
+                Imgproc.matchTemplate(
+                    roiGray,
+                    template.gray,
+                    result,
+                    Imgproc.TM_CCORR_NORMED,
+                    template.alphaMask,
+                )
+                val match = Core.minMaxLoc(result)
+                TemplateMatch(
+                    match.maxVal,
+                    templateScoreMatches(match.maxVal, threshold),
+                    match.maxLoc.x.toInt() + roiRect.x,
+                    match.maxLoc.y.toInt() + roiRect.y,
+                    template.gray.cols(),
+                    template.gray.rows(),
                 )
             } finally {
                 result.release()
@@ -258,6 +307,8 @@ class StateDetector(context: Context) : AutoCloseable {
         templates.clear()
         auxiliaryTemplates.values.forEach(Mat::release)
         auxiliaryTemplates.clear()
+        maskedAuxiliaryTemplates.values.forEach(MaskedTemplate::release)
+        maskedAuxiliaryTemplates.clear()
         reusableScreenGray.release()
         reusableStageMatch.release()
     }
@@ -309,6 +360,26 @@ class StateDetector(context: Context) : AutoCloseable {
             Imgproc.cvtColor(rgba, gray, Imgproc.COLOR_RGBA2GRAY)
             return gray.clone()
         } finally {
+            gray.release()
+            rgba.release()
+            bitmap.recycle()
+        }
+    }
+
+    private fun loadMaskedGrayTemplate(context: Context, path: String): MaskedTemplate {
+        val bitmap = context.assets.open(path).use(BitmapFactory::decodeStream)
+            ?: error("Unable to decode $path")
+        val rgba = Mat()
+        val gray = Mat()
+        val alpha = Mat()
+        try {
+            Utils.bitmapToMat(bitmap, rgba)
+            Imgproc.cvtColor(rgba, gray, Imgproc.COLOR_RGBA2GRAY)
+            Core.extractChannel(rgba, alpha, 3)
+            check(Core.countNonZero(alpha) > 0) { "Template alpha mask is empty: $path" }
+            return MaskedTemplate(gray.clone(), alpha.clone())
+        } finally {
+            alpha.release()
             gray.release()
             rgba.release()
             bitmap.recycle()
@@ -457,6 +528,16 @@ data class DetectionResult(
     companion object {
         fun notMatched(state: BotStage = BotStage.MAINMENU) =
             DetectionResult(state, -1.0, false, -1, -1, 0, 0)
+    }
+}
+
+private data class MaskedTemplate(
+    val gray: Mat,
+    val alphaMask: Mat,
+) {
+    fun release() {
+        gray.release()
+        alphaMask.release()
     }
 }
 
