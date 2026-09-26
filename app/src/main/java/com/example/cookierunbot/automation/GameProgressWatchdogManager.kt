@@ -84,9 +84,7 @@ object GameProgressWatchdogManager {
     }
 
     fun requestRecoveryTest(): WatchdogRecoveryTestRequest {
-        val requester: (GameProgressRecoveryReservation) -> Unit
-        val reservation: GameProgressRecoveryReservation
-        synchronized(lock) {
+        val request = synchronized(lock) {
             val status = watchdog.status(SystemClock.elapsedRealtime())
             if (!status.running) return WatchdogRecoveryTestRequest.BOT_STOPPED
             if (status.overdue) return WatchdogRecoveryTestRequest.WATCHDOG_OVERDUE
@@ -96,12 +94,14 @@ object GameProgressWatchdogManager {
             if (manualRecoveryReservation != null) {
                 return WatchdogRecoveryTestRequest.ALREADY_RUNNING
             }
-            requester = recoveryRequester ?: return WatchdogRecoveryTestRequest.UNAVAILABLE
+            val requester = recoveryRequester ?: return WatchdogRecoveryTestRequest.UNAVAILABLE
             manualRecoverySequence = if (manualRecoverySequence == Long.MAX_VALUE) 1L else manualRecoverySequence + 1L
-            reservation = GameProgressRecoveryReservation(-manualRecoverySequence)
+            val reservation = GameProgressRecoveryReservation(-manualRecoverySequence)
             manualRecoveryReservation = reservation
             manualRecoveryEpisodeGeneration = watchdog.currentGeneration()
+            requester to reservation
         }
+        val (requester, reservation) = request
 
         return try {
             log(
@@ -133,7 +133,8 @@ object GameProgressWatchdogManager {
         }
     }
 
-    private fun check() {        val now = SystemClock.elapsedRealtime()
+    private fun check() {
+        val now = SystemClock.elapsedRealtime()
         val recovery = watchdog.reserveRecoveryIfDue(now)
         try {
             sendAlertIfDue(now)
