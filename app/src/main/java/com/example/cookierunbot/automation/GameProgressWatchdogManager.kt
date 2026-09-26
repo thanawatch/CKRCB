@@ -13,6 +13,15 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 
+enum class WatchdogRecoveryTestRequest {
+    STARTED,
+    BOT_STOPPED,
+    CAPTURE_STOPPED,
+    ALREADY_RUNNING,
+    WATCHDOG_OVERDUE,
+    UNAVAILABLE,
+}
+
 object GameProgressWatchdogManager {
     private val lock = Any()
     private val watchdog = GameProgressWatchdog()
@@ -21,12 +30,17 @@ object GameProgressWatchdogManager {
     private var notifier: TelegramNotifier? = null
     private var encoder: NoMatchDebugFrameSaver? = null
     private var recoveryRequester: ((GameProgressRecoveryReservation) -> Unit)? = null
+    private var manualRecoverySequence = 0L
+    private var manualRecoveryReservation: GameProgressRecoveryReservation? = null
+    private var manualRecoveryEpisodeGeneration: Long? = null
 
     fun start(context: Context, requestRecovery: (GameProgressRecoveryReservation) -> Unit) = synchronized(lock) {
         appContext = context.applicationContext
         notifier = notifier ?: TelegramNotifier(context.applicationContext)
         encoder = encoder ?: NoMatchDebugFrameSaver(context.applicationContext)
         recoveryRequester = requestRecovery
+        manualRecoveryReservation = null
+        manualRecoveryEpisodeGeneration = null
         watchdog.start(SystemClock.elapsedRealtime())
         scheduler?.shutdownNow()
         scheduler = Executors.newSingleThreadScheduledExecutor { runnable ->
@@ -42,6 +56,8 @@ object GameProgressWatchdogManager {
         scheduler?.shutdownNow()
         scheduler = null
         recoveryRequester = null
+        manualRecoveryReservation = null
+        manualRecoveryEpisodeGeneration = null
         log("[GAME_PROGRESS_WATCHDOG] stopped=true")
     }
 
@@ -58,11 +74,66 @@ object GameProgressWatchdogManager {
 
     fun status(): GameProgressStatus = watchdog.status(SystemClock.elapsedRealtime())
 
-    fun isCurrentRecovery(reservation: GameProgressRecoveryReservation): Boolean =
-        watchdog.isCurrentRecovery(reservation)
+    fun isCurrentRecovery(reservation: GameProgressRecoveryReservation): Boolean {
+        if (reservation.generation >= 0L) return watchdog.isCurrentRecovery(reservation)
+        return synchronized(lock) {
+            manualRecoveryReservation == reservation &&
+                manualRecoveryEpisodeGeneration == watchdog.currentGeneration() &&
+                watchdog.status(SystemClock.elapsedRealtime()).running
+        }
+    }
 
-    private fun check() {
-        val now = SystemClock.elapsedRealtime()
+    fun requestRecoveryTest(): WatchdogRecoveryTestRequest {
+        val requester: (GameProgressRecoveryReservation) -> Unit
+        val reservation: GameProgressRecoveryReservation
+        synchronized(lock) {
+            val status = watchdog.status(SystemClock.elapsedRealtime())
+            if (!status.running) return WatchdogRecoveryTestRequest.BOT_STOPPED
+            if (status.overdue) return WatchdogRecoveryTestRequest.WATCHDOG_OVERDUE
+            if (!LatestFrameProvider.diagnostics().captureRunning) {
+                return WatchdogRecoveryTestRequest.CAPTURE_STOPPED
+            }
+            if (manualRecoveryReservation != null) {
+                return WatchdogRecoveryTestRequest.ALREADY_RUNNING
+            }
+            requester = recoveryRequester ?: return WatchdogRecoveryTestRequest.UNAVAILABLE
+            manualRecoverySequence = if (manualRecoverySequence == Long.MAX_VALUE) 1L else manualRecoverySequence + 1L
+            reservation = GameProgressRecoveryReservation(-manualRecoverySequence)
+            manualRecoveryReservation = reservation
+            manualRecoveryEpisodeGeneration = watchdog.currentGeneration()
+        }
+
+        return try {
+            log(
+                "[GAME_PROGRESS_WATCHDOG_TEST] requested=true timerUnaffected=true " +
+                    "reservation=${reservation.generation}",
+            )
+            requester.invoke(reservation)
+            WatchdogRecoveryTestRequest.STARTED
+        } catch (error: Exception) {
+            finishRecovery(reservation)
+            log("[GAME_PROGRESS_WATCHDOG_TEST] requested=false reason=${error.javaClass.simpleName}")
+            WatchdogRecoveryTestRequest.UNAVAILABLE
+        }
+    }
+
+    fun finishRecovery(reservation: GameProgressRecoveryReservation) {
+        if (reservation.generation >= 0L) return
+        val cleared = synchronized(lock) {
+            if (manualRecoveryReservation != reservation) {
+                false
+            } else {
+                manualRecoveryReservation = null
+                manualRecoveryEpisodeGeneration = null
+                true
+            }
+        }
+        if (cleared) {
+            log("[GAME_PROGRESS_WATCHDOG_TEST] completed=true timerUnaffected=true")
+        }
+    }
+
+    private fun check() {        val now = SystemClock.elapsedRealtime()
         val recovery = watchdog.reserveRecoveryIfDue(now)
         try {
             sendAlertIfDue(now)
