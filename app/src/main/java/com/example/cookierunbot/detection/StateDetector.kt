@@ -87,11 +87,11 @@ class StateDetector(context: Context) : AutoCloseable {
     }
 
     /**
-     * Matches an RGBA PNG template using its alpha channel as an OpenCV mask.
-     * Transparent pixels are ignored. This is intentionally separate from detectTemplate()
-     * so existing TM_CCOEFF_NORMED matching remains unchanged everywhere else.
+     * CLOSE_BUTTON-specific masked matching.
+     * TM_SQDIFF_NORMED is lower-is-better, so a match passes only when score <= threshold.
+     * Transparent PNG pixels are ignored through the alpha mask.
      */
-    fun detectTemplateWithAlphaMask(
+    fun detectTemplateWithAlphaMaskSqDiff(
         normalizedRgba: Mat,
         assetName: String,
         roiRect: Rect,
@@ -105,7 +105,7 @@ class StateDetector(context: Context) : AutoCloseable {
                 loadMaskedGrayTemplate(appContext, "templates/$assetName")
             }
             if (roiGray.cols() < template.gray.cols() || roiGray.rows() < template.gray.rows()) {
-                return TemplateMatch(-1.0, false, -1, -1, 0, 0)
+                return TemplateMatch(1.0, false, -1, -1, 0, 0)
             }
             val result = Mat()
             return try {
@@ -113,15 +113,16 @@ class StateDetector(context: Context) : AutoCloseable {
                     roiGray,
                     template.gray,
                     result,
-                    Imgproc.TM_CCORR_NORMED,
+                    Imgproc.TM_SQDIFF_NORMED,
                     template.alphaMask,
                 )
                 val match = Core.minMaxLoc(result)
+                val score = match.minVal
                 TemplateMatch(
-                    match.maxVal,
-                    templateScoreMatches(match.maxVal, threshold),
-                    match.maxLoc.x.toInt() + roiRect.x,
-                    match.maxLoc.y.toInt() + roiRect.y,
+                    score,
+                    score <= threshold,
+                    match.minLoc.x.toInt() + roiRect.x,
+                    match.minLoc.y.toInt() + roiRect.y,
                     template.gray.cols(),
                     template.gray.rows(),
                 )
