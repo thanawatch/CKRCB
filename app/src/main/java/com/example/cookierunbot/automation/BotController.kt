@@ -443,6 +443,11 @@ class BotController(
                             progressRecoveryTapAndFresh(
                                 runGeneration, reservation, frame, closeCenter,
                                 "GAME_PROGRESS_CLOSE_BUTTON", attempt,
+                                postGestureDelayMs = if (decision == CloseRecoveryDecision.TAP_AND_CONTINUE) {
+                                    GameProgressCloseRecovery.RETRY_DELAY_MS
+                                } else {
+                                    0L
+                                },
                             )
                         } finally {
                             frame.mat.release()
@@ -453,11 +458,6 @@ class BotController(
                             logDiagnostic("[GAME_PROGRESS_CLOSE] attempt=$attempt matched=true action=MAX_ATTEMPTS_REACHED")
                             break
                         }
-                        logDiagnostic(
-                            "[GAME_PROGRESS_CLOSE] attempt=$attempt matched=true " +
-                                "nextAttemptDelayMs=${GameProgressCloseRecovery.RETRY_DELAY_MS}",
-                        )
-                        delayOrStop(GameProgressCloseRecovery.RETRY_DELAY_MS)
                     }
                     logDiagnostic("[GAME_PROGRESS_RECOVERY_ROUTE] closeRecoveryComplete=true next=MAINMENU_CHECK")
                 }
@@ -564,6 +564,7 @@ class BotController(
                         logDiagnostic("[GAME_PROGRESS_RECOVERY] freshGeneration=$freshGeneration resumed_detector=true")
                     }
                 }
+                GameProgressWatchdogManager.finishRecovery(reservation)
             }
         }
     }
@@ -575,6 +576,7 @@ class BotController(
         point: LogicalPoint,
         actionName: String,
         closeAttempt: Int?,
+        postGestureDelayMs: Long = 0L,
     ): ProgressRecoveryFreshFrame? {
         autoTapper.stop(actionName)
         val completion = CountDownLatch(1)
@@ -610,6 +612,16 @@ class BotController(
             )
         }
         if (!gestureComplete || !recoveryRunIsCurrent(runGeneration, reservation)) return null
+        if (postGestureDelayMs > 0L) {
+            if (closeAttempt != null) {
+                logDiagnostic(
+                    "[GAME_PROGRESS_CLOSE] attempt=$closeAttempt matched=true " +
+                        "nextAttemptDelayMs=$postGestureDelayMs",
+                )
+            }
+            delayOrStop(postGestureDelayMs)
+            if (!recoveryRunIsCurrent(runGeneration, reservation)) return null
+        }
         val postTapBaseline = LatestFrameProvider.currentGeneration()
         if (!installProgressRecoveryBaseline(runGeneration, postTapBaseline)) return null
         val fresh = LatestFrameProvider.awaitNextSnapshot(postTapBaseline, PROGRESS_RECOVERY_FRAME_TIMEOUT_MS)
