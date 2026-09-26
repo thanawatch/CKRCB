@@ -453,6 +453,11 @@ class BotController(
                             logDiagnostic("[GAME_PROGRESS_CLOSE] attempt=$attempt matched=true action=MAX_ATTEMPTS_REACHED")
                             break
                         }
+                        logDiagnostic(
+                            "[GAME_PROGRESS_CLOSE] attempt=$attempt matched=true " +
+                                "nextAttemptDelayMs=${GameProgressCloseRecovery.RETRY_DELAY_MS}",
+                        )
+                        delayOrStop(GameProgressCloseRecovery.RETRY_DELAY_MS)
                     }
                     logDiagnostic("[GAME_PROGRESS_RECOVERY_ROUTE] closeRecoveryComplete=true next=MAINMENU_CHECK")
                 }
