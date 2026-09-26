@@ -9,6 +9,7 @@ internal object GameProgressCloseRecovery {
     const val TEMPLATE = "CLOSE_BUTTON_1.png"
     const val MATCH_THRESHOLD = 0.45
     const val MAX_ATTEMPTS = 3
+    const val RETRY_DELAY_MS = 2_000L
 
     fun topRightRoi(width: Int, height: Int): Rect =
         Rect(width / 2, 0, width - width / 2, height / 2)
