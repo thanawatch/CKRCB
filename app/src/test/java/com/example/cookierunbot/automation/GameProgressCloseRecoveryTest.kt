@@ -10,6 +10,10 @@ class GameProgressCloseRecoveryTest {
         assertEquals(0.45, GameProgressCloseRecovery.MATCH_THRESHOLD, 0.0)
     }
 
+    @Test fun closeRecoveryWaitsTwoSecondsBetweenAttempts() {
+        assertEquals(2_000L, GameProgressCloseRecovery.RETRY_DELAY_MS)
+    }
+
     @Test fun topRightRoiUsesFrameDimensions() {
         val even = GameProgressCloseRecovery.topRightRoi(1280, 720)
         assertEquals(640, even.x)
