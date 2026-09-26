@@ -1,138 +1,86 @@
-# CookieRun Bot Android — Python source audit
+# Current Android implementation audit
 
-วันที่ตรวจ: 2026-09-14
+This document is a technical walkthrough of the code at HEAD. It intentionally contains no historical comparison, resolved-bug narrative, or planned feature claims. [AGENTS.md](AGENTS.md) is the operational guide; this file explains the current execution paths.
 
-แหล่งอ้างอิงที่ตรวจ: `C:\bot\cookierun-classic-bot-main` (อ่านอย่างเดียว)  
-โปรเจกต์เป้าหมาย: `C:\bot\CookieRunBotAndroid`
+## Startup and ownership graph
 
-เอกสารนี้เป็น inventory จาก source ปัจจุบัน ไม่ใช่รายการที่สร้างจากความจำ และจะใช้เป็น baseline สำหรับ final parity audit
+1. Android creates `CookieRunBotApplication`; `onCreate()` initializes `PersistentTrace`, OpenCV, `BotRuntime`, `TelegramCommandReceiver`, and runtime diagnostics.
+2. `MainActivity` attaches a `BotController.Listener`, renders runtime/capture diagnostics, and launches the system MediaProjection consent intent.
+3. Successful consent calls `ScreenCaptureService.start()`. The foreground service builds `StateDetector`, starts `ScreenCaptureManager`, creates `BotControlOverlay`, and schedules idle MAINMENU detection every 750 ms. That idle detector explicitly exits while `BotRuntime.isRunning()` to avoid a competing OpenCV pass.
+4. `BotRuntime` owns exactly one `BotController` using application context. Activity detach only removes the UI listener. `ScreenCaptureService.shutdownResources()` dismisses the bubble, stops the bot, closes detector/capture resources, and marks capture stopped.
+5. The overlay builds/persists `BotOptions`; Start invokes `BotRuntime.start(options)`, while Stop invokes `BotRuntime.stop()`.
 
-## Architecture / runtime
+## Capture-to-action trace
 
-| Feature | Python source/function | Trigger / behavior | Android target | Status |
-|---|---|---|---|---|
-| USB/ADB connection | `adb.py:device_connect`, `_get_usb_serial` | ตรวจ USB serial และเชื่อมต่อก่อนเริ่ม | ไม่ใช้ ADB เป็น runtime; ใช้ MediaProjection + Accessibility | NOT APPLICABLE ON ANDROID |
-| ADB capture fallback | `adb.py:device_capture_screen`, `_normalize_phone_screen_with_perf` | `adb -s SERIAL exec-out screencap -p`, crop/resize 1280x720 | MediaProjection latest-frame | NOT APPLICABLE ON ANDROID |
-| scrcpy capture | `capture.py:ScrcpyCaptureBackend`, `capture_screen` | H.264 stream, PyAV decode, เก็บ frame ล่าสุด, fallback ADB | MediaProjection latest-frame | PARTIAL (Android equivalent exists; no Android full parity audit yet) |
-| logical frame | `adb.py:normalize_phone_screen` | crop phone content แล้ว resize 1280x720 | `FrameNormalizer` | DONE (Phase 1) |
-| template matching | `detection.py:get_template_match_score`, `detect_templates` | grayscale + `TM_CCOEFF_NORMED`, threshold 0.8 | `StateDetector` | PARTIAL |
-| console/file logging | `main.py:_install_console_file_logging` | timestamp ทุกข้อความ, UTF-8, flush | Android Logcat/UI status | PARTIAL |
-| stop/cleanup | `main.py` finally, `capture.shutdown_capture` | stop tapper, close capture backend, close log | service/controller lifecycle | PARTIAL |
+`ScreenCaptureManager.start()` obtains MediaProjection and registers callbacks. A dedicated capture thread owns ImageReader/VirtualDisplay resources. `acquireLatestImage()` prevents backlog; the plane's row/pixel strides are copied into a tight reusable RGBA Mat. Current display size and cutout insets produce a `ContentTransform`; `FrameNormalizer.normalize()` crops its 16:9 `contentRect` and resizes to 1280×720. Both raw and normalized Mats are supplied to `LatestFrameProvider.updateFrame()`, which copies only the latest normalized frame, publishes dimensions/timestamps/FPS/transform, increments generation, and wakes waiters.
 
-## Detection templates, ROIs and groups
+Consumers receive cloned ownership through `snapshot()` or `awaitNextSnapshot(afterGeneration, timeout)`. `StateDetector.detectFirst()` converts the screen to reusable grayscale storage, creates each ROI submat, and evaluates loaded template variants using normalized correlation. A match is `score >= 0.8`. Detection results contain stage, score, ROI-relative location, and selected template size.
 
-Threshold: `MATCH_THRESHOLD = 0.8`.  
-All coordinates below are logical 1280x720 coordinates. Regions use `(x1,y1,x2,y2)`.
+A handler requests a logical gesture through `ActionExecutor`. `CoordinateMapper` uses the current `ContentTransform` to map normalized detector/action coordinates into the physical display. `GestureArbiter` grants a single lease; `BotAccessibilityService.dispatchGesture()` reports initial acceptance and later invokes completion/cancellation. `GestureCompletionContext` releases the lease on callback, cancellation, or timeout. Workflows that need visual proof establish their baseline after successful completion and wait for `generation > baseline`.
 
-| Stage/template | ROI | Group / ordering | Android asset/detector |
-|---|---:|---|---|
-| MAINMENU_1 | (154,150,344,225) | PRE_GAME, POST_GAME | asset + detector (Phase 3) |
-| PURCHASE_ITEM_1 | (474,84,602,138) | PRE_GAME | asset + detector (Phase 3) |
-| GAME_START_1 | (500,200,800,500) | IN_GAME | asset + multi-scale detector (Phase 3) |
-| GAME_RELAY_1 | (500,200,800,500) | IN_GAME, priority before other in-game stages | implemented |
-| GAME_COMPLETE_1 | (523,27,757,116) | IN_GAME | implemented |
-| MYSTERY_BOX_1 | (503,46,782,107) | POST_GAME | implemented |
-| CONGRATULATIONS_1/2 | (372,85,909,200) | PRE_GAME | implemented |
-| LEVEL_UP_1 | (481,34,798,130) | PRE_GAME | implemented |
-| RELIC_COMPLETE_1 | (480,63,578,106) | PRE_GAME | implemented |
-| RELIC_CLAIM_1 | (412,72,865,191) | PRE_GAME | implemented |
-| DAILY_CHECKIN_1 | (491,21,792,75) | PRE_GAME | implemented |
-| DAILY_CHECKIN_BOOST_SET_1 | (523,88,754,182) | PRE_GAME | implemented |
-| DAILY_TREASURE_1 | (452,117,824,161) | PRE_GAME | implemented |
-| DAILY_NEW_1 | (432,12,849,78) | PRE_GAME | implemented |
-| ENTER_LEAGUE_1 | (318,235,962,384) | PRE_GAME | implemented |
-| LEAGUE_RESULTS_1 | (512,52,779,105) | PRE_GAME | implemented |
-| ANTI_BOT_1 | (309,10,968,111) | always/recovery | implemented |
-| CONNECTION_LOST_1/2 | (351,203,936,405) | always/recovery | implemented |
-| INACTIVE_1 | (358,247,934,372) | always/recovery | implemented |
-| PREVIOUS_RANK_RESULTS_1 | (454,42,832,115) | PRE_GAME | implemented |
-| TOO_MANY_TREASURES_1 | (353,154,931,476) | PRE_GAME | implemented |
-| OVERTAKE_BREAK_SCORE_1 | (479,64,799,132) | POST_GAME | implemented |
-| PARTY_RUN_1 | (359,44,922,138) | PRE_GAME | implemented |
-| GAME_SETTINGS_1 | (484,62,769,122) | PRE_GAME | implemented |
+## Controller loop and groups
 
-Additional non-stage detection templates and ROIs:
+`BotController.start()` creates a new statistics session and run generation, initializes PRE_GAME state, scheduler/watchdog/popup/no-match fields, and submits `runLoop()` to a single executor. `waitForReadiness()` requires capture running, advancing/fresh frames, Accessibility setting enabled, live service instance, and service connection. The loop owns one `StateDetector` until stop.
 
-| Template | ROI |
-|---|---:|
-| FRIEND_TOP_LEADERBOARD_1 | (149,272,203,574) |
-| FRIEND_BOTTOM_LEADERBOARD_1 | (272,545,610,625) |
-| FRIEND_SEND_LIFE_1 | (580,250,760,650) |
-| NO_LIVES_TO_RECEIVE_1 | (454,223,824,575) |
-| ALL_LIVES_RECEIVED_AND_SENT_1 | (396,267,882,346) |
-| CONFIRM_SEND_LIFE_1 | (640,402,944,515) |
-| BOOST_* (including BOOST_MAGNETIC_AURA_1) | RANDOM_BOOST_REGION (640,470,1160,620) |
+- PRE_GAME and POST_GAME poll the current latest snapshot and sleep 120 ms between ticks.
+- IN_GAME blocks on `awaitNextSnapshot(lastGeneration, 500)` and therefore processes only newly published latest frames.
+- Every tick rechecks run, recovery gate, capture, Accessibility, maximum 1-second frame age, previous-results settling, and minimum fresh generation.
+- `detectFirst()` uses ordered lists from `stagesFor()`. ALWAYS (`CONNECTION_LOST`, `INACTIVE`) is checked in all normal groups. Relic stages are removed when the option is off.
+- No match produces throttled score diagnostics. With debug saving enabled, `NoMatchWatchdog` asks the capture publisher for the next raw/normalized pair and writes it asynchronously; it never triggers taps/restarts/Telegram.
 
-Groups in `config.py`:
+### Current stage order
 
-- `DETECTION_ALWAYS_STAGES`: `CONNECTION_LOST`, `INACTIVE`
-- `PRE_GAME`: congratulations, level/relic/daily/league/party/settings popup handlers, `MAINMENU`, `PURCHASE_ITEM`
-- `IN_GAME`: `GAME_RELAY`, `GAME_COMPLETE`, `GAME_START`
-- `POST_GAME`: `ANTI_BOT`, `OVERTAKE_BREAK_SCORE`, `MYSTERY_BOX`, `MAINMENU`
-- recovery scan intervals: PRE_GAME 60s, IN_GAME 300s, POST_GAME 30s
-- transient button scales: 0.70, 0.80, 0.90, 1.00, 1.10, 1.20, 1.30
+- PRE_GAME after ALWAYS: `CONGRATULATIONS`, `LEVEL_UP`, `RELIC_COMPLETE`, `RELIC_CLAIM`, `DAILY_CHECKIN`, `DAILY_CHECKIN_BOOST_SET`, `DAILY_TREASURE`, `DAILY_NEW`, `ENTER_LEAGUE`, `LEAGUE_RESULTS`, `PREVIOUS_RANK_RESULTS`, `TOO_MANY_TREASURES`, `PARTY_RUN`, `PARTY_RUN_SEASON_REWARDS`, `TIME_DEAL`, `PREVIOUS_RESULTS`, `GAME_SETTINGS`, `MAINMENU`, `PURCHASE_ITEM`.
+- IN_GAME: `GAME_RELAY`, `GAME_COMPLETE`, `GAME_START`, then ALWAYS. The temporary Fast Start path checks `GAME_START`, then ALWAYS.
+- POST_GAME after ALWAYS: `ANTI_BOT`, `OVERTAKE_BREAK_SCORE`, `MYSTERY_BOX`, PRE_GAME reward-popup stages in their existing order, and `MAINMENU`.
 
-## Actions / coordinates
+## Main gameplay trace
 
-Python action functions in `actions.py`:
+- **MAINMENU:** `revalidateMainMenu()` waits for a newer frame, scans ALWAYS and blocking PRE_GAME states, and confirms MAINMENU again. It aborts stale work if another screen wins. Pending scheduled/test Friend Life begins here. Quick Lives may run for a completed round. Start Game is tapped only after applicable workflows and another safe revalidation.
+- **PURCHASE_ITEM:** optional desired boost taps the random item and scans the fixed boost region on fresh frames for up to 30 seconds. The controller then taps Play, increments/initializes the round, marks post-game life work, enters IN_GAME, opens the Fast Start window, and starts jump automation.
+- **GAME_START / GAME_RELAY:** configured owned actions are tapped once per relevant state. Relay may run the explicitly isolated three-point absolute physical sequence. Fixed-count/continuous jump taps are managed by `GameAutoTapper` and stop on lifecycle/state exits.
+- **GAME_COMPLETE:** detection resets progress and commits POST_GAME before result handling. After its current settle time, the collector receives a clone for asynchronous score/coin/XP analysis. A newer frame must still match GAME_COMPLETE before Finish. Optional result saving reads its preference live.
+- **POST_GAME:** Mystery Box saves/classifies and updates the existing round; reward screens are dismissed by specialized or generic handlers. Popup actions use callback/fresh-frame gates where required, return to generic group scanning rather than a predicted chain, and guard unchanged fingerprints against repeated taps.
+- **Recovery states:** Connection Lost and Inactive tap Reload; Anti-bot chooses detected odd cards. No handler force-stops/restarts an app.
 
-`start_game`, `play_game`, `purchase_fast_start`, `purchase_cookie_relay`, `purchase_random_boost`, `purchase_desired_random_boost`, `using_fast_start`, `using_cookie_relay`, `execute_post_cookie_relay_sequence`, `complete_finish`, `accept_mystery_box`, `accept_congratulations`, `accept_level_up`, `accept_daily_checkin`, `accept_daily_checkin_boost_set`, `accept_daily_treasure`, `accept_daily_new`, `accept_enter_league`, `accept_league_results`, `accept_previous_rank_results`, `accept_too_many_treasures`, `accept_overtake_break_score`, `open_relic_complete`, `accept_relic_claim`, `handle_anti_bot`, `handle_connection_lost`, `handle_inactive`, `handle_send_friend_life`, `handle_mainmenu_send_friend_life`, `handle_quick_receive_and_send_lives`, `close_announcement_dialog`, `close_party_run_mode`, `close_game_settings`.
+## Friend Life and Quick Lives audit
 
-Important coordinates (logical):
+`FriendLifeScheduler` separates schedule state, manual test state, in-progress state, and retry-not-before. Scheduled work becomes pending after 61 minutes but starts only from revalidated MAINMENU. Failed scheduled work remains pending with a 15-minute delay; completed work schedules from completion time. A manual test is queued, coalesced with a scheduled trigger when appropriate, rejected if stopped, and reported if already queued/in progress.
 
-- start/play: `(955,650)`, `(895,620)`
-- purchases: `(235,600)`, `(385,600)`, `(535,600)`, purchase `(925,295)`, multi-purchase `(1100,195)`, multi-buy `(640,587)`
-- use Fast Start/Cookie Relay: `(655,340)`
-- post-relay sequence: `(1335,37)`, `(648,427)`, `(648,380)`, circular radius 5
-- finish/popup buttons: `(460,625)`, `(650,645)`, `(640,565)`, `(640,640)`, `(640,660)`, `(640,568)`, `(650,570)`, `(1128,74)`, `(640,460)`, `(640,610)`, `(640,615)`, `(640,545)`, `(465,640)`
-- relic: `(530,110)`, `(640,580)`, close `(1076,154)`
-- recovery reload: `(640,460)` for connection lost/inactive
-- mail/lives: `(686,677)`, `(630,148)`, `(1130,87)`, `(652,612)`, `(640,462)`, `(797,460)`, `(645,463)`
-- friend/leaderboard: `(435,260)`, `(435,620)`, and friend-send confirm `(801,453)`, `(648,460)`
-- party/settings close: `(1214,89)`, `(1116,98)`; announcement `(1127,66)`
+The controller obtains fresh scans of top/bottom/send ROIs. Top search uses bounded upward naturalized paths; traversal uses bounded downward paths. Every accepted swipe waits for callback success, establishes a post-callback generation baseline, obtains a fresh frame, and asks `FriendScrollVerifier` whether the verification ROI actually changed. Send transactions scan interrupts between Send and both confirmations. A successful Send gesture records game progress immediately. Safety decisions are based on visual progress, 30-second no-progress time, 10-minute top search, and 30-minute absolute traversal time.
 
-ADB's Windows mapping is intentionally not an Android requirement: `phone_x = x * 1.5 + 178`, `phone_y = y * 1.5`. Android must use its content-area `CoordinateMapper`.
+Quick Lives is a separate mailbox transaction enabled per-round. It uses `ALL_LIVES_RECEIVED_AND_SENT_1`, `NO_LIVES_TO_RECEIVE_1`, and confirmation templates/policies, its own callback/fresh-frame checks and 120-second bound. Its flags and scheduler state are not shared with Friend Life.
 
-## Startup options and dependencies
+## Watchdog and recovery audit
 
-`bot.py:prompt_user_options` asks:
+`GameProgressWatchdog` is generation/reservation based. `GameProgressWatchdogManager.start()` creates a scheduled single-thread checker, records BOT_START, and checks every 30 seconds. The only subsequent progress reasons are confirmed GAME_COMPLETE and successful Friend Life SEND_BUTTON gesture. At 15 minutes overdue, it independently reserves recovery and alert work.
 
-1. owned Fast Start (use only; no purchase)
-2. owned Cookie Relay (use only; no purchase)
-3. post-Cookie-Relay sequence (only when Cookie Relay is yes)
-4. Desired Random Boost (purchase + use), then boost choice
-5. Detect Relic (open + claim)
-6. Send Friend Life
-7. Receive/Send Lives after each game
-8. Jump by Count; if no, Auto Jump
-9. Number of taps (fixed mode)
-10. Tap interval 100–1000ms (only when either jump mode is enabled)
+The alert captures the latest normalized snapshot, optionally PNG-encodes it, and submits asynchronously to Telegram. Delivery is committed only on HTTP success; failure schedules eligibility 5 minutes later. A successful alert suppresses more alerts until new progress starts another episode.
 
-Jump modes are mutually exclusive. Fixed mode waits `FIXED_TAP_START_DELAY = 1.7s`, uses `AUTO_TAP_POSITION=(108,600)` and physical radius 100px (canonical radius 100/1.5). Continuous mode runs on a cancellable worker until game complete/connection lost/exit. Both use circular randomization, not independent square jitter.
+Recovery is handed to `BotController` and executed on its recovery executor. A current run/reservation check activates `ProgressRecoveryGate`, blocking normal dispatch. The workflow first seeks `CONFIRM_SEND_LIFE_1`; if absent, top-right `CLOSE_BUTTON_1` fallback is bounded to three attempts with 2-second retry delays. Callback success plus a newer frame is mandatory after every tap. It then scans successive fresh frames for MAINMENU for at most 120 seconds; a match routes the normal controller to PRE_GAME. Completion clears only the matching reservation/gate.
 
-## Delays, timers, flags and counters
+## Configuration and UI audit
 
-- random action waits generally 0.8–1.4s; use actions 0.8–1.2s; purchase confirmation 1–2s
-- GAME_START immediate polling timeout 8s; no artificial fast-poll sleep beyond capture latency
-- post-relay wait 2–4s, then 0.6–2s and 0.6–2s; circular radius 5
-- result image waits: GAME_COMPLETE 7s before save; second MYSTERY_BOX detect 3s before save; mystery accept then 3s
-- Quick Lives after MAINMENU waits random 5–6s
-- next-game delay random 2–3s; initial MAINMENU refresh wait 5s
-- relic close wait 10–15s; inactive 10–15s; anti-bot 10–15s
-- session reset interval random 5400–10800s, app-reset legacy path in Python
-- per round: `round_number`, `game_start_detected_for_round`, `post_relay_sequence_done`, `game_complete_image_saved_for_round`, `mystery_box_image_saved_for_round`, `mystery_box_detect_count_for_round`, auto tap worker state
-- main-menu/session: `last_stage`, `detection_group`, `last_detected_time`, `lives_pending_after_game`, `lives_done_for_current_round`, `send_friend_life_checked_for_this_mainmenu`, relay best/debug data
-- stop paths: KeyboardInterrupt, exception, bot exit; tap worker is stopped in `finally`
+`BotOptions` validates tap interval 100–1000 ms, positive fixed jump count, and the dependency of post-relay sequence on Cookie Relay. `BotOptionsStore` persists all overlay fields in SharedPreferences. Start takes an immutable option snapshot. Debug/result image switches also write immediately and are read dynamically by save sites; other edited controls require a new Start to affect the controller.
 
-## Capture/debug/result behavior
+`MainActivity` is a programmatic diagnostic screen; `BotControlOverlay`, `StatisticsActivity`, `DebugLogActivity`, and `TelegramSettingsActivity` are also programmatic UI. There are no layout XML files. Statistics refresh every second without changing session state. Debug Log supports copy/clear/save. Telegram settings support enable, token/Chat ID, image/text preferences, save, and a manual test message.
 
-- `debug.py:save_debug_screen` writes `debug_screen.png`.
-- `detection.py:save_debug_match` writes debug regions for transient detections.
-- `debug.py:save_result_image` creates `results/round_<n>_<stage>_<timestamp>.png` from the normalized frame.
-- GAME_COMPLETE: stop jump worker → wait 7s → capture latest normalized frame → save once → finish.
-- MYSTERY_BOX: first detect taps without saving; second detect waits 3s, saves once, then taps.
-- `main.py` wraps `print` with timestamped UTF-8 `bot_log.txt` and flushes each line.
+## Statistics, storage, and diagnostics audit
 
-## Android implementation targets
+`RoundResultCollector` owns one analyzer executor and snapshots `RoundResultStore.sessionGeneration()`. It uses `ResultNumberDetector` and `MysteryBoxClassifier`; results from an old session generation are discarded. `RoundResultStore` synchronizes access, retains 50 recent rounds, and maintains aggregate contribution records so replacement updates contribute only a delta.
 
-The native equivalent must keep this pipeline: MediaProjection foreground service → latest normalized frame only → OpenCV detector → grouped state machine → cancellable ActionExecutor → AccessibilityService. ADB/scrcpy are not runtime dependencies of the APK. Features not yet implemented are explicitly listed in `PORTING_STATUS.md`.
+`PublicImageStore` uses MediaStore/public collections on modern Android and legacy public paths where applicable. Results go to `Pictures/CookieRunBot/results`; no-match pairs go to `Pictures/CookieRunBot/debug`. `DebugLogStore` bounds memory at 500 messages. `RuntimeDiagnosticsLogger` emits throttled health/DETECT_STALL context. `PersistentTrace` writes/rotates an app-specific cold-start trace. None of these diagnostic signals authorize recovery actions beyond the explicitly wired progress watchdog.
+
+## Telegram audit
+
+`TelegramConfigStore` stores nonsecret settings in SharedPreferences and delegates token encryption to `TelegramSecureTokenStore` (AES-GCM with an Android Keystore key); it migrates a legacy plaintext preference if encountered. `TelegramNotifier` uses a single scheduled executor, bounded HTTP timeouts, token-redacted logging, and retry handling for command replies. Gameplay does not wait for it.
+
+`TelegramCommandReceiver` long-polls `getUpdates`, persists update offset, parses only `/help`, `/status`, `/stats`, `/last`, and `/boxes`, and ignores unauthorized Chat IDs. Replies capture a hash identity of the authorizing token plus Chat ID; a retry cancels if current settings differ. The receiver does not implement gameplay commands.
+
+## Build and verification audit
+
+The app module uses Android Gradle Plugin 8.10.1, Kotlin 2.1.20, Gradle wrapper 8.11.1, Java/Kotlin 17, compile/target SDK 36, min SDK 26, Activity KTX 1.10.1, OpenCV 4.13.0, and JUnit 4.13.2. Debug signing switches to the `ci` config only when all four signing environment variables are present. Release minification is disabled and no release signing is declared.
+
+`.github/workflows/build-apk.yml` is manual. It checks out, prepares Java/Gradle/API 36, restores and validates a secret-backed keystore, runs `./gradlew testDebugUnitTest`, runs `assembleDebug`, verifies the signature with build-tools 35.0.0, and uploads the debug APK for 14 days.
+
+Use `./gradlew test`, `./gradlew lint`, and `./gradlew assembleDebug`; then perform the real-device checks in [ANDROID_TEST_CHECKLIST.md](ANDROID_TEST_CHECKLIST.md).
