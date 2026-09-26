@@ -83,6 +83,8 @@ class GameProgressWatchdog(
     @Synchronized fun isCurrentRecovery(reservation: GameProgressRecoveryReservation): Boolean =
         running && recoveryReserved && reservation.generation == generation
 
+    @Synchronized fun currentGeneration(): Long = generation
+
     @Synchronized fun confirmDelivered(reservation: GameProgressAlertReservation): Boolean {
         if (!reservationCurrent(reservation)) return false
         alertDelivered = true
