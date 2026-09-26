@@ -192,6 +192,32 @@ class BotControlOverlay(private val context: Context) {
                 panelStatus.text = message
             }
         }, matchWidth())
+        panel.addView(Button(context).apply {
+            text = "Test Watchdog Recovery Now"
+            setOnClickListener {
+                // Collapse the overlay first so the manual recovery scans the game,
+                // not the expanded control panel. The real 15-minute watchdog timer
+                // and delivery state are intentionally untouched.
+                setExpanded(false)
+                handler.postDelayed({
+                    val message = when (BotRuntime.requestWatchdogRecoveryTest()) {
+                        WatchdogRecoveryTestRequest.STARTED ->
+                            "Watchdog recovery test started; 15-minute timer unchanged"
+                        WatchdogRecoveryTestRequest.BOT_STOPPED ->
+                            "Start Bot first"
+                        WatchdogRecoveryTestRequest.CAPTURE_STOPPED ->
+                            "Start Screen Capture first"
+                        WatchdogRecoveryTestRequest.ALREADY_RUNNING ->
+                            "Watchdog recovery test already running"
+                        WatchdogRecoveryTestRequest.WATCHDOG_OVERDUE ->
+                            "Real watchdog is already overdue; test not started"
+                        WatchdogRecoveryTestRequest.UNAVAILABLE ->
+                            "Watchdog recovery test unavailable"
+                    }
+                    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                }, WATCHDOG_TEST_OVERLAY_SETTLE_MS)
+            }
+        }, matchWidth())
         addSwitch(quickLives, "Receive/Send Lives after each game", options.receiveSendLivesAfterEachGame)
         addSwitch(saveDebugImages, "Save NO_MATCH Debug Images", options.saveDebugImages)
         addSwitch(saveResultImages, "Save GAME_COMPLETE / MYSTERY_BOX Images", options.saveResultImages)
@@ -523,6 +549,7 @@ class BotControlOverlay(private val context: Context) {
 
     companion object {
         private const val STATUS_UPDATE_MS = 500L
+        private const val WATCHDOG_TEST_OVERLAY_SETTLE_MS = 300L
         private const val COLLAPSED_FLAGS =
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
