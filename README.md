@@ -19,7 +19,7 @@ From the repository root:
 ./gradlew assembleDebug
 ```
 
-Windows PowerShell equivalents use `gradlew.bat`. The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+Windows PowerShell equivalents use `gradlew.bat`. Gradle initially writes `app/build/outputs/apk/debug/app-debug.apk`. **GitHub Actions downloads are renamed automatically after signature verification**: both the Artifact ZIP and the APK inside include `RobotRun-v<versionName>-vc<versionCode>-g<shortCommit>-run<runNumber>-a<attempt>-signed-debug`. For example (illustrative): `RobotRun-v1.1.3-vc5-gca0ea4f-run123-a1-signed-debug.apk`. This allows multiple builds of the same app version to coexist without confusing `app-debug.apk` files; it does not change the Android app identity, release version, or signing certificate. A local Android Studio/Gradle build still produces the default `app-debug.apk` unless separately renamed.
 
 The app module optionally signs the debug build with a CI keystore only when all required `ANDROID_KEYSTORE_*` environment variables are set. The manual GitHub Actions workflow tests, creates and verifies that signed debug APK, then uploads it as a 14-day artifact. No release signing/publishing workflow is defined.
 

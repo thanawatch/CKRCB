@@ -105,10 +105,61 @@ jobs:
 
           "$APKSIGNER" verify --verbose --print-certs "$APK"
 
-      - name: Upload signed debug APK
+      # Keep the Gradle output name stable for apksigner, but give the downloaded
+      # artifact AND the APK inside it a unique, traceable version/build name.
+      - name: Give signed APK a versioned download filename
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import re
+          import shutil
+
+          output_dir = pathlib.Path("app/build/outputs/apk/debug")
+          metadata = json.loads((output_dir / "output-metadata.json").read_text(encoding="utf-8"))
+          elements = metadata.get("elements", [])
+          if len(elements) != 1:
+              raise SystemExit("Expected exactly one debug APK output.")
+
+          element = elements[0]
+          version_name = str(element["versionName"])
+          version_code = int(element["versionCode"])
+          if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,47}", version_name) or version_code <= 0:
+              raise SystemExit("Invalid APK version metadata.")
+
+          output_file = pathlib.Path(element["outputFile"])
+          if output_file.name != str(output_file) or output_file.suffix != ".apk":
+              raise SystemExit("Unexpected APK output path.")
+          source = output_dir / output_file
+          if not source.is_file():
+              raise SystemExit("Signed debug APK was not found.")
+
+          short_sha = os.environ["GITHUB_SHA"][:7]
+          run_number = os.environ["GITHUB_RUN_NUMBER"]
+          attempt = os.environ["GITHUB_RUN_ATTEMPT"]
+          stem = (
+              f"RobotRun-v{version_name}-vc{version_code}-g{short_sha}"
+              f"-run{run_number}-a{attempt}-signed-debug"
+          )
+          destination_dir = pathlib.Path("dist")
+          destination_dir.mkdir(exist_ok=True)
+          destination = destination_dir / f"{stem}.apk"
+          shutil.copy2(source, destination)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              print(f"artifact_name={stem}", file=output)
+              print(f"apk_path={destination.as_posix()}", file=output)
+          print(f"Download file: {destination}")
+          PY
+
+      - name: Upload versioned signed debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: RobotRun-debug-signed-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: ${{ steps.package.outputs.artifact_name }}
+          path: ${{ steps.package.outputs.apk_path }}
           if-no-files-found: error
           retention-days: 14
