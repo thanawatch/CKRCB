@@ -4,7 +4,6 @@ import com.example.cookierunbot.detection.TemplateMatch
 import kotlin.math.hypot
 import kotlin.random.Random
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -21,9 +20,26 @@ class GameProgressRecoveryTest {
         assertNull(GameProgressRecovery.centerIfMatched(TemplateMatch(0.1, false, 640, 402, 200, 100)))
     }
 
-    @Test fun closeButtonIsFallbackOnlyWhenConfirmDoesNotMatch() {
-        assertFalse(GameProgressRecovery.shouldRunCloseFallback(confirmMatched = true))
-        assertTrue(GameProgressRecovery.shouldRunCloseFallback(confirmMatched = false))
+    @Test fun confirmRepeatsAfterSuccessfulFirstAndSecondMatches() {
+        assertEquals(ConfirmRecoveryDecision.TAP_AND_CONTINUE, GameProgressRecovery.decision(1, true))
+        assertEquals(ConfirmRecoveryDecision.TAP_AND_CONTINUE, GameProgressRecovery.decision(2, true))
+        assertEquals(3, GameProgressRecovery.MAX_ATTEMPTS)
+        assertEquals(2_000L, GameProgressRecovery.RETRY_DELAY_MS)
+    }
+
+    @Test fun confirmStopsScanningOnFirstMissingMatchSoCloseCanRunNext() {
+        assertEquals(ConfirmRecoveryDecision.STOP_NO_MATCH, GameProgressRecovery.decision(1, false))
+        assertEquals(ConfirmRecoveryDecision.STOP_NO_MATCH, GameProgressRecovery.decision(2, false))
+        assertEquals(ConfirmRecoveryDecision.STOP_NO_MATCH, GameProgressRecovery.decision(3, false))
+    }
+
+    @Test fun thirdConfirmedMatchIsLastConfirmTapThenCloseRunsNext() {
+        assertEquals(ConfirmRecoveryDecision.TAP_AND_STOP, GameProgressRecovery.decision(3, true))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun confirmNeverAllowsFourthAttempt() {
+        GameProgressRecovery.decision(4, true)
     }
 
     @Test fun circularLogicalJitterNeverExceedsRadiusFive() {

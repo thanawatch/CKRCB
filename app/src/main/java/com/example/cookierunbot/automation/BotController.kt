@@ -390,95 +390,110 @@ class BotController(
                 if (!recoveryRunIsCurrent(runGeneration, reservation) ||
                     !LatestFrameProvider.diagnostics().captureRunning
                 ) return
-                val frameWidth = initialFrame.mat.cols()
-                val frameHeight = initialFrame.mat.rows()
-                val match = detector.detectTemplate(
-                    initialFrame.mat,
-                    GameProgressRecovery.TEMPLATE,
-                    Rect(0, 0, frameWidth, frameHeight),
-                )
-                logDiagnostic(
-                    "[GAME_PROGRESS_RECOVERY] template=CONFIRM_SEND_LIFE scan=FULL_FRAME " +
-                        "frameSize=${frameWidth}x${frameHeight} matched=${match.matched} " +
-                        "score=${format(match.score)}",
-                )
                 var lastPostTapBaseline = -1L
-                val center = GameProgressRecovery.centerIfMatched(match)
-                if (center != null) {
-                    logDiagnostic("[GAME_PROGRESS_RECOVERY_ROUTE] confirmMatched=true next=MAINMENU_CHECK")
+                for (attempt in 1..GameProgressRecovery.MAX_ATTEMPTS) {
+                    if (!recoveryRunIsCurrent(runGeneration, reservation) ||
+                        !LatestFrameProvider.diagnostics().captureRunning
+                    ) return
+                    val frame = requireNotNull(currentFrame)
+                    val match = detector.detectTemplate(
+                        frame.mat,
+                        GameProgressRecovery.TEMPLATE,
+                        Rect(0, 0, frame.mat.cols(), frame.mat.rows()),
+                    )
+                    val decision = GameProgressRecovery.decision(attempt, match.matched)
+                    logDiagnostic(
+                        "[GAME_PROGRESS_CONFIRM] attempt=$attempt scan=FULL_FRAME " +
+                            "frameSequence=${frame.generation} frameSize=${frame.mat.cols()}x${frame.mat.rows()} " +
+                            "matched=${match.matched} score=${format(match.score)} " +
+                            "decision=$decision",
+                    )
+                    if (decision == ConfirmRecoveryDecision.STOP_NO_MATCH) break
+                    val center = requireNotNull(GameProgressRecovery.centerIfMatched(match))
                     val point = GameProgressRecovery.pointInCircle(center)
                     logDiagnostic(
-                        "[GAME_PROGRESS_RECOVERY] match=(${match.x},${match.y},${match.width},${match.height}) " +
+                        "[GAME_PROGRESS_CONFIRM] attempt=$attempt " +
+                            "match=(${match.x},${match.y},${match.width},${match.height}) " +
                             "center=(${center.x},${center.y}) tapRadius=5 " +
                             "logical=(${point.x},${point.y})",
                     )
-                    val frameForTap = requireNotNull(currentFrame)
                     currentFrame = null
                     val fresh = try {
                         progressRecoveryTapAndFresh(
-                            runGeneration, reservation, frameForTap, point,
+                            runGeneration, reservation, frame, point,
                             "GAME_PROGRESS_CONFIRM_SEND_LIFE", null,
+                            postGestureDelayMs = if (decision == ConfirmRecoveryDecision.TAP_AND_CONTINUE) {
+                                GameProgressRecovery.RETRY_DELAY_MS
+                            } else {
+                                0L
+                            },
                         )
                     } finally {
-                        frameForTap.mat.release()
+                        frame.mat.release()
+                    } ?: return // Failed gesture / missing fresh frame: never continue from a stale screenshot.
+                    currentFrame = fresh.snapshot
+                    lastPostTapBaseline = fresh.postTapBaseline
+                    logDiagnostic(
+                        "[GAME_PROGRESS_CONFIRM] attempt=$attempt gestureComplete=true " +
+                            "postTapBaseline=${fresh.postTapBaseline} freshGeneration=${fresh.snapshot.generation}",
+                    )
+                    if (decision == ConfirmRecoveryDecision.TAP_AND_STOP) {
+                        logDiagnostic("[GAME_PROGRESS_CONFIRM] attempt=$attempt action=MAX_ATTEMPTS_REACHED")
+                        break
+                    }
+                }
+                // Always attempt Close after the Confirm scan loop, whether Confirm was
+                // absent immediately, disappeared after a tap, or reached three taps.
+                logDiagnostic("[GAME_PROGRESS_RECOVERY_ROUTE] confirmRecoveryComplete=true next=CLOSE_BUTTON")
+                for (attempt in 1..GameProgressCloseRecovery.MAX_ATTEMPTS) {
+                    if (!recoveryRunIsCurrent(runGeneration, reservation) ||
+                        !LatestFrameProvider.diagnostics().captureRunning
+                    ) return
+                    val frame = requireNotNull(currentFrame)
+                    val roi = GameProgressCloseRecovery.topRightRoi(frame.mat.cols(), frame.mat.rows())
+                    val closeMatch = detector.detectTemplate(
+                        frame.mat,
+                        GameProgressCloseRecovery.TEMPLATE,
+                        roi,
+                        GameProgressCloseRecovery.MATCH_THRESHOLD,
+                    )
+                    val decision = GameProgressCloseRecovery.decision(attempt, closeMatch.matched)
+                    logDiagnostic(
+                        "[GAME_PROGRESS_CLOSE] attempt=$attempt scan=TOP_RIGHT matched=${closeMatch.matched} " +
+                            "score=${format(closeMatch.score)} threshold=${format(GameProgressCloseRecovery.MATCH_THRESHOLD)} " +
+                            "method=TM_CCOEFF_NORMED rule=score>=threshold" +
+                            if (decision == CloseRecoveryDecision.STOP_NO_MATCH) " action=STOP" else "",
+                    )
+                    if (decision == CloseRecoveryDecision.STOP_NO_MATCH) break
+                    val closeCenter = requireNotNull(GameProgressCloseRecovery.centerIfMatched(closeMatch))
+                    logDiagnostic(
+                        "[GAME_PROGRESS_CLOSE] attempt=$attempt roi=(${roi.x},${roi.y}," +
+                            "${roi.x + roi.width},${roi.y + roi.height}) " +
+                            "match=(${closeMatch.x},${closeMatch.y},${closeMatch.width},${closeMatch.height}) " +
+                            "center=(${closeCenter.x},${closeCenter.y})",
+                    )
+                    currentFrame = null
+                    val fresh = try {
+                        progressRecoveryTapAndFresh(
+                            runGeneration, reservation, frame, closeCenter,
+                            "GAME_PROGRESS_CLOSE_BUTTON", attempt,
+                            postGestureDelayMs = if (decision == CloseRecoveryDecision.TAP_AND_CONTINUE) {
+                                GameProgressCloseRecovery.RETRY_DELAY_MS
+                            } else {
+                                0L
+                            },
+                        )
+                    } finally {
+                        frame.mat.release()
                     } ?: return
                     currentFrame = fresh.snapshot
                     lastPostTapBaseline = fresh.postTapBaseline
-                } else {
-                    logDiagnostic("[GAME_PROGRESS_RECOVERY_ROUTE] confirmMatched=false next=CLOSE_BUTTON")
-                }
-
-                if (GameProgressRecovery.shouldRunCloseFallback(match.matched)) {
-                    for (attempt in 1..GameProgressCloseRecovery.MAX_ATTEMPTS) {
-                        if (!recoveryRunIsCurrent(runGeneration, reservation) ||
-                            !LatestFrameProvider.diagnostics().captureRunning
-                        ) return
-                        val frame = requireNotNull(currentFrame)
-                        val roi = GameProgressCloseRecovery.topRightRoi(frame.mat.cols(), frame.mat.rows())
-                        val closeMatch = detector.detectTemplate(
-                            frame.mat,
-                            GameProgressCloseRecovery.TEMPLATE,
-                            roi,
-                            GameProgressCloseRecovery.MATCH_THRESHOLD,
-                        )
-                        val decision = GameProgressCloseRecovery.decision(attempt, closeMatch.matched)
-                        logDiagnostic(
-                            "[GAME_PROGRESS_CLOSE] attempt=$attempt scan=TOP_RIGHT matched=${closeMatch.matched} " +
-                                "score=${format(closeMatch.score)} threshold=${format(GameProgressCloseRecovery.MATCH_THRESHOLD)} " +
-                                "method=TM_CCOEFF_NORMED rule=score>=threshold" +
-                                if (decision == CloseRecoveryDecision.STOP_NO_MATCH) " action=STOP" else "",
-                        )
-                        if (decision == CloseRecoveryDecision.STOP_NO_MATCH) break
-                        val closeCenter = requireNotNull(GameProgressCloseRecovery.centerIfMatched(closeMatch))
-                        logDiagnostic(
-                            "[GAME_PROGRESS_CLOSE] attempt=$attempt roi=(${roi.x},${roi.y}," +
-                                "${roi.x + roi.width},${roi.y + roi.height}) " +
-                                "match=(${closeMatch.x},${closeMatch.y},${closeMatch.width},${closeMatch.height}) " +
-                                "center=(${closeCenter.x},${closeCenter.y})",
-                        )
-                        currentFrame = null
-                        val fresh = try {
-                            progressRecoveryTapAndFresh(
-                                runGeneration, reservation, frame, closeCenter,
-                                "GAME_PROGRESS_CLOSE_BUTTON", attempt,
-                                postGestureDelayMs = if (decision == CloseRecoveryDecision.TAP_AND_CONTINUE) {
-                                    GameProgressCloseRecovery.RETRY_DELAY_MS
-                                } else {
-                                    0L
-                                },
-                            )
-                        } finally {
-                            frame.mat.release()
-                        } ?: return
-                        currentFrame = fresh.snapshot
-                        lastPostTapBaseline = fresh.postTapBaseline
-                        if (decision == CloseRecoveryDecision.TAP_AND_STOP) {
-                            logDiagnostic("[GAME_PROGRESS_CLOSE] attempt=$attempt matched=true action=MAX_ATTEMPTS_REACHED")
-                            break
-                        }
+                    if (decision == CloseRecoveryDecision.TAP_AND_STOP) {
+                        logDiagnostic("[GAME_PROGRESS_CLOSE] attempt=$attempt matched=true action=MAX_ATTEMPTS_REACHED")
+                        break
                     }
-                    logDiagnostic("[GAME_PROGRESS_RECOVERY_ROUTE] closeRecoveryComplete=true next=MAINMENU_CHECK")
                 }
+                logDiagnostic("[GAME_PROGRESS_RECOVERY_ROUTE] closeRecoveryComplete=true next=MAINMENU_CHECK")
                 if (lastPostTapBaseline >= 0L) {
                     finalPostTapBaseline = lastPostTapBaseline
                     finalFreshGeneration = requireNotNull(currentFrame).generation

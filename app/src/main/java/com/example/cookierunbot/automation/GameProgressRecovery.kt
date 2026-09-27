@@ -9,12 +9,22 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
 
+internal enum class ConfirmRecoveryDecision { STOP_NO_MATCH, TAP_AND_CONTINUE, TAP_AND_STOP }
+
 internal object GameProgressRecovery {
     const val TEMPLATE = "CONFIRM_SEND_LIFE_1.png"
     const val RADIUS_LOGICAL = 5.0
 
-    /** A matched CONFIRM owns this incident even if its gesture subsequently fails. */
-    fun shouldRunCloseFallback(confirmMatched: Boolean): Boolean = !confirmMatched
+    const val MAX_ATTEMPTS = 3
+    const val RETRY_DELAY_MS = 2_000L
+
+    /** Each attempt scans the current fresh frame. Absence ends the Confirm loop, not recovery. */
+    fun decision(attempt: Int, matched: Boolean): ConfirmRecoveryDecision {
+        require(attempt in 1..MAX_ATTEMPTS)
+        if (!matched) return ConfirmRecoveryDecision.STOP_NO_MATCH
+        return if (attempt == MAX_ATTEMPTS) ConfirmRecoveryDecision.TAP_AND_STOP
+        else ConfirmRecoveryDecision.TAP_AND_CONTINUE
+    }
 
     fun centerIfMatched(match: TemplateMatch): LogicalPoint? =
         if (match.matched) LogicalPoint(match.x + match.width / 2, match.y + match.height / 2)

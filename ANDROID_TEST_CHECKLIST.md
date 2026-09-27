@@ -65,8 +65,9 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 ## Watchdog, recovery, and Telegram
 
 - [ ] Confirm progress timestamps for bot start, detected GAME_COMPLETE, and successful Friend Life Send-button gesture only.
-- [ ] Use the overlay recovery test to exercise confirm-template recovery and the top-right-quarter CLOSE_BUTTON fallback. Confirm its current grayscale `TM_CCOEFF_NORMED` threshold is 0.8 (not alpha-mask SQDIFF), a no-match stops it, and at most three matched taps occur.
-- [ ] During CLOSE_BUTTON recovery, confirm each tap waits for callback success; attempts that continue wait 2 seconds before taking the generation baseline and acquiring a newer frame, while the final attempt skips the retry delay but still acquires a newer frame.
+- [ ] Use the overlay recovery test to verify the full-frame CONFIRM_SEND_LIFE loop. Test no match on the first scan, a match then disappearance, and three consecutive matches: each branch must continue into CLOSE_BUTTON. Confirm requires a successful gesture and fresh frame before each rescan, allows at most three taps, and preserves the logical radius-5 point selection.
+- [ ] Verify CONFIRM and CLOSE continuing attempts each wait 2 seconds after a successful callback before taking a fresh-frame baseline. The third matched tap skips retry delay but still requires a newer frame. Failed gesture/timeout must abort without tapping from an old frame.
+- [ ] Verify the top-right-quarter CLOSE_BUTTON stage still uses grayscale `TM_CCOEFF_NORMED` at threshold 0.8 (not alpha-mask SQDIFF); its first no-match ends only the Close loop, and a maximum of three matched taps is preserved.
 - [ ] During recovery confirm normal detection/actions are gated; after fallback, the resulting frame and successive fresh frames are checked for MAINMENU for at most 120 seconds, and a match routes to PRE_GAME.
 - [ ] Exercise new progress/Stop/restart during recovery and confirm stale reservation/callback work is discarded.
 - [ ] Configure Telegram without exposing credentials. Test disabled, missing token, missing Chat ID, valid text-only, valid image, network failure, HTTP failure/rate limit, and changed-config cancellation.
