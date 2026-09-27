@@ -3504,11 +3504,13 @@ class BotController(
 
     private fun handleNoMatchDiagnostics(detector: StateDetector, frame: FrameSnapshot) {
         val now = SystemClock.elapsedRealtime()
-        val deferHeavyScoring = options.performanceProfile == PerformanceProfile.REDFINGER_OPTIMIZED &&
-            isFastStartPriorityWindow()
+        val deferHeavyScoring = RedfingerPerformancePolicy.deferDetailedNoMatchScoring(
+            options.performanceProfile, group,
+        )
         if (deferHeavyScoring && now - lastNoMatchDiagnosticAt >= NO_MATCH_DIAGNOSTIC_INTERVAL_MS) {
             logDiagnostic(
-                "[NO_MATCH PERF] heavyScoringDeferred=true logIntervalMs=$NO_MATCH_DIAGNOSTIC_INTERVAL_MS " +
+                "[NO_MATCH PERF] heavyScoringDeferred=true group=${group.name} " +
+                    "logIntervalMs=$NO_MATCH_DIAGNOSTIC_INTERVAL_MS " +
                     "detectionThrottled=false",
             )
             lastNoMatchDiagnosticAt = now

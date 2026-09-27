@@ -11,8 +11,11 @@ unchanged.
 
 The Redfinger profile currently makes three deliberately narrow changes:
 
-1. It defers the expensive all-stage NO_MATCH score report during the existing eight-second
-   GAME_START priority window. Detection itself and prolonged-NO_MATCH image capture continue.
+1. It defers the expensive all-stage NO_MATCH score report throughout `IN_GAME`, including the
+   period waiting for GAME_RELAY after Fast Start. The detailed rescan previously occupied the
+   detector thread for roughly 0.8–2 seconds per report in a Redfinger run. Detection itself,
+   the lightweight deferral log, and prolonged-NO_MATCH image capture continue. Legacy and
+   detailed PRE_GAME/POST_GAME score reports are unchanged.
 2. It replaces `INTER_AREA` resize with `Mat.copyTo` only when the source and content rectangle are
    exactly `(0,0,1280,720)`. A copy is pixel-equivalent for this 1:1 geometry and retains independent
    destination ownership. Every crop, inset, offset, or other resolution uses the original path.

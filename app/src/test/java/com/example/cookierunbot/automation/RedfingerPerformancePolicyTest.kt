@@ -19,6 +19,30 @@ class RedfingerPerformancePolicyTest {
     }
 
     @Test
+    fun detailedNoMatchScoringDoesNotInterruptOptimizedGameplay() {
+        assertTrue(
+            RedfingerPerformancePolicy.deferDetailedNoMatchScoring(
+                PerformanceProfile.REDFINGER_OPTIMIZED, DetectionGroup.IN_GAME,
+            ),
+        )
+        assertFalse(
+            RedfingerPerformancePolicy.deferDetailedNoMatchScoring(
+                PerformanceProfile.REDFINGER_OPTIMIZED, DetectionGroup.PRE_GAME,
+            ),
+        )
+        assertFalse(
+            RedfingerPerformancePolicy.deferDetailedNoMatchScoring(
+                PerformanceProfile.REDFINGER_OPTIMIZED, DetectionGroup.POST_GAME,
+            ),
+        )
+        assertFalse(
+            RedfingerPerformancePolicy.deferDetailedNoMatchScoring(
+                PerformanceProfile.LEGACY, DetectionGroup.IN_GAME,
+            ),
+        )
+    }
+
+    @Test
     fun shortRoundCanDrainAtGameStartCompletion() {
         val metrics = FastStartAttemptMetrics()
         metrics.record(durationNanos = 12L, skipped = 2L)

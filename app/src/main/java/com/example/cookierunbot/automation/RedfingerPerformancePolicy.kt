@@ -3,6 +3,10 @@ package com.example.cookierunbot.automation
 internal object RedfingerPerformancePolicy {
     fun profilingEnabled(profile: PerformanceProfile): Boolean =
         profile == PerformanceProfile.REDFINGER_OPTIMIZED
+
+    /** Full no-match score reports rescan stages on the detector thread. Keep gameplay responsive. */
+    fun deferDetailedNoMatchScoring(profile: PerformanceProfile, group: DetectionGroup): Boolean =
+        profile == PerformanceProfile.REDFINGER_OPTIMIZED && group == DetectionGroup.IN_GAME
 }
 
 /** Serializes complete Start/Stop transitions, including process-global service side effects. */
