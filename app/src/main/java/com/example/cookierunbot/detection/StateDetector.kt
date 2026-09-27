@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.BitmapFactory
 import android.util.Log
 import com.example.cookierunbot.CookieRunBotApplication
+import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.automation.BotStage
 import com.example.cookierunbot.automation.PerformanceProfile
 import android.os.SystemClock
@@ -39,11 +40,16 @@ class StateDetector(
     fun detectMainMenu(normalizedRgba: Mat): DetectionResult =
         detect(BotStage.MAINMENU, normalizedRgba)
 
-    fun detectFirst(stages: List<BotStage>, normalizedRgba: Mat): DetectionResult? {
+    fun detectFirst(
+        stages: List<BotStage>,
+        normalizedRgba: Mat,
+        onStageEvaluated: ((DetectionResult) -> Unit)? = null,
+    ): DetectionResult? {
         validateFrame(normalizedRgba)
         Imgproc.cvtColor(normalizedRgba, reusableScreenGray, Imgproc.COLOR_RGBA2GRAY)
         for (stage in stages) {
             val result = detectGray(stage, reusableScreenGray)
+            onStageEvaluated?.invoke(result)
             if (result.matched) return result
         }
         return null
@@ -292,11 +298,10 @@ class StateDetector(
                         "${String.format(Locale.US, "%.2f", scale)}=" +
                             String.format(Locale.US, "%.2fms", duration)
                     }
-                    Log.i(
-                        CookieRunBotApplication.TAG,
-                        "[MATCH PERF] stage=$sampledStage scales=[$measurements] " +
-                            "total=${String.format(Locale.US, "%.2f", immutableSamples.sumOf { it.second })}ms",
-                    )
+                    val message = "[MATCH PERF] stage=$sampledStage scales=[$measurements] " +
+                        "total=${String.format(Locale.US, "%.2f", immutableSamples.sumOf { it.second })}ms"
+                    Log.i(CookieRunBotApplication.TAG, message)
+                    DebugLogStore.log(message)
                 }
             }
 

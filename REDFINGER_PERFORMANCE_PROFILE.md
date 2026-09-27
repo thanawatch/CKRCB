@@ -9,7 +9,7 @@ returns capture processing to Legacy. Legacy gesture coordinates and dispatch pa
 thresholds, scale lists, stage ordering, watchdog behavior, and latest-frame-only ownership remain
 unchanged.
 
-The Redfinger profile currently makes three deliberately narrow changes:
+The Redfinger profile makes four scoped changes:
 
 1. It defers the expensive all-stage NO_MATCH score report throughout `IN_GAME`, including the
    period waiting for GAME_RELAY after Fast Start. The detailed rescan previously occupied the
@@ -19,7 +19,12 @@ The Redfinger profile currently makes three deliberately narrow changes:
 2. It replaces `INTER_AREA` resize with `Mat.copyTo` only when the source and content rectangle are
    exactly `(0,0,1280,720)`. A copy is pixel-equivalent for this 1:1 geometry and retains independent
    destination ownership. Every crop, inset, offset, or other resolution uses the original path.
-3. It refuses to dispatch the uncalibrated raw-physical `POST_RELAY_1/2/3`, `TIME_DEAL`, and
+3. After GAME_START has been handled in the current round, IN_GAME polling omits its seven
+   redundant GAME_START scale matches. GAME_RELAY remains the first candidate; GAME_COMPLETE
+   and the connection states remain candidates. Before GAME_START is handled, all original
+   GAME_START scales and the eight-second priority window remain active. Legacy stage ordering
+   and all templates, thresholds and ROIs remain unchanged.
+4. It refuses to dispatch the uncalibrated raw-physical `POST_RELAY_1/2/3`, `TIME_DEAL`, and
    `PARTY_RUN_SEASON_REWARDS` targets. It logs `UNCALIBRATED_PHYSICAL_TARGET` and safely skips
    the special action. `TIME_DEAL` and `PARTY_RUN_SEASON_REWARDS` explicitly publish
    `WAITING_FOR_REDFINGER_CALIBRATION` and remain blocked while the popup is onscreen; the operator
@@ -30,10 +35,9 @@ The Redfinger profile currently makes three deliberately narrow changes:
    These actions require separate device calibration. Legacy retains its original fire-once flag and
    all three original raw dispatch attempts, including their acceptance-independent sequencing.
 
-No OpenCV match is removed: device-independent inspection found that the detector already converts
-each candidate set to grayscale once, loads pre-scaled templates once, and evaluates all seven
-configured GAME_START/GAME_RELAY scales. Early exit would change the winning score/location, so it
-is intentionally not used.
+Matching still evaluates all seven configured scales for any candidate it visits. It converts
+each candidate set to grayscale once and loads pre-scaled templates once. Early exit among scales
+would change the winning score/location, so it is not used.
 
 ## Benchmark measurements
 
@@ -44,16 +48,19 @@ claimed. The implementation records the measurements needed for an A/B run:
   preparation, actual rolling FPS, and whether the exact-size path qualified.
 * `[MATCH PERF]`: per-scale and total matching time for GAME_START and GAME_RELAY, sampled only in
   the optimized profile at most once per stage per five seconds. Actual evaluated scales are retained
-  with each sample, and Logcat publication runs on a separate executor.
+  with each sample; Logcat and the in-app exported debug log receive them from a separate executor.
 * `[GAME_START_ATTEMPT_SUMMARY]`: an asynchronous aggregate at the first applicable lifecycle
   boundary (window end, GAME_START completion, round end, new round, or Stop) with attempt count,
   min/average/max detection duration, and skipped latest-frame generations. Window membership and
   the priority candidate list share one pre-detection decision, so an attempt crossing the deadline
   is still counted and no attempt is attributed to a list that did not evaluate GAME_START first.
-* `[NO_MATCH PERF]`: scoring deferral or scoring/image-save duration. Each message explicitly states
-  that the interval throttles diagnostics, not detection.
-* `[FAST PATH]`: existing capture-to-publish, capture-to-detect, detect-to-action,
-  capture-to-dispatch, and capture-to-accessibility-callback latency.
+* `[NO_MATCH PERF]`: scoring deferral or scoring/image-save duration. Optimized in-game deferral
+  entries include the target (GAME_START or GAME_RELAY), its score from the normal detection pass,
+  and frame sequence. Each message explicitly states that the interval throttles diagnostics,
+  not detection.
+* `[FAST_PATH]`: existing capture-to-publish, capture-to-detect, detect-to-action,
+  capture-to-dispatch, and capture-to-accessibility-callback latency. The optimized profile
+  also includes these samples in the in-app exported debug log.
 
 No GitHub check runs existed for reviewed SHA `a9fefb9fd5`. The commands and results for this follow-up
 are reported in the PR comment/description rather than inferred from CI. Device measurements remain to

@@ -941,7 +941,19 @@ class BotController(
             } else {
                 stagesFor(group)
             }
-            var result = detector.detectFirst(candidates, frame.mat)
+            val priorityCandidate = if (profilingEnabled && group == DetectionGroup.IN_GAME) {
+                if (gameStartDetectedForRound) BotStage.GAME_RELAY else BotStage.GAME_START
+            } else {
+                null
+            }
+            var priorityScore: Double? = null
+            var result = if (priorityCandidate != null) {
+                detector.detectFirst(candidates, frame.mat) { evaluated ->
+                    if (evaluated.state == priorityCandidate) priorityScore = evaluated.score
+                }
+            } else {
+                detector.detectFirst(candidates, frame.mat)
+            }
             if (!isRunning() || synchronized(lock) { progressRecoveryGate.isActive() }) return
             var detectionMatchedAtNanos = SystemClock.elapsedRealtimeNanos()
             if (profilingEnabled && fastStartPriorityAtDetectionStart) {
@@ -1012,7 +1024,7 @@ class BotController(
             if (!isRunning() || synchronized(lock) { progressRecoveryGate.isActive() }) return
             if (PopupFreshFramePolicy.blocks(frame.generation, minimumFreshFrameGeneration)) return
             if (result == null) {
-                handleNoMatchDiagnostics(detector, frame)
+                handleNoMatchDiagnostics(detector, frame, priorityCandidate, priorityScore)
                 if (now - lastTraceHeartbeatAt >= 5000L) {
                     PersistentTrace.log(
                         "[BOT] detection heartbeat group=$group generation=${frame.generation} " +
@@ -3224,31 +3236,33 @@ class BotController(
                 sourceHeight,
                 priority = GesturePriority.CRITICAL,
                 onGestureCompleted = { completedAtNanos, success ->
-                    Log.i(
-                        CookieRunBotApplication.TAG,
-                            "[FAST_PATH] $stage callback_completed=$success " +
-                            "dispatch_to_callback=${ms(completedAtNanos - dispatchTime.get())}ms " +
-                            "capture_to_callback=${ms(completedAtNanos - timing.frameCapturedAtNanos)}ms",
-                    )
+                    val callbackMessage = "[FAST_PATH] $stage callback_completed=$success " +
+                        "dispatch_to_callback=${ms(completedAtNanos - dispatchTime.get())}ms " +
+                        "capture_to_callback=${ms(completedAtNanos - timing.frameCapturedAtNanos)}ms"
+                    Log.i(CookieRunBotApplication.TAG, callbackMessage)
+                    if (RedfingerPerformancePolicy.profilingEnabled(options.performanceProfile)) {
+                        DebugLogStore.log(callbackMessage)
+                    }
                 },
             )
         }
         dispatchTime.set(result.gestureDispatchedAtNanos)
         reportActionResult(result)
         val dispatchedAtNanos = result.gestureDispatchedAtNanos
-        Log.i(
-            CookieRunBotApplication.TAG,
-            "[FAST_PATH] $stage " +
-                "frame_age=${ms(actionRequestedAtNanos - timing.frameCapturedAtNanos)}ms " +
-                "capture_to_publish=${ms(timing.latestFramePublishedAtNanos - timing.frameCapturedAtNanos)}ms " +
-                "capture_to_detect=${ms(timing.detectionStartedAtNanos - timing.frameCapturedAtNanos)}ms " +
-                "publish_to_detect=${ms(timing.detectionStartedAtNanos - timing.latestFramePublishedAtNanos)}ms " +
-                "detect_time=${ms(timing.detectionMatchedAtNanos - timing.detectionStartedAtNanos)}ms " +
-                "detect_to_action=${ms(actionRequestedAtNanos - timing.detectionMatchedAtNanos)}ms " +
-                "action_to_dispatch=${ms(dispatchedAtNanos - actionRequestedAtNanos)}ms " +
-                "total=${ms(dispatchedAtNanos - timing.frameCapturedAtNanos)}ms " +
-                "accepted=${result.accepted}",
-        )
+        val fastPathMessage = "[FAST_PATH] $stage " +
+            "frame_age=${ms(actionRequestedAtNanos - timing.frameCapturedAtNanos)}ms " +
+            "capture_to_publish=${ms(timing.latestFramePublishedAtNanos - timing.frameCapturedAtNanos)}ms " +
+            "capture_to_detect=${ms(timing.detectionStartedAtNanos - timing.frameCapturedAtNanos)}ms " +
+            "publish_to_detect=${ms(timing.detectionStartedAtNanos - timing.latestFramePublishedAtNanos)}ms " +
+            "detect_time=${ms(timing.detectionMatchedAtNanos - timing.detectionStartedAtNanos)}ms " +
+            "detect_to_action=${ms(actionRequestedAtNanos - timing.detectionMatchedAtNanos)}ms " +
+            "action_to_dispatch=${ms(dispatchedAtNanos - actionRequestedAtNanos)}ms " +
+            "total=${ms(dispatchedAtNanos - timing.frameCapturedAtNanos)}ms " +
+            "accepted=${result.accepted}"
+        Log.i(CookieRunBotApplication.TAG, fastPathMessage)
+        if (RedfingerPerformancePolicy.profilingEnabled(options.performanceProfile)) {
+            DebugLogStore.log(fastPathMessage)
+        }
         return result.accepted
     }
 
@@ -3408,7 +3422,9 @@ class BotController(
             if (fastStartPriority) {
                 FAST_START_PRIORITY + ALWAYS
             } else {
-                IN_GAME + ALWAYS
+                RedfingerPerformancePolicy.inGameCandidates(
+                    options.performanceProfile, gameStartDetectedForRound, IN_GAME,
+                ) + ALWAYS
             }
         }
         DetectionGroup.POST_GAME -> ALWAYS + POST_GAME
@@ -3502,7 +3518,12 @@ class BotController(
         }
     }
 
-    private fun handleNoMatchDiagnostics(detector: StateDetector, frame: FrameSnapshot) {
+    private fun handleNoMatchDiagnostics(
+        detector: StateDetector,
+        frame: FrameSnapshot,
+        priorityCandidate: BotStage?,
+        priorityScore: Double?,
+    ) {
         val now = SystemClock.elapsedRealtime()
         val deferHeavyScoring = RedfingerPerformancePolicy.deferDetailedNoMatchScoring(
             options.performanceProfile, group,
@@ -3511,7 +3532,9 @@ class BotController(
             logDiagnostic(
                 "[NO_MATCH PERF] heavyScoringDeferred=true group=${group.name} " +
                     "logIntervalMs=$NO_MATCH_DIAGNOSTIC_INTERVAL_MS " +
-                    "detectionThrottled=false",
+                    "target=${priorityCandidate?.name ?: "NONE"} " +
+                    "targetScore=${priorityScore?.let(::format) ?: "not_evaluated"} " +
+                    "frameSequence=${frame.generation} detectionThrottled=false",
             )
             lastNoMatchDiagnosticAt = now
         }

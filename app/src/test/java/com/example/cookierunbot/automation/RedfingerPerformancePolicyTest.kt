@@ -43,6 +43,31 @@ class RedfingerPerformancePolicyTest {
     }
 
     @Test
+    fun optimizedGameplayStopsRescanningHandledGameStart() {
+        val ordered = listOf(
+            BotStage.GAME_RELAY, BotStage.GAME_COMPLETE, BotStage.GAME_START,
+        )
+        assertEquals(
+            listOf(BotStage.GAME_RELAY, BotStage.GAME_COMPLETE),
+            RedfingerPerformancePolicy.inGameCandidates(
+                PerformanceProfile.REDFINGER_OPTIMIZED, true, ordered,
+            ),
+        )
+        assertEquals(
+            ordered,
+            RedfingerPerformancePolicy.inGameCandidates(
+                PerformanceProfile.REDFINGER_OPTIMIZED, false, ordered,
+            ),
+        )
+        assertEquals(
+            ordered,
+            RedfingerPerformancePolicy.inGameCandidates(
+                PerformanceProfile.LEGACY, true, ordered,
+            ),
+        )
+    }
+
+    @Test
     fun shortRoundCanDrainAtGameStartCompletion() {
         val metrics = FastStartAttemptMetrics()
         metrics.record(durationNanos = 12L, skipped = 2L)

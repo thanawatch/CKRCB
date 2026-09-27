@@ -4,6 +4,18 @@ internal object RedfingerPerformancePolicy {
     fun profilingEnabled(profile: PerformanceProfile): Boolean =
         profile == PerformanceProfile.REDFINGER_OPTIMIZED
 
+    /** A handled GAME_START cannot trigger a second Fast Start in the same round. */
+    fun inGameCandidates(
+        profile: PerformanceProfile,
+        gameStartHandled: Boolean,
+        stages: List<BotStage>,
+    ): List<BotStage> =
+        if (profile == PerformanceProfile.REDFINGER_OPTIMIZED && gameStartHandled) {
+            stages.filterNot { it == BotStage.GAME_START }
+        } else {
+            stages
+        }
+
     /** Full no-match score reports rescan stages on the detector thread. Keep gameplay responsive. */
     fun deferDetailedNoMatchScoring(profile: PerformanceProfile, group: DetectionGroup): Boolean =
         profile == PerformanceProfile.REDFINGER_OPTIMIZED && group == DetectionGroup.IN_GAME
