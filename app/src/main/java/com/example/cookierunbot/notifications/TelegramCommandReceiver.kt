@@ -4,9 +4,11 @@ import android.content.Context
 import android.util.Log
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.automation.BotRuntime
+import com.example.cookierunbot.automation.BotAccessibilityService
 import com.example.cookierunbot.automation.GameProgressWatchdogManager
 import com.example.cookierunbot.automation.formatDuration
 import com.example.cookierunbot.diagnostics.DebugLogStore
+import com.example.cookierunbot.capture.LatestFrameProvider
 import com.example.cookierunbot.statistics.RoundResult
 import com.example.cookierunbot.statistics.RoundResultStore
 import org.json.JSONObject
@@ -24,6 +26,8 @@ object TelegramCommandReceiver {
     @Volatile private var activeConnection: HttpURLConnection? = null
     private var appContext: Context? = null
     private var commandNotifier: TelegramNotifier? = null
+
+    internal fun commandContext(): Context? = appContext
 
     fun initialize(context: Context) {
         appContext = context.applicationContext
@@ -64,8 +68,12 @@ object TelegramCommandReceiver {
                     return@poll
                 }
                 val command = parseTelegramCommand(text) ?: return@poll
-                val reply = telegramCommandReply(command) ?: return@poll
-                commandNotifier?.sendCommandReply(reply, replyTarget)
+                if (command == "/screen") {
+                    commandNotifier?.sendCommandScreenshot(replyTarget)
+                } else {
+                    val reply = telegramCommandReply(command) ?: return@poll
+                    commandNotifier?.sendCommandReply(reply, replyTarget)
+                }
             }
             if (refreshRequested.getAndSet(false)) continue
             if (retryMs > 0L) sleep(retryMs)
@@ -129,9 +137,15 @@ object TelegramCommandReceiver {
 }
 
 internal fun parseTelegramCommand(text: String): String? {
+    TelegramDashboardPolicy.commandForButton(text)?.let { return it }
     val token = text.trim().substringBefore(' ').lowercase(Locale.US)
     if (!token.startsWith('/')) return null
-    return token.substringBefore('@').takeIf { it in setOf("/help", "/status", "/stats", "/last", "/boxes", "/all") }
+    val command = token.substringBefore('@')
+    if (command == "/start" || command == "/menu") return "/dashboard"
+    return command.takeIf {
+        it in setOf("/help", "/status", "/stats", "/last", "/boxes", "/all",
+            "/friend", "/health", "/screen", "/watchdog", "/rounds", "/errors", "/dashboard")
+    }
 }
 
 internal fun isAuthorizedTelegramChat(incoming: String, configured: String): Boolean =
@@ -152,7 +166,11 @@ internal fun shouldProcessTelegramUpdate(lastConsumedUpdateId: Long, incomingUpd
     incomingUpdateId > lastConsumedUpdateId
 
 internal fun telegramCommandReply(command: String): String? = when (command) {
-    "/help" -> "RobotRun commands\n\n/all - Session totals, bot status and last round\n" +
+    "/help" -> "RobotRun commands\n\n/all - Session totals, status and last round\n" +
+        "/friend - Friend Life schedule and progress\n/health - Capture, accessibility and worker\n" +
+        "/screen - Current normalized screenshot\n/watchdog - Watchdog and recovery state\n" +
+        "/rounds - Last five rounds\n/errors - Recent local error summary\n" +
+        "/dashboard - Show the one-tap button dashboard\n" +
         "/status - Bot status\n/stats - Current session totals\n" +
         "/last - Last completed round\n/boxes - Mystery Box totals\n/help - Show commands"
     "/status" -> formatStatusReply()
@@ -162,6 +180,19 @@ internal fun telegramCommandReply(command: String): String? = when (command) {
     "/all" -> formatAllReply(
         RoundResultStore.snapshot(), BotRuntime.diagnostics(), GameProgressWatchdogManager.status(),
     )
+    "/friend" -> formatFriendReply(BotRuntime.friendLifeStatus())
+    "/health" -> formatHealthReply(
+        BotRuntime.diagnostics(), LatestFrameProvider.diagnostics(),
+        TelegramCommandReceiver.commandContext()?.let { BotAccessibilityService.isEnabled(it) } == true,
+        BotAccessibilityService.isConnected(),
+    )
+    "/watchdog" -> formatWatchdogReply(
+        GameProgressWatchdogManager.status(), BotRuntime.diagnostics(),
+        latestRecoverySummary(DebugLogStore.snapshot().text),
+    )
+    "/rounds" -> formatRoundsReply(RoundResultStore.snapshot())
+    "/errors" -> formatErrorsReply(DebugLogStore.snapshot().text)
+    "/dashboard" -> "🤖 RobotRun Dashboard\n\nTap a button below. 📊 All shows stats, status and last round in one reply."
     else -> null
 }
 

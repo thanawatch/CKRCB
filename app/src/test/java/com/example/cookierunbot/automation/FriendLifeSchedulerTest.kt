@@ -362,6 +362,25 @@ class FriendLifeSchedulerTest {
         assertEquals(3_660_000L, FRIEND_LIFE_INTERVAL_MS)
     }
 
+    @Test fun dashboardStatusReportsPendingAndRetryWithoutChangingSchedule() {
+        val scheduler = FriendLifeScheduler()
+        scheduler.start(true, 0L, friendLifeIntervalMs(7))
+        val initially = scheduler.dashboardStatus(60_000L)
+        assertEquals(6 * 60_000L, initially.nextDueInMs)
+        assertFalse(initially.scheduledPending)
+        assertFalse(initially.inProgress)
+        assertTrue(scheduler.observeTime(7 * 60_000L))
+        val pending = scheduler.dashboardStatus(7 * 60_000L)
+        assertTrue(pending.scheduledPending)
+        assertEquals(0L, pending.nextDueInMs)
+        scheduler.beginIfReady(7 * 60_000L)
+        scheduler.fail(7 * 60_000L, 15 * 60_000L)
+        val failed = scheduler.dashboardStatus(8 * 60_000L)
+        assertEquals(14 * 60_000L, failed.retryInMs)
+        assertTrue(failed.scheduledPending)
+        assertFalse(failed.inProgress)
+    }
+
     @Test fun configuredMinuteIntervalSetsFirstRunAtExactMinute() {
         val scheduler = FriendLifeScheduler()
         scheduler.start(true, 1_000L, friendLifeIntervalMs(7))

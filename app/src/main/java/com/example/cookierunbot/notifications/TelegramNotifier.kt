@@ -1,8 +1,11 @@
 package com.example.cookierunbot.notifications
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import com.example.cookierunbot.CookieRunBotApplication
+import com.example.cookierunbot.automation.NoMatchDebugFrameSaver
+import com.example.cookierunbot.capture.LatestFrameProvider
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import java.io.BufferedOutputStream
 import java.io.IOException
@@ -99,6 +102,7 @@ internal fun shouldSendTelegramText(config: TelegramConfig, manualTest: Boolean)
 
 class TelegramNotifier(context: Context) {
     private val appContext = context.applicationContext
+    private var lastOnDemandScreenAtMs = 0L
     private val executor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "telegram-notifications")
     }
@@ -133,6 +137,77 @@ class TelegramNotifier(context: Context) {
         )
     }
 
+    internal fun sendCommandScreenshot(target: TelegramCommandReplyTarget) {
+        executor.execute {
+            val config = TelegramConfigStore.load(appContext)
+            if (!target.matches(config)) return@execute
+            val now = SystemClock.elapsedRealtime()
+            if (lastOnDemandScreenAtMs > 0L && now - lastOnDemandScreenAtMs < 15_000L) {
+                sendTextBlocking(config, "Screenshot cooldown: try again shortly.",
+                    manualTest = true, replyMarkup = TelegramDashboardPolicy.keyboardJson)
+                return@execute
+            }
+            lastOnDemandScreenAtMs = now
+            sendCurrentScreenshot(config, target)
+        }
+    }
+
+    private fun sendCurrentScreenshot(config: TelegramConfig, target: TelegramCommandReplyTarget) {
+        if (!LatestFrameProvider.diagnostics().captureRunning) {
+            sendTextBlocking(config, "📸 Screen capture is not running.",
+                manualTest = true, replyMarkup = TelegramDashboardPolicy.keyboardJson)
+            return
+        }
+        val frame = LatestFrameProvider.snapshot()
+        if (frame == null) {
+            sendTextBlocking(config, "📸 No frame available.",
+                manualTest = true, replyMarkup = TelegramDashboardPolicy.keyboardJson)
+            return
+        }
+        try {
+            if (!TelegramDashboardPolicy.screenshotFrameIsFresh(
+                    frame.capturedAtNanos, SystemClock.elapsedRealtimeNanos(),
+                )
+            ) {
+                sendTextBlocking(config, "📸 Frame is stale; no old screenshot sent.",
+                    manualTest = true, replyMarkup = TelegramDashboardPolicy.keyboardJson)
+                return
+            }
+            sendCurrentScreenshotFrame(target, frame.mat, frame.generation)
+        } finally {
+            frame.mat.release()
+        }
+    }
+
+    private fun sendCurrentScreenshotFrame(
+        target: TelegramCommandReplyTarget,
+        normalized: org.opencv.core.Mat,
+        generation: Long,
+    ) {
+        try {
+            val png = NoMatchDebugFrameSaver(appContext).encodeNormalizedPng(normalized)
+            val config = TelegramConfigStore.load(appContext)
+            if (!target.matches(config)) {
+                log("[TELEGRAM_SCREEN] cancelled=true reason=config_changed")
+                return
+            }
+            val result = sendPhotoBlocking(config, png, "robotrun_screen.png",
+                "📸 RobotRun | normalized 1280x720 | frame $generation",
+                replyMarkup = TelegramDashboardPolicy.keyboardJson)
+            if (!result.success && target.matches(TelegramConfigStore.load(appContext))) {
+                sendTextBlocking(config, "📸 Screenshot upload failed.",
+                    manualTest = true, replyMarkup = TelegramDashboardPolicy.keyboardJson)
+            }
+        } catch (error: Exception) {
+            log("[TELEGRAM_SCREEN] failed=true type=${error.javaClass.simpleName}")
+            val config = TelegramConfigStore.load(appContext)
+            if (target.matches(config)) {
+                sendTextBlocking(config, "📸 Screenshot unavailable.",
+                    manualTest = true, replyMarkup = TelegramDashboardPolicy.keyboardJson)
+            }
+        }
+    }
+
     private fun scheduleCommandReply(
         target: TelegramCommandReplyTarget,
         state: TelegramCommandReplyAttempt,
@@ -147,7 +222,10 @@ class TelegramNotifier(context: Context) {
                     callback(TelegramSendResult(false, "config_changed"))
                     return@schedule
                 }
-                val result = sendTextBlocking(currentConfig, state.replyText, manualTest = true)
+                val result = sendTextBlocking(
+                    currentConfig, state.replyText, manualTest = true,
+                    replyMarkup = TelegramDashboardPolicy.keyboardJson,
+                )
                 val decision = telegramCommandRetryDecision(state, result)
                 if (decision.retry) {
                     log(
@@ -239,13 +317,15 @@ class TelegramNotifier(context: Context) {
         config: TelegramConfig,
         text: String,
         manualTest: Boolean,
+        replyMarkup: String? = null,
     ): TelegramSendResult {
         if (!shouldSendTelegramText(config, manualTest)) {
             log("[TELEGRAM_SEND] skipped=true reason=text_notifications_disabled")
             return TelegramSendResult(false, "text_notifications_disabled")
         }
         return request(config, "sendMessage", "application/x-www-form-urlencoded") { output ->
-            val body = "chat_id=${encode(config.chatId)}&text=${encode(text)}"
+            val body = "chat_id=${encode(config.chatId)}&text=${encode(text)}" +
+                (replyMarkup?.let { "&reply_markup=${encode(it)}" } ?: "")
             output.write(body.toByteArray(StandardCharsets.UTF_8))
         }
     }
@@ -255,6 +335,7 @@ class TelegramNotifier(context: Context) {
         png: ByteArray,
         filename: String,
         caption: String,
+        replyMarkup: String? = null,
     ): TelegramSendResult {
         val boundary = "RobotRunBoundary${System.nanoTime()}"
         return request(config, "sendPhoto", "multipart/form-data; boundary=$boundary") { output ->
@@ -263,6 +344,7 @@ class TelegramNotifier(context: Context) {
             }
             field("chat_id", config.chatId)
             field("caption", caption)
+            if (replyMarkup != null) field("reply_markup", replyMarkup)
             output.write(
                 "--$boundary\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"$filename\"\r\n".toByteArray(),
             )

@@ -103,7 +103,40 @@ class FriendLifeScheduler(private var intervalMs: Long = FRIEND_LIFE_INTERVAL_MS
     @Synchronized fun scheduledPending(): Boolean = scheduledPending
     @Synchronized fun testPending(): Boolean = testPending
     @Synchronized fun inProgress(): Boolean = inProgress
+
+    @Synchronized fun dashboardStatus(nowMs: Long): FriendLifeScheduleStatus = FriendLifeScheduleStatus(
+        enabled = enabled,
+        scheduledPending = scheduledPending,
+        testPending = testPending,
+        inProgress = inProgress,
+        nextDueInMs = if (enabled) (nextDueAt - nowMs).coerceAtLeast(0L) else null,
+        retryInMs = (retryNotBefore - nowMs).coerceAtLeast(0L),
+    )
 }
+
+data class FriendLifeScheduleStatus(
+    val enabled: Boolean,
+    val scheduledPending: Boolean,
+    val testPending: Boolean,
+    val inProgress: Boolean,
+    val nextDueInMs: Long?,
+    val retryInMs: Long,
+)
+
+data class FriendLifeDashboardStatus(
+    val botRunning: Boolean,
+    val enabled: Boolean,
+    val intervalMinutes: Int,
+    val scheduledPending: Boolean,
+    val testPending: Boolean,
+    val inProgress: Boolean,
+    val nextDueInMs: Long?,
+    val retryInMs: Long,
+    val currentSentCount: Int,
+    val lastSentCount: Int,
+    val lastOutcome: String,
+    val lastProgressAgeMs: Long?,
+)
 
 internal fun friendLifeInterruptStages(
     always: List<BotStage>,

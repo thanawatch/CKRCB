@@ -97,7 +97,7 @@ Captured images may contain personal information and can be visible to gallery/f
 
 Telegram settings store the bot token encrypted with an Android Keystore-backed AES-GCM key. The configured Chat ID is both the notification destination and the only authorized incoming-command chat. Networking and encoding run asynchronously and failures do not stop gameplay.
 
-Supported read-only commands are `/help`, `/status`, `/stats`, `/last`, `/boxes`, and `/all` (one message with `/stats` → `/status` → `/last`), including group-chat `@BotUsername` forms. There is no remote Start/Stop or gameplay control. Never commit credentials or paste token-bearing URLs into logs/issues.
+Supported read-only commands are `/help`, `/status`, `/stats`, `/last`, `/boxes`, `/all` (one message with `/stats` → `/status` → `/last`), `/friend`, `/health`, `/screen`, `/watchdog`, `/rounds`, `/errors`, and `/dashboard` (also `/start` and `/menu`). The persistent one-tap reply keyboard is included in each command reply, with **📊 All** and **🔄 Refresh** mapped to `/all`; send `/dashboard` to show it on demand. `/screen` explicitly requests a fresh normalized 1280×720 snapshot, is limited to one attempt per 15 seconds, and does not depend on the automatic debug-image setting; stale/unavailable frames return text instead. It is processed on the Telegram notification executor, not the capture/detector thread. `/errors` only returns up to five allowlisted local failure lines on demand; it never adds an automatic NO_MATCH/DETECT_STALL alert. Supported slash commands accept `@BotUsername` suffixes. Only the configured Chat ID is authorized. There is no remote Start/Stop or gameplay control. Never commit credentials or paste token-bearing URLs into logs/issues.
 
 ## Troubleshooting
 

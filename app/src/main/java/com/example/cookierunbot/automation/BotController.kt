@@ -102,6 +102,9 @@ class BotController(
     @Volatile private var pendingPopupAction = "NONE"
     @Volatile private var friendLifeWorkflowActive = false
     @Volatile private var friendLifeLastProgressAt = 0L
+    @Volatile private var friendLifeCurrentSentCount = 0
+    @Volatile private var friendLifeLastSentCount = 0
+    @Volatile private var friendLifeLastOutcome = "NONE"
     private var freshFrameGateWaitStartedAt = 0L
     private var pendingDailyNewTapGeneration = -1L
     private var pendingPartyRunSeasonRewardsGesture: GestureCancellation? = null
@@ -131,6 +134,26 @@ class BotController(
 
     fun isRunning(): Boolean = synchronized(lock) { isCurrentWorkerRunLocked() }
 
+    fun friendLifeStatus(): FriendLifeDashboardStatus = synchronized(lock) {
+        val schedule = friendLifeScheduler.dashboardStatus(SystemClock.elapsedRealtime())
+        FriendLifeDashboardStatus(
+            botRunning = running,
+            enabled = schedule.enabled,
+            intervalMinutes = options.friendLifeIntervalMinutes,
+            scheduledPending = schedule.scheduledPending,
+            testPending = schedule.testPending,
+            inProgress = schedule.inProgress,
+            nextDueInMs = schedule.nextDueInMs,
+            retryInMs = schedule.retryInMs,
+            currentSentCount = friendLifeCurrentSentCount,
+            lastSentCount = friendLifeLastSentCount,
+            lastOutcome = friendLifeLastOutcome,
+            lastProgressAgeMs = friendLifeLastProgressAt.takeIf { it > 0L }?.let {
+                (SystemClock.elapsedRealtime() - it).coerceAtLeast(0L)
+            },
+        )
+    }
+
     fun diagnostics(): BotControllerDiagnostics = synchronized(lock) {
         val worker = executor
         BotControllerDiagnostics(
@@ -154,6 +177,7 @@ class BotController(
             },
             calibrationBlockedAction = calibrationBlockState.action,
             friendLifeWorkflowActive = friendLifeWorkflowActive,
+            progressRecoveryActive = progressRecoveryGate.isActive(),
             friendLifeLastProgressAgeMs = friendLifeLastProgressAt.takeIf { it > 0L }?.let {
                 (SystemClock.elapsedRealtime() - it).coerceAtLeast(0L)
             },
@@ -211,6 +235,9 @@ class BotController(
             calibrationBlockState.clear()
             friendLifeWorkflowActive = false
             friendLifeLastProgressAt = 0L
+            friendLifeCurrentSentCount = 0
+            friendLifeLastSentCount = 0
+            friendLifeLastOutcome = "NONE"
             pendingDailyNewTapGeneration = -1L
             pendingPartyRunSeasonRewardsTapGeneration = -1L
             pendingPartyRunSeasonRewardsGesture = null
@@ -279,7 +306,12 @@ class BotController(
         autoTapper.stop("BOT_EXIT")
         friendLifeScheduler.stop()
         GameProgressWatchdogManager.stop(stoppedRun.generation)
+        if (friendLifeWorkflowActive) {
+            friendLifeLastSentCount = friendLifeCurrentSentCount
+            friendLifeLastOutcome = "STOPPED"
+        }
         friendLifeWorkflowActive = false
+        friendLifeCurrentSentCount = 0
         friendLifeLastProgressAt = 0L
         resetNoMatchEpisode("bot_stopped")
         stoppedRun.worker?.shutdownNow()
@@ -1596,6 +1628,7 @@ class BotController(
             }
             logDiagnostic("[FRIEND_LIFE_PRECHECK] pending=true mainMenuValid=true action=begin")
             friendLifeWorkflowActive = true
+            friendLifeCurrentSentCount = 0
             friendLifeLastProgressAt = SystemClock.elapsedRealtime()
             val friendLifeResult = try {
                 handleMainMenuFriendLife(detector, sourceWidth, sourceHeight, friendTrigger)
@@ -1603,6 +1636,9 @@ class BotController(
                 if (isRunning()) friendLifeWorkflowActive = false
             }
             if (!isRunning()) return
+            friendLifeLastSentCount = friendLifeCurrentSentCount
+            friendLifeLastOutcome = friendLifeResult.name
+            friendLifeCurrentSentCount = 0
             when (friendLifeResult) {
                 FriendLifeWorkflowResult.COMPLETED -> {
                     val completedAt = SystemClock.elapsedRealtime()
@@ -2311,6 +2347,7 @@ class BotController(
                         decision.interrupt?.let { return friendLifeInterrupt(it, "AFTER_CONFIRM_2") }
                     }
                     sentCount += 1
+                    friendLifeCurrentSentCount = sentCount
                     recordFriendLifeProgress("SEND_COMPLETE", sentCount, traverseSwipeCount)
                 }
                 FriendLifeTraversalDecision.COMPLETE -> {
@@ -3830,6 +3867,7 @@ data class BotControllerDiagnostics(
     val friendLifeWorkflowActive: Boolean,
     val friendLifeLastProgressAgeMs: Long?,
     val roundNumber: Int,
+    val progressRecoveryActive: Boolean = false,
 )
 
 private data class MainMenuRevalidation(

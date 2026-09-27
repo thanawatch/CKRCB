@@ -33,6 +33,7 @@ object BotRuntime : BotController.Listener {
         } else {
             WatchdogRecoveryTestRequest.BOT_STOPPED
         }
+    fun friendLifeStatus(): FriendLifeDashboardStatus? = controller?.friendLifeStatus()
     fun diagnostics(): BotControllerDiagnostics = controller?.diagnostics()
         ?: BotControllerDiagnostics(
             running = false,

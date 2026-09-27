@@ -72,7 +72,10 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 - [ ] Exercise new progress/Stop/restart during recovery and confirm stale reservation/callback work is discarded.
 - [ ] Configure Telegram without exposing credentials. Test disabled, missing token, missing Chat ID, valid text-only, valid image, network failure, HTTP failure/rate limit, and changed-config cancellation.
 - [ ] At an overdue episode, verify at most one **successfully delivered** alert; failed delivery becomes retry-eligible after 5 minutes. Verify a new progress event permits a later episode.
-- [ ] Send `/help`, `/status`, `/stats`, `/last`, `/boxes`, and `@BotUsername` forms from the configured Chat ID; verify other chats and unsupported/gameplay commands cannot control the bot.
+- [ ] Send `/help`, `/status`, `/stats`, `/last`, `/boxes`, `/all`, `/friend`, `/health`, `/screen`, `/watchdog`, `/rounds`, `/errors`, `/dashboard` and `@BotUsername` forms from the configured Chat ID; verify other chats and unsupported/gameplay commands cannot control the bot.
+- [ ] Test the persistent dashboard buttons. **📊 All** and **🔄 Refresh** must each send the full `/all` reply in `/stats` → `/status` → `/last` order with one tap; test the Screen/Friend/Health/Watchdog/Rounds/Errors buttons too.
+- [ ] Test `/friend` while scheduled/pending/running/retrying and after failure/completion; `/health` with stopped capture/disconnected Accessibility; `/watchdog` before Start and during recovery; `/rounds` with more than five results; `/errors` with no recent events and with allowlisted failures (do not leak credentials).
+- [ ] Test `/screen` with fresh 1280×720 capture, capture stopped, stale/no frame, repeated requests inside 15 seconds, disabled automatic debug-image toggle, failed upload, and config changes before sending. Ensure the Mat clone is released and no gameplay/detection thread is blocked.
 
 ## Statistics, storage, and diagnostics
 
