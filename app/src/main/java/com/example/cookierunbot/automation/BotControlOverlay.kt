@@ -64,6 +64,7 @@ class BotControlOverlay(private val context: Context) {
     private val jumpContinuous = Switch(context)
     private val fixedCount = EditText(context)
     private val interval = EditText(context)
+    private var calibrationTool: CoordinateCalibrationOverlay? = null
     private var attached = false
     private var expanded = false
     private var selectedBoost = BoostChoice.MAGNETIC
@@ -109,6 +110,8 @@ class BotControlOverlay(private val context: Context) {
     }
 
     fun dismiss() {
+        calibrationTool?.close()
+        calibrationTool = null
         if (!attached) return
         attached = false
         handler.removeCallbacks(statusUpdater)
@@ -222,6 +225,15 @@ class BotControlOverlay(private val context: Context) {
                     }
                     Toast.makeText(context, message, Toast.LENGTH_LONG).show()
                 }, WATCHDOG_TEST_OVERLAY_SETTLE_MS)
+            }
+        }, matchWidth())
+        panel.addView(Button(context).apply {
+            text = "Capture Calibration (Bot stopped)"
+            setOnClickListener {
+                if (calibrationTool != null) return@setOnClickListener
+                val tool = CoordinateCalibrationOverlay(context, root) { calibrationTool = null }
+                calibrationTool = tool
+                if (!tool.open()) tool.close()
             }
         }, matchWidth())
         addSwitch(quickLives, "Receive/Send Lives after each game", options.receiveSendLivesAfterEachGame)
