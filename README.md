@@ -65,7 +65,7 @@ The controller scans ordered groups rather than every state indiscriminately:
 
 At MAINMENU the app obtains a newer frame and revalidates the screen before scheduled Friend Life, per-round Quick Lives, or Start Game. PURCHASE_ITEM can search up to 30 seconds for the selected boost, then Play enters IN_GAME and configured jump tapping begins. Confirmed GAME_COMPLETE records progress, commits POST_GAME, analyzes a cloned result frame asynchronously, and requires a newer frame that still matches before Finish. Reward handling returns to general redetection; it does not assume a fixed next-popup chain. Connection Lost/Inactive only tap Reload.
 
-The overlay persists Fast Start, Cookie Relay/post-relay sequence, desired boost, relic detection, scheduled Friend Life, per-round receive/send lives, debug/result image saving, and jump mode/count/interval. Most options are snapshotted at Start Bot; image-save switches are read live.
+The overlay persists Fast Start, Cookie Relay/post-relay sequence, desired boost, relic detection, scheduled Friend Life and its interval in whole minutes (1–1440; default 61), per-round receive/send lives, debug/result image saving, and jump mode/count/interval. Most options are snapshotted at Start Bot; image-save switches are read live.
 
 ## Fresh frames and gesture safety
 
@@ -75,7 +75,7 @@ Android accepting `dispatchGesture()` is not the same as completion. Actions are
 
 ## Friend Life, Quick Lives, and progress recovery
 
-Scheduled Friend Life becomes due every 61 minutes and, like a queued manual test, starts only from a revalidated MAINMENU. It searches the leaderboard, visually verifies each naturalized scroll, scans Send buttons, and checks interrupt states between Send and two confirmations. It has independent no-progress/top-search/absolute bounds. A successful Send-button gesture immediately counts as game progress.
+Scheduled Friend Life first becomes due the user-selected number of whole minutes after Start Bot (default 61), then again that interval after each successful scheduled run, and like a queued manual test starts only from a revalidated MAINMENU. It searches the leaderboard, visually verifies each naturalized scroll, scans Send buttons, and checks interrupt states between Send and two confirmations. It has independent no-progress/top-search/absolute bounds. A successful Send-button gesture immediately counts as game progress.
 
 Quick Receive/Send Lives is a separate after-round mailbox workflow with its own templates, callback/fresh-frame rules, interrupts, and timeout.
 

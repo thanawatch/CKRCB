@@ -47,7 +47,7 @@ This repository is the native Android **RobotRun** automation app for Cookie Run
 `BotController.start()`:
 
 1. Rejects a duplicate start under its lock, stores the option snapshot, increments the run generation, resets the recovery gate/state/group/round/popup/no-match fields, and starts a new `RoundResultCollector` session.
-2. Starts `FriendLifeScheduler` (first scheduled run is due after 61 minutes when enabled).
+2. Starts `FriendLifeScheduler` with the saved user-selected minute interval (1–1440 minutes, default 61). The first scheduled run is due that interval after Start when enabled.
 3. Starts `GameProgressWatchdogManager`, recording `BOT_START`, and supplies a one-shot recovery callback.
 4. Creates the single `cookierun-bot-loop` executor and reports `PRE_GAME` / `WAITING_FOR_READINESS`.
 5. `runLoop()` waits until capture is running, the frame generation advances, a frame is at most 1 second old, and Accessibility is both enabled **and connected**.
@@ -113,7 +113,7 @@ Normal route:
 
 ### Friend Life
 
-Friend Life and Quick Lives are separate features. `FriendLifeScheduler` retains scheduled/manual pending work until a safe MAINMENU begin, merges simultaneous triggers, retries failed scheduled work no earlier than 15 minutes, and schedules the next successful run 61 minutes after completion. Manual tests queue while running.
+Friend Life and Quick Lives are separate features. The overlay saves `friendLifeIntervalMinutes` in `BotOptions` (1–1440 minutes, default 61 for existing installs) and snapshots it at Start Bot. `FriendLifeScheduler` retains scheduled/manual pending work until a safe MAINMENU begin, merges simultaneous triggers, retries failed scheduled work no earlier than 15 minutes, and schedules the next successful scheduled run using the configured interval measured from completion. Manual tests queue while running and do not move a pending scheduled due time. Changing the setting takes effect on the next Start Bot.
 
 The controller searches for leaderboard top, traverses downward, detects Send buttons within fixed logical ROIs, taps `SEND_BUTTON -> CONFIRM_1 -> CONFIRM_2` with interrupt scans between steps, and filters relic states according to the option. The successful Send-button gesture—not confirmations—records watchdog progress. Naturalized paths come from `FriendSwipeProfile`; `FriendScrollVerifier` must confirm visual progress. Gesture acceptance or merely obtaining a fresh frame is not scroll progress. Current safety bounds include 30 seconds without verified progress, a 30-minute absolute traversal bound, and a 10-minute top-search bound.
 

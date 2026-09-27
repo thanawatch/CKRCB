@@ -191,10 +191,12 @@ class BotController(
             mysteryBoxCount = 0
             livesDoneForRound = true
             livesPendingAfterGame = false
-            friendLifeScheduler.start(options.sendFriendLife, SystemClock.elapsedRealtime())
+            val configuredFriendLifeIntervalMs = friendLifeIntervalMs(options.friendLifeIntervalMinutes)
+            friendLifeScheduler.start(options.sendFriendLife, SystemClock.elapsedRealtime(), configuredFriendLifeIntervalMs)
             logDiagnostic(
                 "[FRIEND_LIFE_TIMER] enabled=${options.sendFriendLife} " +
-                    "intervalMs=$FRIEND_LIFE_INTERVAL_MS firstDueInMs=${if (options.sendFriendLife) FRIEND_LIFE_INTERVAL_MS else 0}",
+                    "intervalMinutes=${options.friendLifeIntervalMinutes} intervalMs=$configuredFriendLifeIntervalMs " +
+                    "firstDueInMs=${if (options.sendFriendLife) configuredFriendLifeIntervalMs else 0}",
             )
             workerAlive = false
             lastProcessedFrameSequence = -1L
@@ -1607,8 +1609,9 @@ class BotController(
                     friendLifeScheduler.complete(friendTrigger, completedAt)
                     if (friendTrigger != FriendLifeTrigger.TEST) {
                         logDiagnostic(
-                            "[FRIEND_LIFE_TIMER] intervalMs=$FRIEND_LIFE_INTERVAL_MS " +
-                                "nextDueInMs=$FRIEND_LIFE_INTERVAL_MS",
+                            "[FRIEND_LIFE_TIMER] intervalMinutes=${options.friendLifeIntervalMinutes} " +
+                                "intervalMs=${friendLifeIntervalMs(options.friendLifeIntervalMinutes)} " +
+                                "nextDueInMs=${friendLifeIntervalMs(options.friendLifeIntervalMinutes)}",
                         )
                     }
                     if (!revalidateMainMenu(detector, "AFTER_FRIEND_LIFE")) return

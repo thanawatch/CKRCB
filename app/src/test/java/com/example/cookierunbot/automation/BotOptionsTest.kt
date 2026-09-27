@@ -65,4 +65,30 @@ class BotOptionsTest {
             BotOptionsStore.performanceProfileFromStoredValue("REDFINGER_OPTIMIZED"),
         )
     }
+    @Test
+    fun friendLifeMinuteIntervalDefaultsToPreviousSixtyOneMinutes() {
+        assertEquals(61, BotOptions().friendLifeIntervalMinutes)
+        assertEquals(61, BotOptionsStore.friendLifeIntervalMinutesFromStoredValue(61))
+        assertEquals(61, BotOptionsStore.friendLifeIntervalMinutesFromStoredValue(0))
+        assertEquals(61, BotOptionsStore.friendLifeIntervalMinutesFromStoredValue(1441))
+        assertEquals(61, BotOptionsStore.friendLifeIntervalMinutesFromStoredValue(-15))
+    }
+
+    @Test
+    fun friendLifeIntervalSupportsMinutePrecisionIncludingBounds() {
+        assertEquals(1, BotOptions(friendLifeIntervalMinutes = 1).friendLifeIntervalMinutes)
+        assertEquals(5, BotOptions(friendLifeIntervalMinutes = 5).friendLifeIntervalMinutes)
+        assertEquals(1440, BotOptions(friendLifeIntervalMinutes = 1440).friendLifeIntervalMinutes)
+        assertEquals(5, BotOptionsStore.friendLifeIntervalMinutesFromStoredValue(5))
+        assertThrows(IllegalArgumentException::class.java) { BotOptions(friendLifeIntervalMinutes = 0) }
+        assertThrows(IllegalArgumentException::class.java) { BotOptions(friendLifeIntervalMinutes = 1441) }
+    }
+
+    @Test
+    fun disabledFriendLifeCanRetainSelectedMinutesForLaterStart() {
+        val settings = BotOptions(sendFriendLife = false, friendLifeIntervalMinutes = 7)
+        assertEquals(false, settings.sendFriendLife)
+        assertEquals(7, settings.friendLifeIntervalMinutes)
+    }
+
 }

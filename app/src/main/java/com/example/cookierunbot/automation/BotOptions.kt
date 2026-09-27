@@ -27,6 +27,7 @@ data class BotOptions(
     val desiredBoost: BoostChoice = BoostChoice.MAGNETIC,
     val detectRelic: Boolean = false,
     val sendFriendLife: Boolean = false,
+    val friendLifeIntervalMinutes: Int = FRIEND_LIFE_DEFAULT_INTERVAL_MINUTES,
     val receiveSendLivesAfterEachGame: Boolean = false,
     val saveDebugImages: Boolean = true,
     val saveResultImages: Boolean = true,
@@ -35,6 +36,9 @@ data class BotOptions(
     val tapIntervalMs: Int = 250,
 ) {
     init {
+        require(friendLifeIntervalMinutes in FRIEND_LIFE_MIN_INTERVAL_MINUTES..FRIEND_LIFE_MAX_INTERVAL_MINUTES) {
+            "Friend Life interval must be 1-1440 minutes"
+        }
         require(tapIntervalMs in 100..1000) { "Tap interval must be 100-1000 ms" }
         require(jumpMode != JumpMode.FIXED_COUNT || fixedJumpCount > 0) {
             "Fixed jump count must be positive"

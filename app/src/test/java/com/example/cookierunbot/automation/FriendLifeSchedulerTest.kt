@@ -362,4 +362,54 @@ class FriendLifeSchedulerTest {
         assertEquals(3_660_000L, FRIEND_LIFE_INTERVAL_MS)
     }
 
+    @Test fun configuredMinuteIntervalSetsFirstRunAtExactMinute() {
+        val scheduler = FriendLifeScheduler()
+        scheduler.start(true, 1_000L, friendLifeIntervalMs(7))
+        assertFalse(scheduler.observeTime(7 * 60_000L + 999L))
+        assertTrue(scheduler.observeTime(7 * 60_000L + 1_000L))
+        assertEquals(FriendLifeTrigger.SCHEDULED, scheduler.beginIfReady(7 * 60_000L + 1_000L))
+    }
+
+    @Test fun configuredMinuteIntervalRepeatsFromSuccessfulScheduledCompletion() {
+        val scheduler = FriendLifeScheduler()
+        scheduler.start(true, 0L, friendLifeIntervalMs(5))
+        assertTrue(scheduler.observeTime(5 * 60_000L))
+        val scheduled = requireNotNull(scheduler.beginIfReady(5 * 60_000L))
+        scheduler.complete(scheduled, 9 * 60_000L)
+        assertEquals(14 * 60_000L, scheduler.nextDueAt())
+        assertFalse(scheduler.observeTime(14 * 60_000L - 1L))
+        assertTrue(scheduler.observeTime(14 * 60_000L))
+    }
+
+    @Test fun restartReplacesPriorScheduleWithNewSelectedMinutes() {
+        val scheduler = FriendLifeScheduler()
+        scheduler.start(true, 0L, friendLifeIntervalMs(5))
+        scheduler.stop()
+        scheduler.start(true, 30_000L, friendLifeIntervalMs(12))
+        assertEquals(30_000L + 12 * 60_000L, scheduler.nextDueAt())
+        assertFalse(scheduler.scheduledPending())
+    }
+
+    @Test fun manualTestKeepsCustomScheduledDueTime() {
+        val scheduler = FriendLifeScheduler()
+        scheduler.start(true, 0L, friendLifeIntervalMs(7))
+        val due = scheduler.nextDueAt()
+        scheduler.requestTest(true)
+        scheduler.complete(requireNotNull(scheduler.beginIfReady(60_000L)), 90_000L)
+        assertEquals(due, scheduler.nextDueAt())
+    }
+
+    @Test fun invalidConfiguredMinuteIntervalIsRejectedWithoutChangingExistingSchedule() {
+        val scheduler = FriendLifeScheduler()
+        scheduler.start(true, 0L, friendLifeIntervalMs(7))
+        try {
+            scheduler.start(true, 60_000L, 0L)
+            org.junit.Assert.fail("Expected invalid interval to be rejected")
+        } catch (_: IllegalArgumentException) {
+            assertEquals(7 * 60_000L, scheduler.nextDueAt())
+        }
+        assertEquals(60_000L, friendLifeIntervalMs(1))
+        assertEquals(1440 * 60_000L, friendLifeIntervalMs(1440))
+    }
+
 }

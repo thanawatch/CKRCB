@@ -27,7 +27,8 @@ internal fun friendLifeSendDecision(
     return FriendLifeSendDecision(next, null)
 }
 
-class FriendLifeScheduler(private val intervalMs: Long = FRIEND_LIFE_INTERVAL_MS) {
+class FriendLifeScheduler(private var intervalMs: Long = FRIEND_LIFE_INTERVAL_MS) {
+    init { require(intervalMs in FRIEND_LIFE_MIN_INTERVAL_MS..FRIEND_LIFE_MAX_INTERVAL_MS) }
     private var enabled = false
     private var nextDueAt = Long.MAX_VALUE
     private var scheduledPending = false
@@ -35,7 +36,13 @@ class FriendLifeScheduler(private val intervalMs: Long = FRIEND_LIFE_INTERVAL_MS
     private var inProgress = false
     private var retryNotBefore = 0L
 
-    @Synchronized fun start(enableSchedule: Boolean, nowMs: Long) {
+    @Synchronized fun start(
+        enableSchedule: Boolean,
+        nowMs: Long,
+        configuredIntervalMs: Long = intervalMs,
+    ) {
+        require(configuredIntervalMs in FRIEND_LIFE_MIN_INTERVAL_MS..FRIEND_LIFE_MAX_INTERVAL_MS)
+        intervalMs = configuredIntervalMs
         enabled = enableSchedule
         nextDueAt = if (enableSchedule) nowMs + intervalMs else Long.MAX_VALUE
         scheduledPending = false
@@ -143,7 +150,19 @@ internal fun friendLifeTopSearchDecision(
 internal fun friendLifeTopCheckDue(swipeCount: Int): Boolean =
     swipeCount > 0 && swipeCount % FRIEND_TOP_SWIPES_PER_CHECK == 0
 
-const val FRIEND_LIFE_INTERVAL_MS = 61L * 60L * 1000L
+const val FRIEND_LIFE_DEFAULT_INTERVAL_MINUTES = 61
+const val FRIEND_LIFE_MIN_INTERVAL_MINUTES = 1
+const val FRIEND_LIFE_MAX_INTERVAL_MINUTES = 1440
+const val FRIEND_LIFE_INTERVAL_MS = FRIEND_LIFE_DEFAULT_INTERVAL_MINUTES * 60_000L
+private const val FRIEND_LIFE_MIN_INTERVAL_MS = FRIEND_LIFE_MIN_INTERVAL_MINUTES * 60_000L
+private const val FRIEND_LIFE_MAX_INTERVAL_MS = FRIEND_LIFE_MAX_INTERVAL_MINUTES * 60_000L
+
+internal fun friendLifeIntervalMs(minutes: Int): Long {
+    require(minutes in FRIEND_LIFE_MIN_INTERVAL_MINUTES..FRIEND_LIFE_MAX_INTERVAL_MINUTES) {
+        "Friend Life interval must be 1-1440 minutes"
+    }
+    return minutes.toLong() * 60_000L
+}
 internal const val FRIEND_FIND_TOP_SWIPE_DURATION_MS = 360L
 internal const val FRIEND_TRAVERSE_SWIPE_DURATION_MS = 800L
 internal const val FRIEND_GESTURE_TIMEOUT_MS = 3_500L

@@ -54,7 +54,7 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 
 ## Friend Life and Quick Lives
 
-- [ ] Scheduled Friend Life is not due immediately; it queues at the 61-minute interval and begins only at safe MAINMENU.
+- [ ] Set Friend Life interval to 5 minutes in the bubble, start the bot, and verify first due is 5 minutes after Start (not immediately), then next scheduled due is 5 minutes after successful completion; the transaction begins only at safe MAINMENU. Verify the 61-minute default is preserved on existing installs, invalid/blank minutes are rejected when starting, and restarting with a different selected interval changes the schedule without affecting manual-test timing.
 - [ ] Manual Friend Life test returns correct stopped/queued/already queued/in-progress state and coalesces safely with scheduled work.
 - [ ] Verify top search, send-region scanning, Send/confirmation interrupt checks, relic filtering, and bottom completion.
 - [ ] Verify swipe acceptance alone is not progress: unchanged verification ROI drives the 30-second no-progress abort; also exercise absolute/top-search bounds where practical.

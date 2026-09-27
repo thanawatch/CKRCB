@@ -15,6 +15,7 @@ object BotOptionsStore {
             .putString("boost", options.desiredBoost.name)
             .putBoolean("relic", options.detectRelic)
             .putBoolean("friend_life", options.sendFriendLife)
+            .putInt("friend_life_interval_minutes", options.friendLifeIntervalMinutes)
             .putBoolean("quick_lives", options.receiveSendLivesAfterEachGame)
             .putBoolean("save_debug_images", options.saveDebugImages)
             .putBoolean("save_result_images", options.saveResultImages)
@@ -47,6 +48,9 @@ object BotOptionsStore {
                 desiredBoost = boost,
                 detectRelic = preferences.getBoolean("relic", false),
                 sendFriendLife = preferences.getBoolean("friend_life", false),
+                friendLifeIntervalMinutes = friendLifeIntervalMinutesFromStoredValue(
+                    preferences.getInt("friend_life_interval_minutes", FRIEND_LIFE_DEFAULT_INTERVAL_MINUTES),
+                ),
                 receiveSendLivesAfterEachGame = preferences.getBoolean("quick_lives", false),
                 saveDebugImages = preferences.getBoolean("save_debug_images", true),
                 saveResultImages = preferences.getBoolean("save_result_images", true),
@@ -83,6 +87,10 @@ object BotOptionsStore {
 
     private inline fun <reified T : Enum<T>> enumValueOrDefault(value: String?, default: T): T =
         value?.let { runCatching { enumValueOf<T>(it) }.getOrNull() } ?: default
+
+    internal fun friendLifeIntervalMinutesFromStoredValue(value: Int): Int =
+        value.takeIf { it in FRIEND_LIFE_MIN_INTERVAL_MINUTES..FRIEND_LIFE_MAX_INTERVAL_MINUTES }
+            ?: FRIEND_LIFE_DEFAULT_INTERVAL_MINUTES
 
     internal fun performanceProfileFromStoredValue(value: String?): PerformanceProfile =
         enumValueOrDefault(value, PerformanceProfile.LEGACY)
