@@ -2,17 +2,18 @@
 
 ## 1. Source of truth and working rules
 
-This repository is the native Android **RobotRun** automation app for Cookie Run Classic. The current files under `app/src/main/` are authoritative. Read the relevant Kotlin, manifest, resources, assets, and tests before changing behavior; documentation is an index, not a substitute for call-site inspection.
+This repository is the native Android **RobotRun** automation app for Cookie Run Classic. The current files under `app/src/main/` are authoritative. Read the relevant Kotlin, manifest, resources, assets, and tests before changing behavior; documentation is an index, not a substitute for call-site inspection. **Start a new agent session with [DEVELOPMENT_HANDOFF.md](DEVELOPMENT_HANDOFF.md)** for the current product baseline, deliberate exclusions, Telegram/updater status, Redfinger profile and verification limitations. This file remains the operational guide; the handoff is a dated snapshot, not a replacement for current source.
 
 - Work only in this repository unless the task explicitly says otherwise. Inspect `git status` first and preserve unrelated edits.
 - Keep changes narrow. Never commit tokens, Chat IDs, captured screens, logs containing user data, signing material, or generated `build/`, `.gradle/`, `.kotlin/`, or IDE files.
 - Never infer behavior from old commits or porting history. `PORTING_STATUS.md` is the concise current capability map and `PORTING_AUDIT.md` is the current technical audit.
-- Capture and gestures are device-dependent. Do not claim phone verification unless it was actually performed.
+- Capture and gestures are device-dependent. Do not claim phone verification unless it was actually performed. A commit, static review, and written JVM tests are not evidence of a built APK or installed release.
 - Search every caller before changing a public/helper contract. Most policy helpers have focused JVM tests under `app/src/test/java/com/example/cookierunbot/`.
+- **Documentation is part of completion.** For changes to behavior, new commands, options, dependencies, release/update flow, or architecture, synchronize affected sections of `AGENTS.md`, `DEVELOPMENT_HANDOFF.md`, `PORTING_STATUS.md`, `PORTING_AUDIT.md`, `README.md`, and `ANDROID_TEST_CHECKLIST.md`. Update the Redfinger profile or calibration guide if those areas change. Do not blindly rewrite unaffected technical detail or leave conflicting current-command/version lists.
 
 ## 2. Project and entry points
 
-- Package/application ID: `com.example.cookierunbot`; app label: RobotRun; min/target/compile SDK: 26/36/36; Kotlin/JVM 17.
+- Package/application ID: `com.example.cookierunbot`; app label: RobotRun; min/target/compile SDK: 26/36/36; Kotlin/JVM 17. At this handoff `app/build.gradle.kts` declares **versionName `1.1.1`, versionCode `3`**; inspect source before referencing a later build.
 - `app/src/main/AndroidManifest.xml` declares the launcher `MainActivity`, non-exported diagnostic/settings activities, foreground `ScreenCaptureService`, and exported bind-protected `BotAccessibilityService`.
 - `CookieRunBotApplication.onCreate()` initializes the persistent trace, OpenCV, process-level `BotRuntime`, the Telegram command receiver, and runtime diagnostics.
 - `MainActivity` is permission/diagnostic UI. It requests notification, overlay, battery, Accessibility, and MediaProjection access, starts/stops capture, attaches a runtime listener, and refreshes diagnostics. Destroying it does **not** stop the process-owned bot.
@@ -35,7 +36,7 @@ This repository is the native Android **RobotRun** automation app for Cookie Run
 | Friend Life | `BotController.kt`, `FriendLifeScheduler.kt`, `FriendSwipeProfile.kt`, `FriendScrollVerifier.kt`, `FriendLifeConfirmPolicy.kt` |
 | Quick Receive/Send Lives | `BotController.kt`, `QuickLivesSafetyPolicy.kt` |
 | Progress watchdog/recovery | `GameProgressWatchdog.kt`, `GameProgressWatchdogManager.kt`, `GameProgressRecovery.kt`, `GameProgressCloseRecovery.kt`, `ProgressRecoveryGate.kt` |
-| Telegram | `notifications/TelegramConfig*.kt`, `TelegramSecureTokenStore.kt`, `TelegramNotifier.kt`, `TelegramCommandReceiver.kt` |
+| Telegram | `notifications/TelegramConfig*.kt`, `TelegramSecureTokenStore.kt`, `TelegramNotifier.kt`, `TelegramCommandReceiver.kt`, `TelegramDashboardPolicy.kt`, `TelegramDashboardReplies.kt`, `TelegramUpdateReply.kt` |
 | In-app updates | `UpdateActivity.kt`, `update/UpdatePolicy.kt`, `update/UpdateFeedClient.kt`, `update/RobotRunUpdateFileProvider.kt`, `res/xml/update_file_paths.xml` |
 | Round statistics | `statistics/RoundResultCollector.kt`, `RoundResultStore.kt`, `ResultNumberDetector.kt`, `MysteryBoxClassifier.kt` |
 | Public images and diagnostics | `PublicImageStore.kt`, `ResultImageSaver.kt`, `NoMatchDebugFrameSaver.kt`, `RuntimeDiagnosticsLogger.kt`, `diagnostics/` |
@@ -84,7 +85,7 @@ Important rules:
 
 ## 6. Detection and workflows
 
-`BotStage` enumerates detectable states plus the synthetic `IN_GAME`. `StateDetector` validates 1280×720 input, converts to grayscale, restricts matching to the per-stage ROI, and uses `Imgproc.TM_CCOEFF_NORMED` with threshold `0.8`. Most stages use scale `1.0`; `GAME_START` and `GAME_RELAY` use `0.70` through `1.30`. Template paths, exact ROIs, auxiliary templates, alpha masks, and scale lists live only in `StateDetector`.
+`BotStage` enumerates detectable states plus the synthetic `IN_GAME`. `StateDetector` validates 1280×720 input, converts to grayscale, restricts matching to the per-stage ROI, and uses `Imgproc.TM_CCOEFF_NORMED` with threshold `0.8`. Most stages use scale `1.0`. **Legacy** uses `0.70` through `1.30` (seven scales) for `GAME_START`/`GAME_RELAY`; the **opt-in Redfinger profile** uses only `1.0` for both and omits `GAME_START` after it was handled in the current round. Keep these profile differences, templates, exact ROIs, thresholds and stage decisions; see [REDFINGER_PERFORMANCE_PROFILE.md](REDFINGER_PERFORMANCE_PROFILE.md).
 
 `BotController.stagesFor()` defines ordering:
 
@@ -116,7 +117,7 @@ Normal route:
 
 Friend Life and Quick Lives are separate features. The overlay saves `friendLifeIntervalMinutes` in `BotOptions` (1–1440 minutes, default 61 for existing installs) and snapshots it at Start Bot. `FriendLifeScheduler` retains scheduled/manual pending work until a safe MAINMENU begin, merges simultaneous triggers, retries failed scheduled work no earlier than 15 minutes, and schedules the next successful scheduled run using the configured interval measured from completion. Manual tests queue while running and do not move a pending scheduled due time. Changing the setting takes effect on the next Start Bot.
 
-The controller searches for leaderboard top, traverses downward, detects Send buttons within fixed logical ROIs, taps `SEND_BUTTON -> CONFIRM_1 -> CONFIRM_2` with interrupt scans between steps, and filters relic states according to the option. The successful Send-button gesture—not confirmations—records watchdog progress. Naturalized paths come from `FriendSwipeProfile`; `FriendScrollVerifier` must confirm visual progress. Gesture acceptance or merely obtaining a fresh frame is not scroll progress. Current safety bounds include 30 seconds without verified progress, a 30-minute absolute traversal bound, and a 10-minute top-search bound.
+The controller searches for leaderboard top, traverses downward, detects Send buttons within fixed logical ROIs, taps `SEND_BUTTON -> CONFIRM_1 -> CONFIRM_2` with interrupt scans between steps, and filters relic states according to the option. Do not add an unrequested post-send button-disappearance verification or extra scans. The successful Send-button gesture—not a template match, gesture acceptance alone, or later confirmations—records watchdog progress. Naturalized paths come from `FriendSwipeProfile`; `FriendScrollVerifier` must confirm visual progress. Gesture acceptance or merely obtaining a fresh frame is not scroll progress. Current safety bounds include 30 seconds without verified progress, a 30-minute absolute traversal bound, and a 10-minute top-search bound.
 
 ### Quick Receive/Send Lives
 
@@ -155,7 +156,8 @@ The separate main-screen **Update App** activity does not depend on Telegram, th
 | `round-result-analysis` | OCR/classification and store updates |
 | `game-progress-watchdog` | Periodic overdue check/reservation |
 | `game-progress-recovery` | Serialized recovery workflow |
-| `telegram-notifications` / receiver worker | HTTP sends/retries and long polling |
+| `telegram-notifications` / receiver worker | HTTP sends/retries and long polling; requested `/all` screenshot and `/update` feed check |
+| `robotrun-update` | In-app feed/download or offline APK verification, never detector/UI work |
 
 Do not move blocking network/image analysis to the detector or UI thread. Do not run gameplay handlers from scheduler/callback threads.
 
@@ -173,4 +175,4 @@ On Unix: `./gradlew test`, `./gradlew lint`, `./gradlew assembleDebug`. Focused 
 
 `app/build.gradle.kts` applies optional CI signing to **debug only** when all four `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, and `ANDROID_KEY_PASSWORD` variables exist. Release is not minified and has no repository-defined signing config. The manually dispatched `.github/workflows/build-apk.yml` uses Java 17, installs API 36/build-tools 35.0.0, restores the keystore from GitHub secrets, runs `testDebugUnitTest`, assembles/verifies a signed debug APK, and retains the artifact for 14 days.
 
-Before finishing any change: run focused tests, then appropriate full test/lint/build checks; run `git diff --check`; inspect `git diff` and `git status`; report failures and unverified device behavior precisely. See `ANDROID_TEST_CHECKLIST.md` for phone checks.
+Before finishing any change: run focused tests, then appropriate full test/lint/build checks; run `git diff --check`; inspect `git diff` and `git status`; report failures and unverified device behavior precisely. A manual GitHub Actions artifact does not establish a public app-update endpoint. The HTTPS update feed, SHA-256 and same signing certificate need operator setup; source changes alone do not publish an update or refresh an old installed Telegram keyboard. See `ANDROID_TEST_CHECKLIST.md` for phone checks and [DEVELOPMENT_HANDOFF.md](DEVELOPMENT_HANDOFF.md) for handoff and document-sync rules.

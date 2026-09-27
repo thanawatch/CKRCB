@@ -1,0 +1,56 @@
+# RobotRun development handoff — 2026-09-27
+
+> **For a new coding agent:** Read [AGENTS.md](AGENTS.md) first, then this snapshot, then the actual source and tests for the requested area. This handoff describes current implementation and user-required development constraints; it is not permission to alter an unrelated working flow. The source on the checked-out branch is authoritative if this snapshot becomes stale.
+
+## Project identity and current release baseline
+
+- Repository: `thanawatch/BotAndroid`, branch `master`; native Android Kotlin app **RobotRun** for Cookie Run Classic. No Python-runtime dependency in the Android app.
+- Package/application ID: `com.example.cookierunbot`. Version baseline in `app/build.gradle.kts`: **v1.1.1 / versionCode 3** as of this handoff. Increment the integer version code on every subsequent installable release; the human-readable name can follow `major.minor.patch`. Verify values in source before claiming them.
+- Target: actual Android devices and Redfinger; capture via MediaProjection, OpenCV matching, gestures via AccessibilityService. Runtime controller is process-owned, not Activity-owned.
+- Standard frame/action system: cutout-safe dynamic `contentRect`, normalized **1280×720** `Mat` and matching logical coordinates. Never hard-code an inferred physical offset or bypass `CoordinateMapper` except for the explicitly documented legacy fixed-device exceptions. The Redfinger profile has separately calibrated logical post-relay targets.
+- [PORTING_STATUS.md](PORTING_STATUS.md) is the concise capability inventory; [PORTING_AUDIT.md](PORTING_AUDIT.md) explains current call paths; [REDFINGER_PERFORMANCE_PROFILE.md](REDFINGER_PERFORMANCE_PROFILE.md) defines the experimental opt-in profile; [ANDROID_TEST_CHECKLIST.md](ANDROID_TEST_CHECKLIST.md) is the unverified device checklist.
+
+## Changes must stay narrow
+
+1. Inspect `git status`, target call sites, tests and the current options before editing. Preserve unrelated edits. Do not casually change known-good templates, ROIs, thresholds, stage order, Friend Life swipe/calibration/scroll verification, or state transitions.
+2. Keep screenshot capture and gesture mapping on the same immutable transform. `LatestFrameProvider` is latest-only; clients own snapshot clones and must release them. Do not treat frame captured during a gesture as post-gesture evidence.
+3. `CONNECTION_LOST` and `INACTIVE` are **Reload-only**. Do not introduce force-stop/process kill/restart, random taps, old announcement-closure tap loops, or broad speculative recovery.
+4. Friend Life is separate from Quick Lives. Preserve scheduler interval and queued/manual semantics, send flow `SEND_BUTTON -> CONFIRM_1 -> CONFIRM_2`, existing swipe coordinates/visual scroll verification, and bounded timeouts. Do **not** add button-disappearance/post-send verification or unrequested extra frame scans. Only a **successful Send-button gesture callback** resets watchdog progress, not matching the template or completing later confirmations.
+5. The 15-minute watchdog starts at BOT_START and resets for confirmed `GAME_COMPLETE` (immediately, before result handling) and successful Friend Life Send-button gesture only. Prevent stale-frame duplicate resets and callback crossing run/episode boundaries. Overdue Telegram warning is at most one successfully delivered warning per progress episode; failed delivery retry waits at least five minutes and honors server `retry_after`. No automatic NO_MATCH/DETECT_STALL Telegram messages.
+6. Telegram is **read-only**, authorized to the configured Chat ID and token identity. No remote Start/Stop/tap/reload/install commands. Async network/image work must not stall capture, detection or main UI.
+7. Any new updater must require explicit Android/user installation confirmation, never stop the bot or Screen Capture automatically, never silently install/restart the game, and never embed a private GitHub token, Chat ID, signing key or URL containing credentials.
+
+## Existing performance profile: do not flatten it into Legacy
+
+- **Legacy** is default; **Experimental Redfinger Performance Profile** is opt-in from the overlay and snapshotted at Start Bot. Resolution alone does not select it.
+- In Redfinger, GAME_START and GAME_RELAY match only scale 1.0; handled GAME_START is omitted for the rest of that round. Legacy retains its seven scales for both. Redfinger skips expensive IN_GAME detailed NO_MATCH rescoring, retaining light diagnostics and normal detection. Exact uncut 1280×720 capture uses a copy rather than unnecessary resize.
+- Redfinger post-relay logical points are `(1198,35)`, `(647,425)`, `(637,389)`, mapped through the current `contentRect`. Legacy's fixed 2400×1080 physical paths remain isolated.
+- Uncalibrated Redfinger TIME_DEAL and PARTY_RUN_SEASON_REWARDS must block and wait for manual popup clearance; never guess coordinates. See the profile document for benchmarking, limits, and tests.
+
+## Telegram: current product surface
+
+- Available commands: `/help`, `/status`, `/stats`, `/last`, `/boxes`, `/all`, `/friend`, `/health`, `/screen`, `/watchdog`, `/rounds`, `/errors`, `/update`, `/dashboard`. `/start` and `/menu` are dashboard aliases; supported slash commands accept the existing `@BotUsername` parser form.
+- A **persistent reply keyboard** accompanies command replies; `📊 All` and `🔄 Refresh` both trigger `/all`, and `📦 Update App` triggers `/update`. Changing Kotlin keyboard definitions requires a newly installed APK; send `/dashboard` after updating to refresh Telegram's displayed keyboard. BotFather slash-command menu is a separate Telegram setting, not automatically changed by the APK.
+- `/all`: attempt a fresh **1280×720 photo first**, then send the single unchanged `/stats -> /status -> /last` text snapshot. If photo/capture is unavailable, stale, upload fails or the shared 15-second `/screen`/`/all` cooldown applies, the entire text still arrives with a short Screen note.
+- `/friend`, `/health`, `/watchdog`, `/rounds` (up to five recent), `/errors` (requested, allowlisted recent lines) are diagnostic-only; do not add remote gameplay controls. Manual command replies can work when automatic text notifications are disabled.
+- `/update` **checks only** the HTTPS update feed saved by the Android Update App screen and reports installed/available version and release notes, or explains that no feed is configured/unreachable. It does **not** remotely download or install. It requires a newly installed APK carrying that button/command.
+- Owners: `notifications/TelegramCommandReceiver.kt`, `TelegramNotifier.kt`, `TelegramDashboardPolicy.kt`, `TelegramDashboardReplies.kt`, `TelegramUpdateReply.kt`; tests live in matching `app/src/test/` package.
+
+## Updating the APK without Telegram
+
+- `MainActivity` opens `UpdateActivity` via **Update App (no Telegram required)**.
+- Online: user configures an anonymous trusted HTTPS `update.json` URL, taps Check, then Download. Feed fields: `packageName`, `versionCode`, `versionName`, `apkUrl`, `sha256` (64 hex), optional `notes`. The online download checks SHA-256, size, matching package/version and the installed app's signing certificate; redirects stay HTTPS.
+- Offline: **Choose downloaded APK (offline)** uses Android's document picker. A selected local APK still must be newer, have the same package and certificate, and meet the size limit. This route does not use a published feed or claimed online checksum.
+- Cache: app-private `cache/updates/`, shared read-only with the Android installer via a restricted non-exported FileProvider. Installer source permission and the Android install dialog are user-controlled; block installer launch while Bot or Screen Capture runs.
+- **Publication remains a separate operator task, not an implemented automatic release channel.** The private GitHub repo has a manually dispatched signed-debug-APK workflow with 14-day Actions artifact retention. That artifact is not an anonymous permanent feed/download. No public feed, release URL, published APK, completed device installation or unattended OTA success should be claimed without actual evidence. The owner must host a signed APK plus feed on trusted HTTPS, using the **same signing certificate as the installed app**. A different local Android Studio debug key and CI key cannot update in place while preserving data.
+
+## Current verification and agent delivery standard
+
+The immediately preceding Telegram/updater changes were inspected by structural/static checks and have focused test source, but **this handoff does not establish that a Gradle build, JVM suite, lint, signed APK publish, Redfinger runtime, or Android installer smoke test passed**. Do not conflate committed code with device-verified behavior.
+
+For each future change:
+1. State exact files and current branch/HEAD; inspect every affected caller and preserve existing behavior.
+2. Run relevant JVM tests, `test`, `lint`, `assembleDebug`, `git diff --check` where the environment permits; report each actual result and unavailable check honestly.
+3. For a change to feature/command/options/architecture/release logic, keep **AGENTS.md + DEVELOPMENT_HANDOFF.md + PORTING_STATUS.md + PORTING_AUDIT.md + README.md + ANDROID_TEST_CHECKLIST.md** aligned, updating only affected sections; keep [REDFINGER_PERFORMANCE_PROFILE.md](REDFINGER_PERFORMANCE_PROFILE.md) and [CALIBRATION.md](CALIBRATION.md) aligned if touching their owners. Do not leave an obsolete command list or version number in another guide.
+4. Test on real target Android/Redfinger for capture, gestures, keyboard visibility, permission and update/install behaviors. Never report static checks as on-device success.
+5. If committing/pushing was requested, return the actual commit SHA, changed files, tests run and any remaining setup (e.g. feed hosting or APK installation). Never commit credentials, screenshots, keystores, logs with user data, APK/build output, or secrets.

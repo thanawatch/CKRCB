@@ -1,6 +1,6 @@
 # Android verification checklist
 
-Use this after changes that touch runtime behavior. Mark only checks actually performed; emulator/unit checks do not substitute for MediaProjection and Accessibility validation on a target phone.
+Use this after changes that touch runtime behavior. Mark only checks actually performed; emulator/unit/static checks do not substitute for MediaProjection, Accessibility and installer validation on a target phone. For new Agent sessions, read [AGENTS.md](AGENTS.md) and [DEVELOPMENT_HANDOFF.md](DEVELOPMENT_HANDOFF.md) before acting.
 
 ## Automated checks
 
@@ -10,6 +10,7 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 - [ ] `git diff --check`
 - [ ] Review test reports under `app/build/reports/tests/` and lint output; do not commit generated artifacts.
 - [ ] Confirm the APK exists at `app/build/outputs/apk/debug/app-debug.apk`.
+- [ ] For a changed feature or release baseline, verify affected `AGENTS.md`, `DEVELOPMENT_HANDOFF.md`, `PORTING_STATUS.md`, `PORTING_AUDIT.md`, `README.md`, this checklist, and applicable Redfinger/calibration docs have matching command lists, version names and constraints. Do not mark a test as run solely because a test file or workflow was committed.
 
 ## Install, permissions, and lifecycle
 
@@ -28,7 +29,7 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 - [ ] Diagnostics show correct source dimensions, orientation, content rectangle, advancing generation/FPS, and frame age below 1 second during normal operation.
 - [ ] Test a device with a cutout/inset. Confirm the visible game viewport and physical gesture mapping share the same crop.
 - [ ] Validate MAINMENU detection while bot is stopped; verify the service's idle detector yields while bot runs.
-- [ ] Validate representative PRE_GAME, IN_GAME, and POST_GAME templates at current threshold/ROI; include scaled GAME_START/GAME_RELAY animation frames.
+- [ ] Validate representative PRE_GAME, IN_GAME, and POST_GAME templates at current threshold/ROI; include scaled GAME_START/GAME_RELAY animation frames in Legacy. In explicitly enabled Redfinger, verify only scale 1.0 for both and no repeated GAME_START matching after it has been handled in that round.
 - [ ] Confirm raw/normalized no-match pairs are saved only when debug images are enabled and only after watchdog delay; verify they cause no Telegram alert or automatic tap/restart.
 - [ ] Inspect memory during repeated capture restarts and long detection runs for unreleased Image/Mat growth.
 
@@ -39,7 +40,7 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 - [ ] Verify concurrent actions serialize; rejected dispatch, callback cancellation, and callback timeout do not count as success.
 - [ ] Press **Stop Bot** during a wait/gesture callback and confirm no delayed follow-up tap occurs.
 - [ ] Confirm a state-changing action waits for a generation established after callback completion; a frame captured during the gesture must not satisfy the gate.
-- [ ] Verify all fixed-device exceptions separately from logical mapping: the three post-relay absolute points on their calibrated 2400×1080 path, TIME_DEAL at physical `(2000,70)`, and PARTY_RUN_SEASON_REWARDS at physical `(1260,980)`.
+- [ ] Verify the Legacy fixed-device exceptions separately from logical mapping: three post-relay absolute points on the calibrated 2400×1080 path, TIME_DEAL at `(2000,70)`, and PARTY_RUN_SEASON_REWARDS at `(1260,980)`. In Redfinger, verify optional calibrated post-relay logical `(1198,35)`, `(647,425)`, `(637,389)` map through current `contentRect`, and uncalibrated TIME_DEAL/PARTY_RUN_SEASON_REWARDS wait for manual popup clearance without guessed taps.
 
 ## Normal automation workflow
 
@@ -58,7 +59,7 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 - [ ] Manual Friend Life test returns correct stopped/queued/already queued/in-progress state and coalesces safely with scheduled work.
 - [ ] Verify top search, send-region scanning, Send/confirmation interrupt checks, relic filtering, and bottom completion.
 - [ ] Verify swipe acceptance alone is not progress: unchanged verification ROI drives the 30-second no-progress abort; also exercise absolute/top-search bounds where practical.
-- [ ] Confirm only successful Send-button gesture resets game progress, before confirmations.
+- [ ] Confirm only the **successful Send-button gesture callback** resets game progress, before confirmations. Ensure no new post-CONFIRM_2 button disappearance/extra verification or changed Friend Life swipe/scroll thresholds were introduced.
 - [ ] Force a scheduled failure and verify pending work respects the 15-minute retry-not-before.
 - [ ] Test Quick Receive/Send Lives independently: all-received, none-to-receive, confirmation, interrupt, timeout, and next-round reset paths.
 
@@ -72,7 +73,7 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 - [ ] Exercise new progress/Stop/restart during recovery and confirm stale reservation/callback work is discarded.
 - [ ] Configure Telegram without exposing credentials. Test disabled, missing token, missing Chat ID, valid text-only, valid image, network failure, HTTP failure/rate limit, and changed-config cancellation.
 - [ ] At an overdue episode, verify at most one **successfully delivered** alert; failed delivery becomes retry-eligible after 5 minutes. Verify a new progress event permits a later episode.
-- [ ] Send `/help`, `/status`, `/stats`, `/last`, `/boxes`, `/all`, `/friend`, `/health`, `/screen`, `/watchdog`, `/rounds`, `/errors`, `/dashboard` and `@BotUsername` forms from the configured Chat ID; verify other chats and unsupported/gameplay commands cannot control the bot.
+- [ ] Install an APK carrying the latest commands (a GitHub commit does not update an old installed app), send `/dashboard`, and verify Telegram's persistent keyboard. Send `/help`, `/status`, `/stats`, `/last`, `/boxes`, `/all`, `/friend`, `/health`, `/screen`, `/watchdog`, `/rounds`, `/errors`, `/update`, `/dashboard` and `@BotUsername` parser forms from the configured Chat ID; verify other chats and unsupported/gameplay commands cannot control the bot. BotFather's slash-command menu is separate.
 - [ ] Test the persistent dashboard buttons. **📊 All** and **🔄 Refresh** must each send a fresh 1280×720 Screen photo, followed by the full `/all` reply in `/stats` → `/status` → `/last` order with one tap; test the Screen/Friend/Health/Watchdog/Rounds/Errors/Update App buttons too. Test `/update` with absent feed, newer feed, equal-version feed, unreachable feed and changed Telegram credentials; it must never initiate an install.
 - [ ] Test `/friend` while scheduled/pending/running/retrying and after failure/completion; `/health` with stopped capture/disconnected Accessibility; `/watchdog` before Start and during recovery; `/rounds` with more than five results; `/errors` with no recent events and with allowlisted failures (do not leak credentials).
 - [ ] Test `/screen` and `/all` with fresh 1280×720 capture, capture stopped, stale/no frame, repeated requests inside the shared 15-second cooldown, disabled automatic debug-image toggle, failed upload, and config changes before sending. A successful `/all` photo must arrive before the full text; when photo fails, `/all` must still deliver the same stats/status/last text with a short Screen note. Ensure the Mat clone is released and no gameplay/detection thread is blocked.
@@ -86,7 +87,7 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 - [ ] Download a valid APK and confirm that the user—not the app—must stop Bot and Screen Capture, authorize the installer source, and approve Android's install dialog.
 - [ ] Confirm the app never silently stops the bot, does not call gameplay actions or touch Telegram settings, and grants the installer read-only access only to the private updates cache.
 - [ ] Test installation over an APK signed with the **same** key and verify app settings survive; test different-key rejection. Check cancellation/rotation/network-loss and no leaked cached incomplete APK.
-- [ ] Keep the private GitHub source private; publish signed APK and `update.json` separately over HTTPS without embedding a GitHub personal-access token.
+- [ ] Keep the private GitHub source private; publish signed APK and `update.json` separately over HTTPS without embedding a GitHub personal-access token. The sample JSON and 14-day signed debug CI artifact alone are not a configured, permanent anonymous release/update source. Prove same signing certificate before attempting an in-place upgrade.
 
 ## Statistics, storage, and diagnostics
 
