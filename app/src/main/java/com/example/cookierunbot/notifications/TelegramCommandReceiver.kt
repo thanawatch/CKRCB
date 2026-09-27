@@ -131,7 +131,7 @@ object TelegramCommandReceiver {
 internal fun parseTelegramCommand(text: String): String? {
     val token = text.trim().substringBefore(' ').lowercase(Locale.US)
     if (!token.startsWith('/')) return null
-    return token.substringBefore('@').takeIf { it in setOf("/help", "/status", "/stats", "/last", "/boxes") }
+    return token.substringBefore('@').takeIf { it in setOf("/help", "/status", "/stats", "/last", "/boxes", "/all") }
 }
 
 internal fun isAuthorizedTelegramChat(incoming: String, configured: String): Boolean =
@@ -152,14 +152,29 @@ internal fun shouldProcessTelegramUpdate(lastConsumedUpdateId: Long, incomingUpd
     incomingUpdateId > lastConsumedUpdateId
 
 internal fun telegramCommandReply(command: String): String? = when (command) {
-    "/help" -> "RobotRun commands\n\n/status - Bot status\n/stats - Current session totals\n" +
+    "/help" -> "RobotRun commands\n\n/all - Session totals, bot status and last round\n" +
+        "/status - Bot status\n/stats - Current session totals\n" +
         "/last - Last completed round\n/boxes - Mystery Box totals\n/help - Show commands"
     "/status" -> formatStatusReply()
     "/stats" -> formatStatsReply(RoundResultStore.snapshot())
     "/last" -> formatLastRoundReply(RoundResultStore.snapshot().lastRound)
     "/boxes" -> formatBoxesReply(RoundResultStore.snapshot())
+    "/all" -> formatAllReply(
+        RoundResultStore.snapshot(), BotRuntime.diagnostics(), GameProgressWatchdogManager.status(),
+    )
     else -> null
 }
+
+/** One command response, reusing the existing formatters and a single session snapshot. */
+internal fun formatAllReply(
+    stats: com.example.cookierunbot.statistics.SessionStatistics,
+    bot: com.example.cookierunbot.automation.BotControllerDiagnostics,
+    progress: com.example.cookierunbot.automation.GameProgressStatus,
+): String = listOf(
+    formatStatsReply(stats),
+    formatStatusReply(bot, progress),
+    formatLastRoundReply(stats.lastRound),
+).joinToString("\n\n──────────\n\n")
 
 private fun formatStatusReply(): String = formatStatusReply(
     BotRuntime.diagnostics(),

@@ -12,7 +12,7 @@ import org.junit.Test
 
 class TelegramCommandReceiverTest {
     @Test fun parsesAllReadOnlyCommands() {
-        listOf("/help", "/status", "/stats", "/last", "/boxes").forEach { command ->
+        listOf("/help", "/status", "/stats", "/last", "/boxes", "/all").forEach { command ->
             assertEquals(command, parseTelegramCommand(command))
         }
         assertNull(parseTelegramCommand("/startbot"))
@@ -22,6 +22,7 @@ class TelegramCommandReceiverTest {
     @Test fun stripsBotUsernameSuffixAndIgnoresArguments() {
         assertEquals("/status", parseTelegramCommand("/status@RobotRunBot"))
         assertEquals("/stats", parseTelegramCommand("/stats@RobotRunBot extra"))
+        assertEquals("/all", parseTelegramCommand("/all@RobotRunBot"))
     }
 
     @Test fun configuredChatIdIsTheOnlyAuthorizedChat() {
@@ -76,6 +77,34 @@ class TelegramCommandReceiverTest {
         assertTrue(reply.contains("Last progress: none"))
         assertTrue(reply.contains("Watchdog:\nStopped"))
         assertFalse(reply.contains("Last progress: BOT_START"))
+    }
+
+    @Test fun allCommandReturnsOneReplyInStatsStatusLastOrder() {
+        val stats = statistics(rounds = 75, totalBoxes = 17).copy(
+            lastRound = RoundResult(75, 0L, 252_000L, coins = 3_200, xp = 1_400, boxes = listOf("gold"), boxCount = 1),
+        )
+        val bot = stoppedBot()
+        val progress = GameProgressWatchdog().status(100_000L)
+        val combined = formatAllReply(stats, bot, progress)
+        assertEquals(
+            listOf(
+                formatStatsReply(stats),
+                formatStatusReply(bot, progress),
+                formatLastRoundReply(stats.lastRound),
+            ).joinToString("\n\n──────────\n\n"),
+            combined,
+        )
+        assertTrue(combined.indexOf("📊 RobotRun Session") < combined.indexOf("🤖 RobotRun Status"))
+        assertTrue(combined.indexOf("🤖 RobotRun Status") < combined.indexOf("🎮 Last Round"))
+        assertTrue(combined.contains("Rounds: 75"))
+        assertTrue(combined.contains("Coins: 3,200"))
+    }
+
+    @Test fun allCommandRetainsMissingLastRoundMessage() {
+        val reply = formatAllReply(statistics(0, 0), stoppedBot(), GameProgressWatchdog().status(100_000L))
+        assertTrue(reply.startsWith("📊 RobotRun Session"))
+        assertTrue(reply.contains("🤖 RobotRun Status"))
+        assertTrue(reply.endsWith("No completed rounds in this session yet."))
     }
 
     private fun stoppedBot() = BotControllerDiagnostics(

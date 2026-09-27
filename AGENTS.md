@@ -134,7 +134,7 @@ Recovery runs on `game-progress-recovery`, activates `ProgressRecoveryGate`, and
 - `StatisticsActivity` only renders the store every second; opening/closing it does not reset a session.
 - Public result images: `Pictures/CookieRunBot/results/`. Prolonged no-match raw/normalized pairs: `Pictures/CookieRunBot/debug/`. These are local diagnostics only. In-memory debug log: 500 lines. Saved text logs: `Download/RobotRun/` with app-specific fallback. Persistent trace: app-specific external `diagnostics/coldstart_trace.txt` with internal fallback and rotation.
 - Telegram config is stored in `telegram_notifications`; token ciphertext/IV are in separate preferences and the non-exportable AES-GCM key is in Android Keystore. Never log token-bearing URLs.
-- `TelegramCommandReceiver` long-polls asynchronously and accepts read-only `/help`, `/status`, `/stats`, `/last`, `/boxes` (including `@BotUsername` forms) only from the configured Chat ID. Reply retries remain bound to the authorizing token identity/chat and cancel if config changes. There is no remote gameplay control.
+- `TelegramCommandReceiver` long-polls asynchronously and accepts read-only `/help`, `/status`, `/stats`, `/last`, `/boxes`, `/all` (including `@BotUsername` forms; `/all` replies once with `/stats` → `/status` → `/last` using one session snapshot) only from the configured Chat ID. Reply retries remain bound to the authorizing token identity/chat and cancel if config changes. There is no remote gameplay control.
 - Telegram/network/encoding failures must never block gameplay. NO_MATCH and DETECT_STALL remain local; the game-progress overdue path is the notification path.
 
 ## 10. Threads and lifetime at a glance

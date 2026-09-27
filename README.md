@@ -97,7 +97,7 @@ Captured images may contain personal information and can be visible to gallery/f
 
 Telegram settings store the bot token encrypted with an Android Keystore-backed AES-GCM key. The configured Chat ID is both the notification destination and the only authorized incoming-command chat. Networking and encoding run asynchronously and failures do not stop gameplay.
 
-Supported read-only commands are `/help`, `/status`, `/stats`, `/last`, and `/boxes`, including group-chat `@BotUsername` forms. There is no remote Start/Stop or gameplay control. Never commit credentials or paste token-bearing URLs into logs/issues.
+Supported read-only commands are `/help`, `/status`, `/stats`, `/last`, `/boxes`, and `/all` (one message with `/stats` → `/status` → `/last`), including group-chat `@BotUsername` forms. There is no remote Start/Stop or gameplay control. Never commit credentials or paste token-bearing URLs into logs/issues.
 
 ## Troubleshooting
 
