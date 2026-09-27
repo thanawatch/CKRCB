@@ -13,7 +13,7 @@ This repository is the native Android **RobotRun** automation app for Cookie Run
 
 ## 2. Project and entry points
 
-- Package/application ID: `com.example.cookierunbot`; app label: RobotRun; min/target/compile SDK: 26/36/36; Kotlin/JVM 17. At this handoff `app/build.gradle.kts` declares **versionName `1.1.3`, versionCode `5`**; inspect source before referencing a later build.
+- Package/application ID: `com.example.cookierunbot`; app label: RobotRun; min/target/compile SDK: 26/36/36; Kotlin/JVM 17. At this handoff `app/build.gradle.kts` declares **versionName `1.1.4`, versionCode `6`**; inspect source before referencing a later build.
 - `app/src/main/AndroidManifest.xml` declares the launcher `MainActivity`, non-exported diagnostic/settings activities, foreground `ScreenCaptureService`, and exported bind-protected `BotAccessibilityService`.
 - `CookieRunBotApplication.onCreate()` initializes the persistent trace, OpenCV, process-level `BotRuntime`, the Telegram command receiver, and runtime diagnostics.
 - `MainActivity` is permission/diagnostic UI. It requests notification, overlay, battery, Accessibility, and MediaProjection access, starts/stops capture, attaches a runtime listener, and refreshes diagnostics. Destroying it does **not** stop the process-owned bot.
@@ -38,6 +38,7 @@ This repository is the native Android **RobotRun** automation app for Cookie Run
 | Progress watchdog/recovery | `GameProgressWatchdog.kt`, `GameProgressWatchdogManager.kt`, `GameProgressRecovery.kt`, `GameProgressCloseRecovery.kt`, `ProgressRecoveryGate.kt` |
 | Telegram | `notifications/TelegramConfig*.kt`, `TelegramSecureTokenStore.kt`, `TelegramNotifier.kt`, `TelegramCommandReceiver.kt`, `TelegramDashboardPolicy.kt`, `TelegramDashboardReplies.kt`, `TelegramUpdateReply.kt`, `TelegramApkDelivery.kt`, `TelegramScreenshotEncoder.kt`, `TelegramScreenshotMultipart.kt` |
 | In-app updates | `UpdateActivity.kt`, `update/UpdatePolicy.kt`, `update/UpdateFeedClient.kt`, `update/RobotRunUpdateFileProvider.kt`, `res/xml/update_file_paths.xml` |
+| Calibration UI | `automation/CoordinateCalibrationOverlay.kt`, `CalibrationImageView.kt`, `CalibrationCoordinatePolicy.kt`, `CalibrationPanelLayoutPolicy.kt`; [CALIBRATION.md](CALIBRATION.md) |
 | Round statistics | `statistics/RoundResultCollector.kt`, `RoundResultStore.kt`, `ResultNumberDetector.kt`, `MysteryBoxClassifier.kt` |
 | Public images and diagnostics | `PublicImageStore.kt`, `ResultImageSaver.kt`, `NoMatchDebugFrameSaver.kt`, `RuntimeDiagnosticsLogger.kt`, `diagnostics/` |
 | Build/release automation | `app/build.gradle.kts`, `gradle/wrapper/gradle-wrapper.properties`, `.github/workflows/build-apk.yml` |
@@ -141,7 +142,7 @@ Recovery runs on `game-progress-recovery`, activates `ProgressRecoveryGate`, and
 
 ### In-app update constraints
 
-The separate main-screen **Update App** activity does not depend on Telegram, the overlay, or automation. It also offers a user-selected local APK path via Android's document picker so an update can be installed even without hosted feed; the importer still checks package name, newer version and existing signing certificate, and enforces the 250 MiB cap. It starts at v1.1.3/code 5 and accepts an owner-configured, anonymous HTTPS feed; never embed a private GitHub token or signing material. A private GitHub Actions artifact alone cannot serve as a durable anonymous distribution feed. The feed requires `packageName`, `versionCode`, `versionName`, `apkUrl`, `sha256`, and optional `notes`; the example under `docs/` is illustrative, not a live release. HTTPS redirects must not downgrade. Validate SHA-256, archive package/version and certificate against the currently installed app; download into app-private cache, use the non-exported FileProvider, and let Android request explicit user permission/confirmation. Guard against Bot or Screen Capture still running; never stop them automatically or mutate watchdog/runtime. No periodic silent update, no gameplay control and no token logging. Tests under `app/src/test/java/com/example/cookierunbot/update/`.
+The separate main-screen **Update App** activity does not depend on Telegram, the overlay, or automation. It also offers a user-selected local APK path via Android's document picker so an update can be installed even without hosted feed; the importer still checks package name, newer version and existing signing certificate, and enforces the 250 MiB cap. It starts at v1.1.4/code 6 and accepts an owner-configured, anonymous HTTPS feed; never embed a private GitHub token or signing material. A private GitHub Actions artifact alone cannot serve as a durable anonymous distribution feed. The feed requires `packageName`, `versionCode`, `versionName`, `apkUrl`, `sha256`, and optional `notes`; the example under `docs/` is illustrative, not a live release. HTTPS redirects must not downgrade. Validate SHA-256, archive package/version and certificate against the currently installed app; download into app-private cache, use the non-exported FileProvider, and let Android request explicit user permission/confirmation. Guard against Bot or Screen Capture still running; never stop them automatically or mutate watchdog/runtime. No periodic silent update, no gameplay control and no token logging. Tests under `app/src/test/java/com/example/cookierunbot/update/`.
 
 ## 10. Threads and lifetime at a glance
 
@@ -161,6 +162,10 @@ The separate main-screen **Update App** activity does not depend on Telegram, th
 | `robotrun-update` | In-app feed/download or offline APK verification, never detector/UI work |
 
 Do not move blocking network/image analysis to the detector or UI thread. Do not run gameplay handlers from scheduler/callback threads.
+
+### Orientation-safe calibration UI
+
+`CoordinateCalibrationOverlay` is a separate non-gameplay WindowManager overlay, **not** a source of live tap coordinates for handlers. Its capture is a frozen 1280×720 logical image and always uses its original `ContentTransform`. The panel must resize when Android display/configuration/insets change; use a display-specific Window Context where available and keep **✕ Close** in a fixed header outside the scrollable controls. `CalibrationPanelLayoutPolicy` sizes against the usable current viewport. Reflow is layout-only: never recapture automatically, dispatch gestures, mutate the detector/ROI/threshold, change saved points or watchdog state. Unregister callbacks on close and restore the parent bubble even after an updateViewLayout failure. On rotation, instruct the user to explicitly capture a new still for current physical coordinates; the old captured contentRect is not silently remapped. See [CALIBRATION.md](CALIBRATION.md) and the UI-specific Android checklist.
 
 ## 11. Build, test, signing, and CI
 

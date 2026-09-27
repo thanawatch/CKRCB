@@ -93,11 +93,17 @@ A new Start Bot creates a new statistics session. Result OCR/classification runs
 
 Captured images may contain personal information and can be visible to gallery/file applications. Do not share them or logs without inspection.
 
+## Calibration panel across orientation changes
+
+Capture Calibration is a separate overlay containing a **frozen 1280×720 frame**, not a live game view. The panel now refits its width and height to the currently usable screen area after switching landscape ↔ portrait, avoiding status/navigation bars and cutouts. Its **✕ Close** control is in a fixed header that does not scroll away. Rotation never triggers a tap or automatic recapture; a displayed physical X/Y always refers to the still image's original `contentRect`. Use **Capture new clean frame** after rotation to calibrate the new display geometry.
+
+On an older installed build with an off-screen Close button, rotate back to landscape or temporarily disable RobotRun's **Display over other apps** permission in Android settings. Do not clear app data or uninstall it to dismiss the overlay. See [CALIBRATION.md](CALIBRATION.md).
+
 ## In-app updates (independent of Telegram)
 
-The main screen includes **Update App**, implemented in `UpdateActivity`. The source baseline is **v1.1.3 (versionCode 5)**; an installed APK can still be older until rebuilt and installed. The owner must configure a trusted anonymous HTTPS `update.json` URL in that screen for **online** update checks; a private GitHub Actions artifact is not a permanent anonymous download link, and no public feed is provided by committing this code. See [the example feed](docs/update-feed.example.json). This updater does not embed GitHub tokens, signing keys, or credentials.
+The main screen includes **Update App**, implemented in `UpdateActivity`. The source baseline is **v1.1.4 (versionCode 6)**; an installed APK can still be older until rebuilt and installed. The owner must configure a trusted anonymous HTTPS `update.json` URL in that screen for **online** update checks; a private GitHub Actions artifact is not a permanent anonymous download link, and no public feed is provided by committing this code. See [the example feed](docs/update-feed.example.json). This updater does not embed GitHub tokens, signing keys, or credentials.
 
-To publish a future build, increment both `versionCode` and `versionName` (e.g. `6` / `1.1.4`), build a **single signed APK with the same signing certificate as the currently installed application**, host that APK on HTTPS, calculate its SHA-256 (`Get-FileHash -Algorithm SHA256` on PowerShell or `sha256sum` on Linux), and publish the feed with its actual URL, package name, code, name, checksum, and notes. Only publish signed binaries and feed data to the distribution host; the source repository may remain private. Do not publish the sample placeholder checksum as a real feed.
+To publish a future build, increment both `versionCode` and `versionName` (e.g. `7` / `1.1.5`), build a **single signed APK with the same signing certificate as the currently installed application**, host that APK on HTTPS, calculate its SHA-256 (`Get-FileHash -Algorithm SHA256` on PowerShell or `sha256sum` on Linux), and publish the feed with its actual URL, package name, code, name, checksum, and notes. Only publish signed binaries and feed data to the distribution host; the source repository may remain private. Do not publish the sample placeholder checksum as a real feed.
 
 Alternatively, without any hosted feed, tap **Choose downloaded APK (offline)** and select a local APK through Android's document picker. It still must be a strictly newer RobotRun APK signed with the installed signing certificate; no network checksum is available for this deliberate local-file path.
 

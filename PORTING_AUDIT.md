@@ -73,6 +73,12 @@ Recovery is handed to `BotController` and executed on its recovery executor. A c
 
 `PublicImageStore` uses MediaStore/public collections on modern Android and legacy public paths where applicable. Results go to `Pictures/CookieRunBot/results`; no-match pairs go to `Pictures/CookieRunBot/debug`. `DebugLogStore` bounds memory at 500 messages. `RuntimeDiagnosticsLogger` emits throttled health/DETECT_STALL context. `PersistentTrace` writes/rotates an app-specific cold-start trace. None of these diagnostic signals authorize recovery actions beyond the explicitly wired progress watchdog.
 
+## Calibration window rotation audit
+
+`CoordinateCalibrationOverlay` owns a standalone `TYPE_APPLICATION_OVERLAY` view hierarchy. Previously the panel width/height were fixed at `showPanel()` from the then-current display geometry, with `FLAG_LAYOUT_IN_SCREEN`. Switching away from the landscape game could rotate Redfinger to portrait without refitting that WindowManager view, clipping right-hand controls. The new panel uses a display-specific Window Context where available; configuration and DisplayManager callbacks request an immediate and delayed reflow using `CalibrationPanelLayoutPolicy.fit()` against the current system-bar/cutout-adjusted window bounds. It no longer forces `FLAG_LAYOUT_IN_SCREEN`.
+
+The persistent **✕ Close** header is outside the scrollable form. Closing unregisters callbacks, cancels pending reflows, removes the window, and restores the parent bubble. A layout-update failure also closes safely. This resize path leaves `LatestFrameProvider`, screenshot selection, `CalibrationCoordinatePolicy`, saved points, detector, templates, and Accessibility gestures untouched. A rotated display does not alter the captured frame's original `ContentTransform`; the UI prompts a fresh explicit capture to obtain current physical coordinates. See [CALIBRATION.md](CALIBRATION.md).
+
 ## Telegram audit
 
 `TelegramConfigStore` stores nonsecret settings in SharedPreferences and delegates token encryption to `TelegramSecureTokenStore` (AES-GCM with an Android Keystore key); it migrates a legacy plaintext preference if encountered. `TelegramNotifier` uses a single scheduled executor, bounded HTTP timeouts, token-redacted logging, and retry handling for command replies. Gameplay does not wait for it.
@@ -87,7 +93,7 @@ Recovery is handed to `BotController` and executed on its recovery executor. A c
 
 ## Build and verification audit
 
-The app module baseline is **v1.1.3 / versionCode 5** and uses Android Gradle Plugin 8.10.1, Kotlin 2.1.20, Gradle wrapper 8.11.1, Java/Kotlin 17, compile/target SDK 36, min SDK 26, Activity KTX 1.10.1, AndroidX Core 1.16.0 (`FileProvider`), OpenCV 4.13.0, and JUnit 4.13.2. Debug signing switches to the `ci` config only when all four signing environment variables are present. Release minification is disabled and no release signing is declared. Ensure future versionCode increments and same installed signing certificate for any APK update.
+The app module baseline is **v1.1.4 / versionCode 6** and uses Android Gradle Plugin 8.10.1, Kotlin 2.1.20, Gradle wrapper 8.11.1, Java/Kotlin 17, compile/target SDK 36, min SDK 26, Activity KTX 1.10.1, AndroidX Core 1.16.0 (`FileProvider`), OpenCV 4.13.0, and JUnit 4.13.2. Debug signing switches to the `ci` config only when all four signing environment variables are present. Release minification is disabled and no release signing is declared. Ensure future versionCode increments and same installed signing certificate for any APK update.
 
 `.github/workflows/build-apk.yml` is manual. It checks out, prepares Java/Gradle/API 36, restores and validates a secret-backed keystore, runs `./gradlew testDebugUnitTest`, runs `assembleDebug`, verifies the original `app-debug.apk` signature with build-tools 35.0.0, reads `app/build/outputs/apk/debug/output-metadata.json`, and copies the verified APK as `RobotRun-v<versionName>-vc<versionCode>-g<shortSHA>-run<runNumber>-a<runAttempt>-signed-debug.apk`. Upload Artifact uses that stem as the ZIP name and retains it 14 days. The downloaded APK is a byte-for-byte copy; the internal Gradle output and signing process are unchanged.
 

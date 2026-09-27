@@ -1,6 +1,6 @@
 # Current implementation status
 
-> Despite this file's legacy name, this is a **current-code capability map**, not a migration history or roadmap. Source at HEAD remains authoritative. Start with [AGENTS.md](AGENTS.md) and the dated [DEVELOPMENT_HANDOFF.md](DEVELOPMENT_HANDOFF.md); use [PORTING_AUDIT.md](PORTING_AUDIT.md) for call flows. Current package baseline: **RobotRun v1.1.3 / versionCode 5** in `app/build.gradle.kts` (recheck source before citing later versions).
+> Despite this file's legacy name, this is a **current-code capability map**, not a migration history or roadmap. Source at HEAD remains authoritative. Start with [AGENTS.md](AGENTS.md) and the dated [DEVELOPMENT_HANDOFF.md](DEVELOPMENT_HANDOFF.md); use [PORTING_AUDIT.md](PORTING_AUDIT.md) for call flows. Current package baseline: **RobotRun v1.1.4 / versionCode 6** in `app/build.gradle.kts` (recheck source before citing later versions).
 
 ## Implemented runtime
 
@@ -20,6 +20,7 @@
 ## Deliberate boundaries and current limitations
 
 - MediaProjection, overlay, Accessibility, notification, and battery settings still require user action; automation cannot silently grant them.
+- The still-frame Coordinate Calibration tool has a screen-orientation-aware overlay: fixed, always-visible ✕ Close header above the scroll area; display-specific metrics and configuration/display resize callbacks; usable bounds exclude system bars/cutouts. Rotation retains the captured 1280×720 frame and its original transform without performing any gameplay action. Explicit recapture is needed for current physical X/Y. See [CALIBRATION.md](CALIBRATION.md).
 - Detection is calibrated for normalized 1280×720 content and current assets/ROIs. Device/cutout behavior and gesture calibration require real-phone validation. The Redfinger performance profile is opt-in (not selected by resolution) and makes narrowly scoped capture, NO_MATCH scoring, matching-scale and calibrated-post-relay changes; see [REDFINGER_PERFORMANCE_PROFILE.md](REDFINGER_PERFORMANCE_PROFILE.md).
 - Fixed-device gesture exceptions are the isolated absolute 2400×1080 `POST_RELAY_*_PHYSICAL` points, TIME_DEAL at physical `(2000,70)`, and PARTY_RUN_SEASON_REWARDS at physical `(1260,980)`; they bypass normalized mapping and are not general coordinate policy.
 - The current watchdog CLOSE_BUTTON fallback uses grayscale `detectTemplate()` / `TM_CCOEFF_NORMED` with threshold 0.8 in the top-right quarter, not the alpha-mask SQDIFF helper. It stops on no-match or after three matched taps; a successful callback is followed by the 2-second retry delay when another attempt remains, then a post-delay generation baseline and a strictly newer frame (the final tap has no retry delay but still gets a fresh frame). MAINMENU detection then examines that frame and subsequent fresh frames for up to 120 seconds and routes a match to PRE_GAME.

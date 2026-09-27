@@ -1,6 +1,9 @@
 package com.example.cookierunbot.automation
 
+import android.content.ComponentCallbacks
 import android.content.Context
+import android.content.res.Configuration
+import android.hardware.display.DisplayManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -11,7 +14,9 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.view.Display
 import android.view.Gravity
+import android.view.WindowInsets
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -32,14 +37,29 @@ import kotlin.math.roundToInt
 
 /** A separate, non-gameplay calibration window. Never dispatches an Accessibility gesture. */
 internal class CoordinateCalibrationOverlay(
-    private val context: Context,
+    sourceContext: Context,
     private val bubbleRoot: View,
     private val onClosed: () -> Unit,
 ) {
+    private val displayManager =
+        sourceContext.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+    // An Application Context can retain portrait metrics while an overlay is landscape.
+    // A window-specific context tracks the display configuration used by this overlay.
+    private val context: Context = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        displayManager.getDisplay(Display.DEFAULT_DISPLAY)?.let { display ->
+            sourceContext.createDisplayContext(display).createWindowContext(
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null,
+            )
+        } ?: sourceContext
+    } else sourceContext
     private val windows = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val ui = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor { task -> Thread(task, "coordinate-calibration") }
-    private val root = ScrollView(context)
+    private val root = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        setBackgroundColor(Color.rgb(28, 31, 39))
+    }
+    private val scroller = ScrollView(context)
     private val content = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(12), dp(8), dp(12), dp(12))
@@ -62,6 +82,33 @@ internal class CoordinateCalibrationOverlay(
     private var closed = false
     private var requestId = 0L
     private var captureInProgress = false
+    private var panelParams: WindowManager.LayoutParams? = null
+    private var layoutListenersRegistered = false
+    private val reflowPanel = Runnable { resizePanelForCurrentDisplay() }
+    private val configurationListener = object : ComponentCallbacks {
+        override fun onConfigurationChanged(newConfig: Configuration) = schedulePanelReflow()
+        override fun onLowMemory() = Unit
+    }
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) = Unit
+        override fun onDisplayRemoved(displayId: Int) = Unit
+        override fun onDisplayChanged(displayId: Int) = schedulePanelReflow()
+    }
+
+    private fun registerLayoutListeners() {
+        if (layoutListenersRegistered) return
+        context.registerComponentCallbacks(configurationListener)
+        displayManager.registerDisplayListener(displayListener, ui)
+        layoutListenersRegistered = true
+    }
+
+    private fun schedulePanelReflow() {
+        if (closed) return
+        ui.removeCallbacks(reflowPanel)
+        // Recheck after rotation/insets settle as some devices notify before their metrics update.
+        ui.post(reflowPanel)
+        ui.postDelayed(reflowPanel, 200L)
+    }
 
     fun open(): Boolean {
         if (closed || BotRuntime.isRunning() || !LatestFrameProvider.diagnostics().captureRunning) {
@@ -69,19 +116,23 @@ internal class CoordinateCalibrationOverlay(
             return false
         }
         buildUi()
+        registerLayoutListeners()
         capture()
         return true
     }
 
     private fun buildUi() {
-        root.isFillViewport = false
-        root.addView(content)
-        content.addView(LinearLayout(context).apply {
+        // Persistent header stays outside the scroll area, including in portrait.
+        root.addView(LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            addView(button("✕ Close") { close() }, LinearLayout.LayoutParams(dp(96), dp(48)))
             addView(label("Coordinate Calibration"), LinearLayout.LayoutParams(0, dp(48), 1f))
-            addView(button("Close") { close() }, LinearLayout.LayoutParams(dp(78), dp(48)))
-        })
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+        root.addView(scroller, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f,
+        ))
+        scroller.addView(content)
         content.addView(status)
         content.addView(label("Pinch or use +/- to zoom. Drag to pan. Tap a button on the still image."))
         content.addView(image, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(260)))
@@ -190,19 +241,42 @@ internal class CoordinateCalibrationOverlay(
     private fun showPanel() {
         if (closed || windowAdded) return
         val bounds = displayBounds()
+        val size = CalibrationPanelLayoutPolicy.fit(bounds.width(), bounds.height(), dp(620))
         val params = WindowManager.LayoutParams(
-            minOf(dp(620), (bounds.width() * 0.94f).roundToInt()),
-            minOf(dp(620), (bounds.height() * 0.94f).roundToInt()),
+            size.width,
+            size.height,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            // Do not lay this dialog beneath/through the status and navigation bars.
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT,
         ).apply { gravity = Gravity.CENTER }
         try {
             windows.addView(root, params)
+            panelParams = params
             windowAdded = true
+            schedulePanelReflow()
         } catch (error: Exception) {
             Toast.makeText(context, "Cannot open calibration window", Toast.LENGTH_LONG).show()
             close()
+        }
+    }
+
+    private fun resizePanelForCurrentDisplay() {
+        if (closed || !windowAdded) return
+        val params = panelParams ?: return
+        val bounds = displayBounds()
+        val size = CalibrationPanelLayoutPolicy.fit(bounds.width(), bounds.height(), dp(620))
+        if (params.width == size.width && params.height == size.height) return
+        params.width = size.width
+        params.height = size.height
+        if (currentTransform != null) {
+            status.text = "Display changed: this still image uses the ORIGINAL contentRect. " +
+                "Capture new clean frame for current physical X/Y."
+        }
+        try {
+            windows.updateViewLayout(root, params)
+        } catch (_: Exception) {
+            close() // Never leave the bubble hidden behind an unusable calibration dialog.
         }
     }
 
@@ -292,11 +366,19 @@ internal class CoordinateCalibrationOverlay(
 
     @Suppress("DEPRECATION")
     private fun displayBounds(): Rect = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-        windows.currentWindowMetrics.bounds
+        val metrics = windows.currentWindowMetrics
+        val insets = metrics.windowInsets.getInsetsIgnoringVisibility(
+            WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout(),
+        )
+        Rect(
+            0, 0,
+            (metrics.bounds.width() - insets.left - insets.right).coerceAtLeast(1),
+            (metrics.bounds.height() - insets.top - insets.bottom).coerceAtLeast(1),
+        )
     } else {
         val metrics = android.util.DisplayMetrics()
-        windows.defaultDisplay.getRealMetrics(metrics)
-        Rect(0, 0, metrics.widthPixels, metrics.heightPixels)
+        windows.defaultDisplay.getMetrics(metrics)
+        Rect(0, 0, metrics.widthPixels.coerceAtLeast(1), metrics.heightPixels.coerceAtLeast(1))
     }
 
     fun close() {
@@ -304,10 +386,17 @@ internal class CoordinateCalibrationOverlay(
         closed = true
         requestId++
         worker.shutdownNow()
-        if (windowAdded) {
-            windows.removeViewImmediate(root)
-            windowAdded = false
+        ui.removeCallbacks(reflowPanel)
+        if (layoutListenersRegistered) {
+            context.unregisterComponentCallbacks(configurationListener)
+            displayManager.unregisterDisplayListener(displayListener)
+            layoutListenersRegistered = false
         }
+        if (windowAdded) {
+            windowAdded = false
+            runCatching { windows.removeViewImmediate(root) }
+        }
+        panelParams = null
         currentBitmap?.recycle()
         currentBitmap = null
         if (bubbleRoot.parent != null) bubbleRoot.visibility = View.VISIBLE

@@ -43,6 +43,15 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 - [ ] Confirm a state-changing action waits for a generation established after callback completion; a frame captured during the gesture must not satisfy the gate.
 - [ ] Verify the Legacy fixed-device exceptions separately from logical mapping: three post-relay absolute points on the calibrated 2400×1080 path, TIME_DEAL at `(2000,70)`, and PARTY_RUN_SEASON_REWARDS at `(1260,980)`. In Redfinger, verify optional calibrated post-relay logical `(1198,35)`, `(647,425)`, `(637,389)` map through current `contentRect`, and uncalibrated TIME_DEAL/PARTY_RUN_SEASON_REWARDS wait for manual popup clearance without guessed taps.
 
+## Calibration overlay and rotation recovery
+
+- [ ] Open Capture Calibration while Bot stopped and Screen Capture running. Capture a genuine newer, clean 1280×720 frame; assert no game tap and no auto-recapture after opening/rotation.
+- [ ] In landscape, scroll the calibration form to the bottom: the fixed **✕ Close** header must remain visible and tappable.
+- [ ] Leave the landscape game for the portrait Redfinger/Android home screen **while calibration is still open**. The panel must resize fully inside available portrait width/height (excluding system bars/cutouts); all buttons must be accessible by scrolling, especially Close. Rotate back and repeat multiple times.
+- [ ] Verify the still image and saved logical coordinates survive layout reflows. After rotation, show the original-contentRect warning; only an explicit Capture new clean frame can update physical X/Y to the new geometry.
+- [ ] Close calibration after rotation. Verify parent RobotRun bubble reappears, overlay event listeners are removed and repeated open/close leaves no invisible or duplicate windows. Verify safe exit if a window layout update fails or overlay permission changes.
+- [ ] Verify legacy minSdk 26-29 metrics fallback and API 30+/Redfinger Window Context and display listeners where devices are available. No changes to template, ROI, capture normalization, watchdog, game gestures, or Friend Life are expected.
+
 ## Normal automation workflow
 
 - [ ] Start Bot waits for fresh capture and connected Accessibility, then begins in PRE_GAME.
@@ -81,7 +90,7 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 
 ## In-app updater (independent of Telegram)
 
-- [ ] On the main screen, open **Update App** with Telegram disabled. Confirm v1.1.3/code 5 is displayed and no check occurs before user action.
+- [ ] On the main screen, open **Update App** with Telegram disabled. Confirm v1.1.4/code 6 is displayed and no check occurs before user action.
 - [ ] Configure a trusted HTTPS feed containing a genuinely signed newer universal APK, correct package/code/name and 64-hex SHA-256. Verify newer-version comparison and up-to-date cases.
 - [ ] With no feed configured, select a downloaded APK using Android's document picker. Verify that only a newer RobotRun APK signed with the existing certificate is accepted, and a wrong package/old APK/oversized file is rejected.
 - [ ] Reject HTTP, malformed URL, embedded credentials, non-HTTPS redirects, invalid/oversized feed, zero-length/oversized APK, wrong checksum, wrong package/version, different signing certificate, and older/equal APK.
