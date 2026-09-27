@@ -18,8 +18,13 @@ The Redfinger profile currently makes three deliberately narrow changes:
    destination ownership. Every crop, inset, offset, or other resolution uses the original path.
 3. It refuses to dispatch the uncalibrated raw-physical `POST_RELAY_1/2/3`, `TIME_DEAL`, and
    `PARTY_RUN_SEASON_REWARDS` targets. It logs `UNCALIBRATED_PHYSICAL_TARGET` and safely skips
-   the special action; the post-relay sequence remains incomplete and may be retried. No proportional
-   or replacement Redfinger coordinate is inferred. These actions require separate device calibration.
+   the special action. `TIME_DEAL` and `PARTY_RUN_SEASON_REWARDS` explicitly publish
+   `WAITING_FOR_REDFINGER_CALIBRATION` and remain blocked while the popup is onscreen; the operator
+   must manually clear the popup, after which detection safely resumes when a different state is
+   observed. The post-relay sequence remains incomplete and reports the same blocked status while
+   `GAME_RELAY` remains detected. No proportional or replacement Redfinger coordinate is inferred.
+   These actions require separate device calibration. Legacy retains its original fire-once flag and
+   all three original raw dispatch attempts, including their acceptance-independent sequencing.
 
 No OpenCV match is removed: device-independent inspection found that the detector already converts
 each candidate set to grayscale once, loads pre-scaled templates once, and evaluates all seven
@@ -36,9 +41,11 @@ claimed. The implementation records the measurements needed for an A/B run:
 * `[MATCH PERF]`: per-scale and total matching time for GAME_START and GAME_RELAY, sampled only in
   the optimized profile at most once per stage per five seconds. Actual evaluated scales are retained
   with each sample, and Logcat publication runs on a separate executor.
-* `[GAME_START_ATTEMPT_SUMMARY]`: one asynchronous aggregate after the priority window with attempt
-  count, min/average/max detection duration, and skipped latest-frame generations. Window membership
-  is captured before detection begins, so an attempt crossing the deadline is still counted.
+* `[GAME_START_ATTEMPT_SUMMARY]`: an asynchronous aggregate at the first applicable lifecycle
+  boundary (window end, GAME_START completion, round end, new round, or Stop) with attempt count,
+  min/average/max detection duration, and skipped latest-frame generations. Window membership and
+  the priority candidate list share one pre-detection decision, so an attempt crossing the deadline
+  is still counted and no attempt is attributed to a list that did not evaluate GAME_START first.
 * `[NO_MATCH PERF]`: scoring deferral or scoring/image-save duration. Each message explicitly states
   that the interval throttles diagnostics, not detection.
 * `[FAST PATH]`: existing capture-to-publish, capture-to-detect, detect-to-action,
@@ -64,5 +71,12 @@ NO_MATCH report becomes due; neither latency nor CPU improvement has been measur
   external tracing/profiling for the Legacy-versus-optimized latency conclusion.
 * Exercise 2400x1080 in Legacy mode and confirm all existing physical gesture exceptions. No new
   Redfinger physical coordinate has been introduced.
+* In Redfinger mode, trigger `TIME_DEAL` and `PARTY_RUN_SEASON_REWARDS`; confirm status changes to
+  `WAITING_FOR_REDFINGER_CALIBRATION`, no gesture is dispatched, and automation resumes only after
+  the operator manually clears the popup and the detector observes another state. Trigger relay and
+  confirm the unperformed post-relay sequence remains reported as blocked rather than completed.
+* Compare GAME_RELAY detection latency and skipped generations before and after the priority window,
+  including rounds where synchronous detailed NO_MATCH scoring becomes due. This follow-up does not
+  change NO_MATCH matching semantics; device evidence is required before considering another change.
 * Verify rotation/cutout/non-exact geometry falls back and run the manual checks in
   `ANDROID_TEST_CHECKLIST.md`.

@@ -3,6 +3,7 @@ package com.example.cookierunbot.capture
 import com.example.cookierunbot.automation.PerformanceProfile
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.opencv.core.Rect
 
@@ -37,5 +38,17 @@ class CapturePerformanceProfileTest {
                 offset,
             ),
         )
+    }
+
+    @Test
+    fun staleStopCannotResetAQuicklyStartedNewRun() {
+        CapturePerformanceProfile.activate(10L, PerformanceProfile.LEGACY)
+        CapturePerformanceProfile.activate(11L, PerformanceProfile.REDFINGER_OPTIMIZED)
+
+        CapturePerformanceProfile.reset(10L)
+
+        assertEquals(PerformanceProfile.REDFINGER_OPTIMIZED, CapturePerformanceProfile.active)
+        CapturePerformanceProfile.reset(11L)
+        assertEquals(PerformanceProfile.LEGACY, CapturePerformanceProfile.active)
     }
 }
