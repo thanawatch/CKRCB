@@ -382,6 +382,7 @@ class BotControlOverlay(private val context: Context) {
 
     private fun updateStatus() {
         val running = BotRuntime.isRunning()
+        val botDiagnostics = BotRuntime.diagnostics()
         val capture = LatestFrameProvider.diagnostics()
         val accessibilityEnabled = BotAccessibilityService.isEnabled(context)
         val accessibilityConnected = BotAccessibilityService.isConnected()
@@ -404,6 +405,8 @@ class BotControlOverlay(private val context: Context) {
         )
         panelStatus.text = when {
             !running -> "Status: Stopped"
+            botDiagnostics.calibrationBlockedAction != null ->
+                redfingerCalibrationStatusText(botDiagnostics.calibrationBlockedAction)
             !capture.captureRunning -> "Waiting: Screen capture"
             !frameReady -> "Waiting: Fresh screen frame"
             !accessibilityEnabled -> "Waiting: Accessibility permission disabled"

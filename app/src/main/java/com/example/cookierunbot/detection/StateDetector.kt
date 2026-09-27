@@ -243,12 +243,22 @@ class StateDetector(
                 }
             }
 
-            val benchmarkNow = SystemClock.elapsedRealtime()
             val benchmarkScaleDurations = if (
                 performanceProfile == PerformanceProfile.REDFINGER_OPTIMIZED &&
-                (stage == BotStage.GAME_START || stage == BotStage.GAME_RELAY) &&
-                benchmarkNow - (lastScaleBenchmarkLogAt[stage] ?: 0L) >= SCALE_BENCHMARK_LOG_INTERVAL_MS
-            ) mutableListOf<Pair<Double, Double>>() else null
+                (stage == BotStage.GAME_START || stage == BotStage.GAME_RELAY)
+            ) {
+                val benchmarkNow = SystemClock.elapsedRealtime()
+                if (benchmarkNow - (lastScaleBenchmarkLogAt[stage] ?: 0L) >=
+                    SCALE_BENCHMARK_LOG_INTERVAL_MS
+                ) {
+                    lastScaleBenchmarkLogAt[stage] = benchmarkNow
+                    mutableListOf<Pair<Double, Double>>()
+                } else {
+                    null
+                }
+            } else {
+                null
+            }
             for ((index, template) in templatesForStage.withIndex()) {
                 if (roiGray.cols() < template.cols() || roiGray.rows() < template.rows()) {
                     continue
@@ -275,15 +285,19 @@ class StateDetector(
             }
 
             if (benchmarkScaleDurations != null) {
-                val measurements = benchmarkScaleDurations.map { (scale, duration) ->
-                    "${String.format(Locale.US, "%.2f", scale)}=" +
-                        String.format(Locale.US, "%.2fms", duration)
-                }.joinToString(",")
-                val message =
-                    "[MATCH PERF] stage=${stage.name} scales=[$measurements] " +
-                        "total=${String.format(Locale.US, "%.2f", benchmarkScaleDurations.sumOf { it.second })}ms"
-                PERFORMANCE_LOG_EXECUTOR.execute { Log.i(CookieRunBotApplication.TAG, message) }
-                lastScaleBenchmarkLogAt[stage] = benchmarkNow
+                val sampledStage = stage.name
+                val immutableSamples = benchmarkScaleDurations.toList()
+                PERFORMANCE_LOG_EXECUTOR.execute {
+                    val measurements = immutableSamples.joinToString(",") { (scale, duration) ->
+                        "${String.format(Locale.US, "%.2f", scale)}=" +
+                            String.format(Locale.US, "%.2fms", duration)
+                    }
+                    Log.i(
+                        CookieRunBotApplication.TAG,
+                        "[MATCH PERF] stage=$sampledStage scales=[$measurements] " +
+                            "total=${String.format(Locale.US, "%.2f", immutableSamples.sumOf { it.second })}ms",
+                    )
+                }
             }
 
             val matched = bestScore >= MATCH_THRESHOLD

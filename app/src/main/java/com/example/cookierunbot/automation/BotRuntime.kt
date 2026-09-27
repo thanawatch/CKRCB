@@ -46,6 +46,7 @@ object BotRuntime : BotController.Listener {
             minimumFreshFrameGeneration = -1L,
             gestureBusy = false,
             pendingPopupAction = "NONE",
+            calibrationBlockedAction = null,
             friendLifeWorkflowActive = false,
             friendLifeLastProgressAgeMs = null,
             roundNumber = 0,
