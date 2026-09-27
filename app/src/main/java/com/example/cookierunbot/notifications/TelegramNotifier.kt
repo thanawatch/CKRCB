@@ -8,6 +8,9 @@ import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.capture.LatestFrameProvider
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.update.UpdateFeedClient
+import com.example.cookierunbot.update.UpdatePolicy
+import com.example.cookierunbot.update.UpdateDescriptor
+import java.io.File
 import java.io.BufferedOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -18,6 +21,7 @@ import java.security.MessageDigest
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 data class TelegramSendResult(
     val success: Boolean,
@@ -47,6 +51,9 @@ internal class TelegramCommandReplyTarget private constructor(
         config.enabled && config.isValid &&
             config.chatId.trim() == chatId &&
             telegramBotTokenIdentity(config.botToken) == botTokenIdentity
+
+    fun sameDestination(other: TelegramCommandReplyTarget): Boolean =
+        chatId == other.chatId && botTokenIdentity == other.botTokenIdentity
 
     companion object {
         fun from(config: TelegramConfig) = TelegramCommandReplyTarget(
@@ -108,6 +115,13 @@ internal fun shouldSendTelegramText(config: TelegramConfig, manualTest: Boolean)
 class TelegramNotifier(context: Context) {
     private val appContext = context.applicationContext
     private var lastOnDemandScreenAtMs = 0L
+    private val updateRequestBusy = AtomicBoolean(false)
+    private var lastDeliveredApkHash: String? = null // update executor only
+    private var lastDeliveredApkTarget: TelegramCommandReplyTarget? = null // update executor only
+    private var lastDeliveredApkAtMs = 0L // update executor only
+    private val updateExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "telegram-apk-delivery")
+    }
     private val executor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "telegram-notifications")
     }
@@ -142,36 +156,144 @@ class TelegramNotifier(context: Context) {
         )
     }
 
-    /** Check the same feed configured by UpdateActivity, without remote installation. */
+    /** The one-tap Update button delivers a verified newer APK, never remotely installs. */
     @Suppress("DEPRECATION")
     internal fun sendCommandUpdate(target: TelegramCommandReplyTarget) {
+        if (!updateRequestBusy.compareAndSet(false, true)) {
+            sendCommandReply("📦 Update check/download already in progress. Please use the current request.", target)
+            return
+        }
         try {
-            executor.execute {
-                if (!target.matches(TelegramConfigStore.load(appContext))) return@execute
-                val info = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
-                val installedCode = if (Build.VERSION.SDK_INT >= 28) {
-                    info.longVersionCode
-                } else {
-                    info.versionCode.toLong()
+            updateExecutor.execute {
+                try {
+                    deliverUpdateOnRequest(target)
+                } catch (error: Exception) {
+                    log("[TELEGRAM_UPDATE] failed=true type=${error.javaClass.simpleName}")
+                    sendCommandReply(
+                        "📦 Update check or delivery failed. Open RobotRun → Update App to " +
+                            "check the configured HTTPS feed or use a downloaded APK.",
+                        target,
+                    )
+                } finally {
+                    updateRequestBusy.set(false)
                 }
-                val installedName = info.versionName ?: "unknown"
-                val feedUrl = appContext.getSharedPreferences("robotrun_update", Context.MODE_PRIVATE)
-                    .getString("https_update_feed", "").orEmpty().trim()
-                val reply = if (feedUrl.isBlank()) {
-                    formatTelegramUpdateReply(installedName, installedCode, null, false)
-                } else {
-                    try {
-                        val available = UpdateFeedClient(appContext).check(feedUrl)
-                        formatTelegramUpdateReply(installedName, installedCode, available, true)
-                    } catch (error: Exception) {
-                        log("[TELEGRAM_UPDATE] check_failed=true type=${error.javaClass.simpleName}")
-                        formatTelegramUpdateReply(installedName, installedCode, null, true, true)
-                    }
-                }
-                sendCommandReply(reply, target)
             }
         } catch (error: Exception) {
+            updateRequestBusy.set(false)
             log("[TELEGRAM_UPDATE] queue_rejected=true type=${error.javaClass.simpleName}")
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun deliverUpdateOnRequest(target: TelegramCommandReplyTarget) {
+        var config = TelegramConfigStore.load(appContext)
+        if (!target.matches(config)) return
+        val installed = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
+        val installedCode = if (Build.VERSION.SDK_INT >= 28) installed.longVersionCode
+            else installed.versionCode.toLong()
+        val installedName = installed.versionName ?: "unknown"
+        val feedUrl = appContext.getSharedPreferences("robotrun_update", Context.MODE_PRIVATE)
+            .getString("https_update_feed", "").orEmpty().trim()
+        if (feedUrl.isBlank()) {
+            sendCommandReply(formatTelegramUpdateReply(installedName, installedCode, null, false), target)
+            return
+        }
+
+        val candidate = try {
+            UpdateFeedClient(appContext).check(feedUrl)
+        } catch (error: Exception) {
+            log("[TELEGRAM_UPDATE] feed_failed=true type=${error.javaClass.simpleName}")
+            sendCommandReply(formatTelegramUpdateReply(installedName, installedCode, null, true, true), target)
+            return
+        }
+        if (!target.matches(TelegramConfigStore.load(appContext))) return
+        if (!UpdatePolicy.hasNewerVersion(installedCode, candidate.versionCode)) {
+            sendCommandReply(formatTelegramUpdateReply(installedName, installedCode, candidate, true), target)
+            return
+        }
+        val now = SystemClock.elapsedRealtime()
+        if (lastDeliveredApkTarget?.sameDestination(target) == true &&
+            TelegramApkDeliveryPolicy.recentlyDelivered(
+                now, lastDeliveredApkAtMs, candidate, lastDeliveredApkHash,
+            )
+        ) {
+            sendCommandReply("📦 RobotRun v${candidate.versionName} was already sent to this chat " +
+                "recently. Please find the previous APK or try again after five minutes.", target)
+            return
+        }
+
+        config = TelegramConfigStore.load(appContext)
+        if (!target.matches(config)) return
+        // Status before attachment, on this separate worker; ordinary watchdog send executor remains free.
+        sendTextBlocking(
+            config, formatTelegramUpdateReply(installedName, installedCode, candidate, true),
+            manualTest = true, replyMarkup = TelegramDashboardPolicy.keyboardJson,
+        )
+
+        val directory = File(appContext.cacheDir, "telegram-apk-delivery")
+        var verifiedApk: File? = null
+        try {
+            verifiedApk = UpdateFeedClient(appContext).download(
+                candidate, destinationDirectory = directory,
+                maxBytes = TelegramApkDeliveryPolicy.MAX_FILE_BYTES,
+            )
+            config = TelegramConfigStore.load(appContext)
+            if (!target.matches(config)) {
+                log("[TELEGRAM_UPDATE] cancelled=true reason=config_changed_before_upload")
+                return
+            }
+            val file = requireNotNull(verifiedApk)
+            if (!TelegramApkDeliveryPolicy.canSend(file.length())) {
+                throw IOException("APK exceeds Telegram's upload limit.")
+            }
+            val result = sendApkDocumentBlocking(config, candidate, file)
+            if (result.success) {
+                lastDeliveredApkHash = candidate.sha256
+                lastDeliveredApkTarget = target
+                lastDeliveredApkAtMs = SystemClock.elapsedRealtime()
+            } else if (target.matches(TelegramConfigStore.load(appContext))) {
+                sendCommandReply(
+                    "📦 APK upload failed. Open RobotRun → Update App to download and install " +
+                        "the verified version on your Android device.", target,
+                )
+            }
+        } catch (error: Exception) {
+            log("[TELEGRAM_UPDATE] apk_failed=true type=${error.javaClass.simpleName}")
+            if (target.matches(TelegramConfigStore.load(appContext))) {
+                val reason = if (error is IOException &&
+                    error.message?.contains("size", ignoreCase = true) == true
+                ) "The APK is too large for Telegram's 50 MB Bot API upload limit." else
+                    "The APK could not be downloaded or verified. No unverified APK was sent."
+                sendCommandReply(
+                    "📦 $reason Open RobotRun → Update App for a direct download or an offline APK.",
+                    target,
+                )
+            }
+        } finally {
+            verifiedApk?.delete()
+            File(directory, "incoming.apk").delete()
+        }
+    }
+
+    /** One upload attempt: retries after an ambiguous upload could send the APK twice. */
+    private fun sendApkDocumentBlocking(
+        config: TelegramConfig,
+        candidate: UpdateDescriptor,
+        apk: File,
+    ): TelegramSendResult {
+        val boundary = "RobotRunBoundary${System.nanoTime()}"
+        return request(
+            config, "sendDocument", "multipart/form-data; boundary=$boundary",
+            streamed = true, readTimeoutMs = 120_000,
+        ) { output ->
+            writeTelegramApkMultipart(
+                output, boundary, config.chatId, apk,
+                TelegramApkDeliveryPolicy.fileName(candidate),
+                "📦 Verified RobotRun v${candidate.versionName} (code ${candidate.versionCode}). " +
+                    "Download on the Android device, stop Bot and Screen Capture, then approve " +
+                    "the Android installer. This message does not install the app.",
+                TelegramDashboardPolicy.keyboardJson,
+            )
         }
     }
 
@@ -425,6 +547,8 @@ class TelegramNotifier(context: Context) {
         config: TelegramConfig,
         method: String,
         contentType: String,
+        streamed: Boolean = false,
+        readTimeoutMs: Int = 20_000,
         writeBody: (BufferedOutputStream) -> Unit,
     ): TelegramSendResult {
         var connection: HttpURLConnection? = null
@@ -433,10 +557,11 @@ class TelegramNotifier(context: Context) {
                 .openConnection() as HttpURLConnection
             connection.requestMethod = "POST"
             connection.connectTimeout = 15_000
-            connection.readTimeout = 20_000
+            connection.readTimeout = readTimeoutMs
             connection.doOutput = true
             connection.setRequestProperty("Content-Type", contentType)
-            BufferedOutputStream(connection.outputStream).use(writeBody)
+            if (streamed) connection.setChunkedStreamingMode(32 * 1024)
+            BufferedOutputStream(connection.outputStream, 32 * 1024).use(writeBody)
             val code = connection.responseCode
             if (code in 200..299) {
                 connection.inputStream?.close()

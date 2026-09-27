@@ -54,17 +54,22 @@ internal class UpdateFeedClient(private val context: Context) {
         return candidate
     }
 
-    fun download(candidate: UpdateDescriptor): File {
+    fun download(
+        candidate: UpdateDescriptor,
+        destinationDirectory: File = File(context.cacheDir, "updates"),
+        maxBytes: Long = UpdatePolicy.MAX_APK_BYTES,
+    ): File {
+        require(maxBytes in 1L..UpdatePolicy.MAX_APK_BYTES) { "Invalid download size limit." }
         require(candidate.packageName == context.packageName) { "Wrong package name." }
-        val directory = File(context.cacheDir, "updates")
+        val directory = destinationDirectory
         check(directory.isDirectory || directory.mkdirs()) { "Cannot create update cache." }
         val temporary = File(directory, "incoming.apk")
         val verified = File(directory, "RobotRun-update.apk")
         temporary.delete()
         val connection = openHttps(candidate.apkUrl)
         try {
-            if (connection.contentLengthLong > UpdatePolicy.MAX_APK_BYTES) {
-                throw IOException("APK exceeds maximum update size.")
+            if (connection.contentLengthLong > maxBytes) {
+                throw IOException("APK exceeds maximum download size.")
             }
             val digest = MessageDigest.getInstance("SHA-256")
             var received = 0L
@@ -76,8 +81,8 @@ internal class UpdateFeedClient(private val context: Context) {
                         val count = input.read(buffer)
                         if (count < 0) break
                         received += count
-                        if (received > UpdatePolicy.MAX_APK_BYTES) {
-                            throw IOException("APK exceeds maximum update size.")
+                        if (received > maxBytes) {
+                            throw IOException("APK exceeds maximum download size.")
                         }
                         digest.update(buffer, 0, count)
                         output.write(buffer, 0, count)

@@ -22,8 +22,9 @@ internal fun formatTelegramUpdateReply(
             "$header\nAvailable: ${available.versionName} (code ${available.versionCode})\n" +
                 "New update available.\n\nWhat's new:\n" +
                 available.notes.ifBlank { "No release notes." } +
-                "\n\nTo download and install: open RobotRun → Update App. " +
-                "Android installation requires your confirmation."
+                "\n\nA verified APK will be sent to this Telegram chat if it fits the file limit. " +
+                "Download it on your Android device, then confirm installation in Android. " +
+                "If delivery fails, use RobotRun → Update App instead."
         else -> "$header\nLatest feed version: ${available.versionName} " +
             "(code ${available.versionCode})\n\nRobotRun is up to date."
     }

@@ -176,7 +176,7 @@ internal fun telegramCommandReply(command: String): String? = when (command) {
         "/friend - Friend Life schedule and progress\n/health - Capture, accessibility and worker\n" +
         "/screen - Current normalized screenshot\n/watchdog - Watchdog and recovery state\n" +
         "/rounds - Last five rounds\n/errors - Recent local error summary\n" +
-        "/dashboard - Show the one-tap button dashboard\n/update - Check app version and available update\n" +
+        "/dashboard - Show the one-tap button dashboard\n/update - Check and send a verified newer APK\n" +
         "/status - Bot status\n/stats - Current session totals\n" +
         "/last - Last completed round\n/boxes - Mystery Box totals\n/help - Show commands"
     "/status" -> formatStatusReply()
@@ -198,7 +198,7 @@ internal fun telegramCommandReply(command: String): String? = when (command) {
     )
     "/rounds" -> formatRoundsReply(RoundResultStore.snapshot())
     "/errors" -> formatErrorsReply(DebugLogStore.snapshot().text)
-    "/dashboard" -> "🤖 RobotRun Dashboard\n\nTap a button below. 📊 All shows stats, status and last round; 📦 Update App checks the app update feed."
+    "/dashboard" -> "🤖 RobotRun Dashboard\n\nTap a button below. 📊 All shows stats, status and last round; 📦 Update App checks the feed and sends a verified newer APK."
     else -> null
 }
 
