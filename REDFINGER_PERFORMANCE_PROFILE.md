@@ -9,7 +9,7 @@ returns capture processing to Legacy. Legacy gesture coordinates and dispatch pa
 thresholds, scale lists, stage ordering, watchdog behavior, and latest-frame-only ownership remain
 unchanged.
 
-The Redfinger profile makes four scoped changes:
+The Redfinger profile makes five scoped changes:
 
 1. It defers the expensive all-stage NO_MATCH score report throughout `IN_GAME`, including the
    period waiting for GAME_RELAY after Fast Start. The detailed rescan previously occupied the
@@ -25,16 +25,19 @@ The Redfinger profile makes four scoped changes:
    candidate; GAME_COMPLETE and connection states remain candidates. Legacy retains all seven
    scales for GAME_START and GAME_RELAY and its existing stage ordering. Templates, thresholds and
    ROIs remain unchanged.
-4. It refuses to dispatch the uncalibrated raw-physical `POST_RELAY_1/2/3`, `TIME_DEAL`, and
-   `PARTY_RUN_SEASON_REWARDS` targets. It logs `UNCALIBRATED_PHYSICAL_TARGET` and safely skips
-   the special action. `TIME_DEAL` and `PARTY_RUN_SEASON_REWARDS` explicitly publish
-   `WAITING_FOR_REDFINGER_CALIBRATION` and remain blocked while the popup is onscreen; the operator
-   must manually clear the popup, after which detection safely resumes when a different state is
-   observed. The optional post-relay sequence is instead recorded as `SKIPPED_UNPERFORMED` and play
-   continues in `IN_GAME`; it is not a popup and does not request manual clearance. No proportional
-   or replacement Redfinger coordinate is inferred.
-   These actions require separate device calibration. Legacy retains its original fire-once flag and
-   all three original raw dispatch attempts, including their acceptance-independent sequencing.
+4. Redfinger uses the separately user-calibrated **normalized 1280x720** post-relay targets
+   `POST_RELAY_1=(1198,35)`, `POST_RELAY_2=(647,425)`, and `POST_RELAY_3=(637,389)`.
+   When **Use Cookie Relay** and **Run action sequence after Cookie Relay** are selected, it
+   dispatches this optional three-step sequence once after the accepted relay tap, with the existing
+   waits and 5-pixel physical tap radius. These logical points map through the current detector
+   `contentRect` (not old ADB offsets, raw phone-pixel constants, or a scaled full screenshot).
+   Legacy retains its original fire-once flag and original three absolute-physical targets and
+   acceptance-independent sequencing.
+5. Redfinger still refuses to dispatch the **uncalibrated raw-physical** `TIME_DEAL` and
+   `PARTY_RUN_SEASON_REWARDS` targets. They log `UNCALIBRATED_PHYSICAL_TARGET`, publish
+   `WAITING_FOR_REDFINGER_CALIBRATION`, and remain blocked while the popup is onscreen; the
+   operator must manually clear it before a different detected state resumes gameplay. No
+   replacement popup coordinates are inferred.
 
 For Redfinger, only the native-size GAME_START and GAME_RELAY templates are loaded and checked.
 Legacy retains all seven scales for both stages. Each candidate set converts to grayscale once and
@@ -83,11 +86,15 @@ NO_MATCH report becomes due; neither latency nor CPU improvement has been measur
   external tracing/profiling for the Legacy-versus-optimized latency conclusion.
 * Exercise 2400x1080 in Legacy mode and confirm all existing physical gesture exceptions. No new
   Redfinger physical coordinate has been introduced.
-* In Redfinger mode, trigger `TIME_DEAL` and `PARTY_RUN_SEASON_REWARDS`; confirm status changes to
-  `WAITING_FOR_REDFINGER_CALIBRATION`, no gesture is dispatched, and automation resumes only after
-  the operator manually clears the popup and the detector observes another state. Trigger relay and
-  confirm the unperformed post-relay sequence is logged as skipped, never completed, and does not
-  leave a calibration-blocked popup status during gameplay.
+* In Redfinger mode, enable Cookie Relay and its optional post-relay sequence. Verify the three
+  user-calibrated detector-logical targets are mapped through the **actual current contentRect**,
+  pressed once in order (1198,35), (647,425), (637,389), and leave the normal gameplay group
+  unchanged. Repeat after a capture-geometry change; never assume the Legacy raw physical targets
+  work on Redfinger.
+* Trigger `TIME_DEAL` and `PARTY_RUN_SEASON_REWARDS` in Redfinger; confirm status changes to
+  `WAITING_FOR_REDFINGER_CALIBRATION`, no gesture is dispatched for these two uncalibrated
+  popups, and automation resumes only after the operator manually clears the popup and the
+  detector observes a different state.
 * Compare GAME_RELAY detection latency and skipped generations before and after the priority window,
   including rounds where synchronous detailed NO_MATCH scoring becomes due. This follow-up does not
   change NO_MATCH matching semantics; device evidence is required before considering another change.

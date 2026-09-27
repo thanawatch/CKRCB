@@ -1918,15 +1918,13 @@ class BotController(
             if (!accepted) return
             Log.i(CookieRunBotApplication.TAG, "[COOKIE RELAY] Cookie Relay used")
             if (options.postCookieRelaySequence && !postRelaySequenceDone) {
+                // Both profiles retain fire-once semantics. Only the Redfinger target
+                // coordinates and mapping path differ; Legacy stays absolute-physical.
+                postRelaySequenceDone = true
                 if (options.performanceProfile == PerformanceProfile.LEGACY) {
-                    // Preserve the established fire-once semantics: Legacy marks the sequence
-                    // before dispatch and attempts all three raw targets regardless of acceptance.
-                    postRelaySequenceDone = true
                     postRelaySequence(sourceWidth, sourceHeight)
                 } else {
-                    logSkippedUncalibratedPhysicalTarget(
-                        "POST_RELAY_SEQUENCE", sourceWidth, sourceHeight,
-                    )
+                    redfingerPostRelaySequence(sourceWidth, sourceHeight)
                 }
             } else delayOrStop(randomMs(800, 1200))
         }
@@ -1950,6 +1948,24 @@ class BotController(
                 sourceWidth,
                 sourceHeight,
             )
+        }
+        Log.i(CookieRunBotApplication.TAG, "[COOKIE RELAY SEQUENCE] Completed")
+    }
+
+    private fun redfingerPostRelaySequence(sourceWidth: Int, sourceHeight: Int) {
+        val points = requireNotNull(PostRelayTargetPolicy.optimizedLogicalTargets(options.performanceProfile))
+        // Keep the existing three-step pacing, but route these calibrated normalized
+        // points through the detector contentRect rather than legacy raw phone pixels.
+        val waits = longArrayOf(randomMs(2000, 4000), randomMs(600, 2000), randomMs(600, 2000))
+        points.forEachIndexed { index, point ->
+            Log.i(CookieRunBotApplication.TAG, "[COOKIE RELAY SEQUENCE] Waiting ${waits[index] / 1000.0}s")
+            delayOrStop(waits[index])
+            val name = "POST_RELAY_${index + 1}"
+            logDiagnostic(
+                "[POST_RELAY] profile=REDFINGER_OPTIMIZED state=$name " +
+                    "coordinateType=DETECTOR_LOGICAL logical=(${point.x},${point.y})",
+            )
+            performRedfingerPostRelayTap(name, point, sourceWidth, sourceHeight)
         }
         Log.i(CookieRunBotApplication.TAG, "[COOKIE RELAY SEQUENCE] Completed")
     }
@@ -3292,6 +3308,24 @@ class BotController(
                 AutomationConfig.POST_RELAY_RADIUS,
                 sourceWidth,
                 sourceHeight,
+            )
+        }
+        return reportActionResult(result)
+    }
+
+    private fun performRedfingerPostRelayTap(
+        name: String,
+        point: LogicalPoint,
+        sourceWidth: Int,
+        sourceHeight: Int,
+    ): Boolean {
+        logBotActionRequest(name)
+        val result = synchronized(lock) {
+            if (!canDispatchActionLocked()) return actionSkippedBotStopped(name)
+            // The tap radius remains 5 physical pixels around a content-mapped
+            // normalized point; it is not a 2400x1080 absolute coordinate.
+            actionExecutor.tapDetectedPhysicalCircle(
+                name, point, AutomationConfig.POST_RELAY_RADIUS, sourceWidth, sourceHeight,
             )
         }
         return reportActionResult(result)
