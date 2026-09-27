@@ -5,7 +5,6 @@ import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import com.example.cookierunbot.CookieRunBotApplication
-import com.example.cookierunbot.automation.NoMatchDebugFrameSaver
 import com.example.cookierunbot.capture.LatestFrameProvider
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.update.UpdateFeedClient
@@ -199,7 +198,7 @@ class TelegramNotifier(context: Context) {
         }
     }
 
-    /** Photo first, then a separate complete /all text reply. A failed photo never suppresses stats. */
+    /** Original-quality PNG document first, then complete /all text. File failure never suppresses stats. */
     internal fun sendCommandAll(replyText: String, target: TelegramCommandReplyTarget) {
         try {
             executor.execute {
@@ -242,15 +241,15 @@ class TelegramNotifier(context: Context) {
             ) {
                 return "📸 Screen: latest frame is stale."
             }
-            val png = NoMatchDebugFrameSaver(appContext).encodeNormalizedPng(frame.mat)
+            val png = TelegramScreenshotEncoder.encodeNormalizedPng(frame.mat)
             val currentConfig = TelegramConfigStore.load(appContext)
             if (!target.matches(currentConfig)) return "📸 Screen: configuration changed."
-            val result = sendPhotoBlocking(
+            val result = sendScreenshotDocumentBlocking(
                 currentConfig, png, "robotrun_screen.png",
                 "📸 RobotRun | normalized 1280x720 | frame ${frame.generation}",
                 replyMarkup = TelegramDashboardPolicy.keyboardJson,
             )
-            return if (result.success) null else "📸 Screen: upload failed."
+            return if (result.success) null else "📸 Screen: document upload failed."
         } finally {
             frame.mat.release()
         }
@@ -399,6 +398,26 @@ class TelegramNotifier(context: Context) {
             output.write("Content-Type: image/png\r\n\r\n".toByteArray())
             output.write(png)
             output.write("\r\n--$boundary--\r\n".toByteArray())
+        }
+    }
+
+    /**
+     * Manual /screen and /all only. Upload the already-encoded PNG as a Telegram
+     * document, so its original 1280x720 bytes are available instead of a photo rendition.
+     * Automatic diagnostic images retain their existing sendPhoto behavior.
+     */
+    private fun sendScreenshotDocumentBlocking(
+        config: TelegramConfig,
+        png: ByteArray,
+        filename: String,
+        caption: String,
+        replyMarkup: String? = null,
+    ): TelegramSendResult {
+        val boundary = "RobotRunBoundary${System.nanoTime()}"
+        return request(config, "sendDocument", "multipart/form-data; boundary=$boundary") { output ->
+            writeScreenshotDocumentMultipart(
+                output, boundary, config.chatId, png, filename, caption, replyMarkup,
+            )
         }
     }
 
