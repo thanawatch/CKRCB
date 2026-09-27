@@ -22,8 +22,8 @@ android {
         applicationId = "com.example.cookierunbot"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1.0"
     }
 
     signingConfigs {
@@ -65,6 +65,7 @@ android {
 
 dependencies {
     implementation("androidx.activity:activity-ktx:1.10.1")
+    implementation("androidx.core:core:1.16.0")
     implementation("org.opencv:opencv:4.13.0")
     testImplementation("junit:junit:4.13.2")
 }

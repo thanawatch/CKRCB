@@ -93,6 +93,16 @@ A new Start Bot creates a new statistics session. Result OCR/classification runs
 
 Captured images may contain personal information and can be visible to gallery/file applications. Do not share them or logs without inspection.
 
+## In-app updates (independent of Telegram)
+
+The main screen includes **Update App**, implemented in `UpdateActivity`. This version is **v1.1.0 (versionCode 2)**. The owner must configure a trusted public HTTPS `update.json` URL in that screen; a private GitHub Actions artifact is not a permanent anonymous download link. See [the feed example](docs/update-feed.example.json). This updater does not embed GitHub tokens, signing keys, or credentials.
+
+To publish a future build, increment both `versionCode` and `versionName` (e.g. `3` / `1.1.1`), build a **single signed APK with the same signing certificate as the currently installed application**, host that APK on HTTPS, calculate its SHA-256 (`Get-FileHash -Algorithm SHA256` on PowerShell or `sha256sum` on Linux), and publish the feed with its actual URL, package name, code, name, checksum, and notes. Only publish signed binaries and feed data to the distribution host; the source repository may remain private. Do not publish the sample placeholder checksum as a real feed.
+
+Alternatively, without any hosted feed, tap **Choose downloaded APK (offline)** and select a local APK through Android's document picker. It still must be a strictly newer RobotRun APK signed with the installed signing certificate; no network checksum is available for this deliberate local-file path.
+
+Checking and downloading are user initiated. The network work runs off the UI, capture, and detection threads. HTTPS redirects must stay HTTPS; the downloader caps feed and APK sizes, validates the checksum, Android package name/version, and installed signing certificate, then stores the verified APK in private cache. The FileProvider permits temporary read-only installer access to that specific cache directory. Android prompts the user to allow this installation source and confirm the APK installation. The app **does not** silently install, stop a running bot/capture, restart the game, or change the game-progress watchdog. Installation is blocked until the user manually stops Bot and Screen Capture. If the old app was locally debug-signed with a different key than CI, an in-place update cannot be installed with data preservation; use the same signing key, not an uninstall workaround.
+
 ## Telegram
 
 Telegram settings store the bot token encrypted with an Android Keystore-backed AES-GCM key. The configured Chat ID is both the notification destination and the only authorized incoming-command chat. Networking and encoding run asynchronously and failures do not stop gameplay.

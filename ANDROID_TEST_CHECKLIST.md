@@ -77,6 +77,17 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 - [ ] Test `/friend` while scheduled/pending/running/retrying and after failure/completion; `/health` with stopped capture/disconnected Accessibility; `/watchdog` before Start and during recovery; `/rounds` with more than five results; `/errors` with no recent events and with allowlisted failures (do not leak credentials).
 - [ ] Test `/screen` and `/all` with fresh 1280×720 capture, capture stopped, stale/no frame, repeated requests inside the shared 15-second cooldown, disabled automatic debug-image toggle, failed upload, and config changes before sending. A successful `/all` photo must arrive before the full text; when photo fails, `/all` must still deliver the same stats/status/last text with a short Screen note. Ensure the Mat clone is released and no gameplay/detection thread is blocked.
 
+## In-app updater (independent of Telegram)
+
+- [ ] On the main screen, open **Update App** with Telegram disabled. Confirm v1.1.0/code 2 is displayed and no check occurs before user action.
+- [ ] Configure a trusted HTTPS feed containing a genuinely signed newer universal APK, correct package/code/name and 64-hex SHA-256. Verify newer-version comparison and up-to-date cases.
+- [ ] With no feed configured, select a downloaded APK using Android's document picker. Verify that only a newer RobotRun APK signed with the existing certificate is accepted, and a wrong package/old APK/oversized file is rejected.
+- [ ] Reject HTTP, malformed URL, embedded credentials, non-HTTPS redirects, invalid/oversized feed, zero-length/oversized APK, wrong checksum, wrong package/version, different signing certificate, and older/equal APK.
+- [ ] Download a valid APK and confirm that the user—not the app—must stop Bot and Screen Capture, authorize the installer source, and approve Android's install dialog.
+- [ ] Confirm the app never silently stops the bot, does not call gameplay actions or touch Telegram settings, and grants the installer read-only access only to the private updates cache.
+- [ ] Test installation over an APK signed with the **same** key and verify app settings survive; test different-key rejection. Check cancellation/rotation/network-loss and no leaked cached incomplete APK.
+- [ ] Keep the private GitHub source private; publish signed APK and `update.json` separately over HTTPS without embedding a GitHub personal-access token.
+
 ## Statistics, storage, and diagnostics
 
 - [ ] Each Start Bot creates a new statistics session; opening/closing Statistics does not reset it.

@@ -315,6 +315,13 @@ class MainActivity : ComponentActivity() {
             }
         }, matchWidth())
 
+        content.addView(Button(this).apply {
+            text = "📦 Update App (no Telegram required)"
+            setOnClickListener {
+                startActivity(Intent(this@MainActivity, UpdateActivity::class.java))
+            }
+        }, matchWidth())
+
         botStatus = diagnosticLine(content)
         botState = diagnosticLine(content)
         botDetectionGroup = diagnosticLine(content)

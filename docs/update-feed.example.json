@@ -1,0 +1,8 @@
+{
+  "packageName": "com.example.cookierunbot",
+  "versionCode": 3,
+  "versionName": "1.1.1",
+  "apkUrl": "https://YOUR-HTTPS-DISTRIBUTION/RobotRun-v1.1.1-debug.apk",
+  "sha256": "REPLACE_WITH_64_HEX_CHARACTERS_OF_SIGNED_APK",
+  "notes": "Describe changes in this release"
+}
