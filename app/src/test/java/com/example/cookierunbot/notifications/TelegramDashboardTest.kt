@@ -26,6 +26,17 @@ class TelegramDashboardTest {
         assertNull(parseTelegramCommand("Stop Bot"))
     }
 
+    @Test fun allKeepsTheCompleteSummaryWhenScreenIsUnavailable() {
+        val summary = listOf("📊 RobotRun Session", "🤖 RobotRun Status", "🎮 Last Round")
+            .joinToString("\n\n")
+        assertEquals(summary, formatAllWithScreenNote(summary, null))
+        val reply = formatAllWithScreenNote(summary, "📸 Screen: capture is not running.")
+        assertTrue(reply.startsWith("📸 Screen: capture is not running."))
+        assertTrue(reply.endsWith(summary))
+        assertTrue(reply.indexOf("📊 RobotRun Session") < reply.indexOf("🤖 RobotRun Status"))
+        assertTrue(reply.indexOf("🤖 RobotRun Status") < reply.indexOf("🎮 Last Round"))
+    }
+
     @Test fun dashboardKeyboardIsPersistentAndHelpListsAllCommands() {
         val markup = TelegramDashboardPolicy.keyboardJson
         assertTrue(markup.contains("\"is_persistent\":true"))

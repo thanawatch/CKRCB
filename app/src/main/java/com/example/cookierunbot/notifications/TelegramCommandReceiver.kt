@@ -68,11 +68,16 @@ object TelegramCommandReceiver {
                     return@poll
                 }
                 val command = parseTelegramCommand(text) ?: return@poll
-                if (command == "/screen") {
-                    commandNotifier?.sendCommandScreenshot(replyTarget)
-                } else {
-                    val reply = telegramCommandReply(command) ?: return@poll
-                    commandNotifier?.sendCommandReply(reply, replyTarget)
+                when (command) {
+                    "/screen" -> commandNotifier?.sendCommandScreenshot(replyTarget)
+                    "/all" -> {
+                        val reply = telegramCommandReply(command) ?: return@poll
+                        commandNotifier?.sendCommandAll(reply, replyTarget)
+                    }
+                    else -> {
+                        val reply = telegramCommandReply(command) ?: return@poll
+                        commandNotifier?.sendCommandReply(reply, replyTarget)
+                    }
                 }
             }
             if (refreshRequested.getAndSet(false)) continue
@@ -166,7 +171,7 @@ internal fun shouldProcessTelegramUpdate(lastConsumedUpdateId: Long, incomingUpd
     incomingUpdateId > lastConsumedUpdateId
 
 internal fun telegramCommandReply(command: String): String? = when (command) {
-    "/help" -> "RobotRun commands\n\n/all - Session totals, status and last round\n" +
+    "/help" -> "RobotRun commands\n\n/all - Screenshot, session totals, status and last round\n" +
         "/friend - Friend Life schedule and progress\n/health - Capture, accessibility and worker\n" +
         "/screen - Current normalized screenshot\n/watchdog - Watchdog and recovery state\n" +
         "/rounds - Last five rounds\n/errors - Recent local error summary\n" +

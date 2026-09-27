@@ -25,6 +25,10 @@ data class TelegramSendResult(
     val retryAfterSeconds: Long? = null,
 )
 
+/** Keep the complete /all summary even if the optional screenshot is unavailable. */
+internal fun formatAllWithScreenNote(allReply: String, screenFailure: String?): String =
+    if (screenFailure == null) allReply else "$screenFailure\n\n$allReply"
+
 internal const val TELEGRAM_COMMAND_MAX_ATTEMPTS = 3
 private const val TELEGRAM_COMMAND_RETRY_1_MS = 2_000L
 private const val TELEGRAM_COMMAND_RETRY_2_MS = 5_000L
@@ -138,73 +142,82 @@ class TelegramNotifier(context: Context) {
     }
 
     internal fun sendCommandScreenshot(target: TelegramCommandReplyTarget) {
-        executor.execute {
-            val config = TelegramConfigStore.load(appContext)
-            if (!target.matches(config)) return@execute
-            val now = SystemClock.elapsedRealtime()
-            if (lastOnDemandScreenAtMs > 0L && now - lastOnDemandScreenAtMs < 15_000L) {
-                sendTextBlocking(config, "Screenshot cooldown: try again shortly.",
-                    manualTest = true, replyMarkup = TelegramDashboardPolicy.keyboardJson)
-                return@execute
+        try {
+            executor.execute {
+                if (!target.matches(TelegramConfigStore.load(appContext))) return@execute
+                val screenFailure = try {
+                    sendOnDemandScreen(target)
+                } catch (error: Exception) {
+                    log("[TELEGRAM_SCREEN] failed=true type=${error.javaClass.simpleName}")
+                    "📸 Screen: unavailable."
+                }
+                if (screenFailure != null) {
+                    val config = TelegramConfigStore.load(appContext)
+                    if (target.matches(config)) {
+                        sendTextBlocking(config, screenFailure, manualTest = true,
+                            replyMarkup = TelegramDashboardPolicy.keyboardJson)
+                    }
+                }
             }
-            lastOnDemandScreenAtMs = now
-            sendCurrentScreenshot(config, target)
+        } catch (error: Exception) {
+            log("[TELEGRAM_SCREEN] queue_rejected=true type=${error.javaClass.simpleName}")
         }
     }
 
-    private fun sendCurrentScreenshot(config: TelegramConfig, target: TelegramCommandReplyTarget) {
+    /** Photo first, then a separate complete /all text reply. A failed photo never suppresses stats. */
+    internal fun sendCommandAll(replyText: String, target: TelegramCommandReplyTarget) {
+        try {
+            executor.execute {
+                if (!target.matches(TelegramConfigStore.load(appContext))) return@execute
+                val screenFailure = try {
+                    sendOnDemandScreen(target)
+                } catch (error: Exception) {
+                    log("[TELEGRAM_ALL_SCREEN] failed=true type=${error.javaClass.simpleName}")
+                    "📸 Screen: unavailable."
+                }
+                scheduleCommandReply(
+                    target,
+                    TelegramCommandReplyAttempt(formatAllWithScreenNote(replyText, screenFailure)),
+                    0L,
+                    {},
+                )
+            }
+        } catch (error: Exception) {
+            log("[TELEGRAM_ALL] queue_rejected=true type=${error.javaClass.simpleName}")
+        }
+    }
+
+    private fun sendOnDemandScreen(target: TelegramCommandReplyTarget): String? {
+        val config = TelegramConfigStore.load(appContext)
+        if (!target.matches(config)) return "📸 Screen: configuration changed."
+        val now = SystemClock.elapsedRealtime()
+        if (lastOnDemandScreenAtMs > 0L && now - lastOnDemandScreenAtMs < 15_000L) {
+            return "📸 Screen: cooldown active; try again shortly."
+        }
+        lastOnDemandScreenAtMs = now
         if (!LatestFrameProvider.diagnostics().captureRunning) {
-            sendTextBlocking(config, "📸 Screen capture is not running.",
-                manualTest = true, replyMarkup = TelegramDashboardPolicy.keyboardJson)
-            return
+            return "📸 Screen: capture is not running."
         }
         val frame = LatestFrameProvider.snapshot()
-        if (frame == null) {
-            sendTextBlocking(config, "📸 No frame available.",
-                manualTest = true, replyMarkup = TelegramDashboardPolicy.keyboardJson)
-            return
-        }
+            ?: return "📸 Screen: no frame available."
         try {
             if (!TelegramDashboardPolicy.screenshotFrameIsFresh(
                     frame.capturedAtNanos, SystemClock.elapsedRealtimeNanos(),
                 )
             ) {
-                sendTextBlocking(config, "📸 Frame is stale; no old screenshot sent.",
-                    manualTest = true, replyMarkup = TelegramDashboardPolicy.keyboardJson)
-                return
+                return "📸 Screen: latest frame is stale."
             }
-            sendCurrentScreenshotFrame(target, frame.mat, frame.generation)
+            val png = NoMatchDebugFrameSaver(appContext).encodeNormalizedPng(frame.mat)
+            val currentConfig = TelegramConfigStore.load(appContext)
+            if (!target.matches(currentConfig)) return "📸 Screen: configuration changed."
+            val result = sendPhotoBlocking(
+                currentConfig, png, "robotrun_screen.png",
+                "📸 RobotRun | normalized 1280x720 | frame ${frame.generation}",
+                replyMarkup = TelegramDashboardPolicy.keyboardJson,
+            )
+            return if (result.success) null else "📸 Screen: upload failed."
         } finally {
             frame.mat.release()
-        }
-    }
-
-    private fun sendCurrentScreenshotFrame(
-        target: TelegramCommandReplyTarget,
-        normalized: org.opencv.core.Mat,
-        generation: Long,
-    ) {
-        try {
-            val png = NoMatchDebugFrameSaver(appContext).encodeNormalizedPng(normalized)
-            val config = TelegramConfigStore.load(appContext)
-            if (!target.matches(config)) {
-                log("[TELEGRAM_SCREEN] cancelled=true reason=config_changed")
-                return
-            }
-            val result = sendPhotoBlocking(config, png, "robotrun_screen.png",
-                "📸 RobotRun | normalized 1280x720 | frame $generation",
-                replyMarkup = TelegramDashboardPolicy.keyboardJson)
-            if (!result.success && target.matches(TelegramConfigStore.load(appContext))) {
-                sendTextBlocking(config, "📸 Screenshot upload failed.",
-                    manualTest = true, replyMarkup = TelegramDashboardPolicy.keyboardJson)
-            }
-        } catch (error: Exception) {
-            log("[TELEGRAM_SCREEN] failed=true type=${error.javaClass.simpleName}")
-            val config = TelegramConfigStore.load(appContext)
-            if (target.matches(config)) {
-                sendTextBlocking(config, "📸 Screenshot unavailable.",
-                    manualTest = true, replyMarkup = TelegramDashboardPolicy.keyboardJson)
-            }
         }
     }
 
