@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit
 /**
  * Opt-in independent 3 FPS normalized-frame sampler. Keeps the last 30s as compressed JPEGs
  * in a bounded ring; when a real watchdog incident starts, persists those frames and samples
- * through recovery + 10s (up to 3 minutes from trigger). Only AFTER recording stops does a
+ * through recovery + 10s (up to 3 minutes including the 30-second pre-roll). Only AFTER recording stops does a
  * separate worker encode MP4 (H.264 MediaCodec + MediaMuxer). No new MediaProjection or VD.
  * Nothing in this object taps, controls, waits for, or changes the detector/game/watchdog timer.
  */
@@ -187,9 +187,9 @@ object IncidentVideoRecorder {
         val recording = Recording(
             trigger,
             File(trigger.output.parentFile, "video_frames").apply { mkdirs() },
-            trigger.atNanos + IncidentVideoTiming.MAX_VIDEO_NANOS,
+            IncidentVideoTiming.finalStopAt(trigger.atNanos, Long.MAX_VALUE),
         )
-        writeStatus(trigger.output, "Recording in progress; 30s pre-roll + recovery + 10s; cap=3min.")
+        writeStatus(trigger.output, "Recording in progress; 30s pre-roll + recovery + 10s; cap=3min total including pre-roll.")
         ring.filter { it.atNanos >= trigger.atNanos - IncidentVideoTiming.PRELUDE_NANOS &&
             it.atNanos <= trigger.atNanos
         }.forEach { persistFrame(recording, it) }

@@ -107,7 +107,7 @@ MAINMENU result) and final recovery result are appended. Independent retention: 
 
 The optional incident-video sampler uses the EXISTING capture snapshots at target 3fps/960×540
 and a 30-second compressed pre-roll. It records until the earlier of **Recovery ends + 10 seconds**
-and **3 minutes after trigger**, or earlier if Screen Capture stops. An MP4 is encoded
+and **2 minutes 30 seconds after trigger** (3 minutes total including pre-roll), or earlier if Screen Capture stops. An MP4 is encoded
 asynchronously after recording finishes, so it may not be immediately available when the
 Watchdog alert arrives. If encoding fails or Process ends, saved JPEG frames and a status file
 remain as fallback. Use Debug Log's **Video ON / Video OFF** toggle (enabled by default in this

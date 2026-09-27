@@ -51,7 +51,7 @@ bounded ~12 MiB RAM ring, and writes the relevant frames to the active Incident 
 Recording stops at the EARLIEST of:
 
 - **Recovery finished + 10 seconds**, success, failure or cancellation;
-- **3 minutes after the Watchdog trigger**, hard incident-video cap;
+- **2 minutes 30 seconds after the Watchdog trigger**, giving at most **3 minutes total including the 30-second pre-roll**;
 - **Screen Capture / recorder stops**, preserving available frames.
 
 Only after recording stops does a separate low-priority worker encode H.264 MP4 with

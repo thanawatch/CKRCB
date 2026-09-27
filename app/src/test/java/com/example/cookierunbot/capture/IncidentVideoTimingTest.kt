@@ -11,9 +11,9 @@ class IncidentVideoTimingTest {
             IncidentVideoTiming.finalStopAt(trigger, finished))
     }
 
-    @Test fun neverWaitsMoreThanThreeMinutesFromTrigger() {
+    @Test fun capsTotalIncludingThirtySecondPreludeAtThreeMinutes() {
         val trigger = 100_000_000_000L
-        assertEquals(trigger + IncidentVideoTiming.MAX_VIDEO_NANOS,
+        assertEquals(trigger + IncidentVideoTiming.POST_TRIGGER_BUDGET_NANOS,
             IncidentVideoTiming.finalStopAt(trigger, trigger + 200_000_000_000L))
     }
 }
