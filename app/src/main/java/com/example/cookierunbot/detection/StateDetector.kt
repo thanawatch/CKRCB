@@ -15,6 +15,7 @@ import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
 import java.util.EnumMap
 import java.util.Locale
+import java.util.concurrent.Executors
 import kotlin.math.roundToInt
 
 class StateDetector(
@@ -242,15 +243,17 @@ class StateDetector(
                 }
             }
 
+            val benchmarkNow = SystemClock.elapsedRealtime()
             val benchmarkScaleDurations = if (
                 performanceProfile == PerformanceProfile.REDFINGER_OPTIMIZED &&
-                (stage == BotStage.GAME_START || stage == BotStage.GAME_RELAY)
-            ) mutableListOf<Double>() else null
-            for (template in templatesForStage) {
+                (stage == BotStage.GAME_START || stage == BotStage.GAME_RELAY) &&
+                benchmarkNow - (lastScaleBenchmarkLogAt[stage] ?: 0L) >= SCALE_BENCHMARK_LOG_INTERVAL_MS
+            ) mutableListOf<Pair<Double, Double>>() else null
+            for ((index, template) in templatesForStage.withIndex()) {
                 if (roiGray.cols() < template.cols() || roiGray.rows() < template.rows()) {
                     continue
                 }
-                val scaleStartedAt = SystemClock.elapsedRealtimeNanos()
+                val scaleStartedAt = if (benchmarkScaleDurations != null) SystemClock.elapsedRealtimeNanos() else 0L
                 Imgproc.matchTemplate(
                     roiGray,
                     template,
@@ -259,7 +262,8 @@ class StateDetector(
                 )
                 val match = Core.minMaxLoc(reusableStageMatch)
                 benchmarkScaleDurations?.add(
-                    (SystemClock.elapsedRealtimeNanos() - scaleStartedAt) / 1_000_000.0,
+                    SCALE_BY_STAGE.getValue(stage)[index] to
+                        (SystemClock.elapsedRealtimeNanos() - scaleStartedAt) / 1_000_000.0,
                 )
                 if (match.maxVal > bestScore) {
                     bestScore = match.maxVal
@@ -270,20 +274,15 @@ class StateDetector(
                 }
             }
 
-            val benchmarkNow = SystemClock.elapsedRealtime()
-            if (benchmarkScaleDurations != null &&
-                benchmarkNow - (lastScaleBenchmarkLogAt[stage] ?: 0L) >= SCALE_BENCHMARK_LOG_INTERVAL_MS
-            ) {
-                val scales = SCALE_BY_STAGE.getValue(stage)
-                val measurements = benchmarkScaleDurations.mapIndexed { index, duration ->
-                    "${String.format(Locale.US, "%.2f", scales[index])}=" +
+            if (benchmarkScaleDurations != null) {
+                val measurements = benchmarkScaleDurations.map { (scale, duration) ->
+                    "${String.format(Locale.US, "%.2f", scale)}=" +
                         String.format(Locale.US, "%.2fms", duration)
                 }.joinToString(",")
-                Log.i(
-                    CookieRunBotApplication.TAG,
+                val message =
                     "[MATCH PERF] stage=${stage.name} scales=[$measurements] " +
-                        "total=${String.format(Locale.US, "%.2f", benchmarkScaleDurations.sum())}ms",
-                )
+                        "total=${String.format(Locale.US, "%.2f", benchmarkScaleDurations.sumOf { it.second })}ms"
+                PERFORMANCE_LOG_EXECUTOR.execute { Log.i(CookieRunBotApplication.TAG, message) }
                 lastScaleBenchmarkLogAt[stage] = benchmarkNow
             }
 
@@ -419,6 +418,9 @@ class StateDetector(
     }
 
     companion object {
+        private val PERFORMANCE_LOG_EXECUTOR = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "match-performance-logs")
+        }
         private const val SCALE_BENCHMARK_LOG_INTERVAL_MS = 5_000L
         private const val LOGICAL_WIDTH = 1280
         private const val LOGICAL_HEIGHT = 720

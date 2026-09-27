@@ -18,6 +18,7 @@ import android.util.DisplayMetrics
 import android.view.WindowManager
 import android.view.WindowInsets
 import com.example.cookierunbot.CookieRunBotApplication
+import com.example.cookierunbot.automation.PerformanceProfile
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.diagnostics.PersistentTrace
 import org.opencv.core.CvType
@@ -196,6 +197,7 @@ class ScreenCaptureManager(
 
     private fun consumeLatestImage(image: Image) {
         val frameCapturedAtNanos = SystemClock.elapsedRealtimeNanos()
+        val measurePerformance = CapturePerformanceProfile.active == PerformanceProfile.REDFINGER_OPTIMIZED
         val plane = image.planes.firstOrNull() ?: return
         val width = image.width
         val height = image.height
@@ -210,11 +212,11 @@ class ScreenCaptureManager(
             rowStride = plane.rowStride,
             destination = tightRgbaBytes,
         )
-        val planeCopiedAtNanos = SystemClock.elapsedRealtimeNanos()
+        val planeCopiedAtNanos = if (measurePerformance) SystemClock.elapsedRealtimeNanos() else 0L
 
         sourceRgba.create(height, width, CvType.CV_8UC4)
         sourceRgba.put(0, 0, tightRgbaBytes)
-        val matCreatedAtNanos = SystemClock.elapsedRealtimeNanos()
+        val matCreatedAtNanos = if (measurePerformance) SystemClock.elapsedRealtimeNanos() else 0L
         val transform = activeTransform?.takeIf {
             it.sourceWidth == width && it.sourceHeight == height
         } ?: updateContentTransform(width, height, "frame-size-change")
@@ -224,7 +226,7 @@ class ScreenCaptureManager(
         } else {
             FrameNormalizer.normalize(sourceRgba, normalizedRgba, transform)
         }
-        val normalizedAtNanos = SystemClock.elapsedRealtimeNanos()
+        val normalizedAtNanos = if (measurePerformance) SystemClock.elapsedRealtimeNanos() else 0L
 
         val now = SystemClock.elapsedRealtimeNanos()
         frameCount += 1
@@ -247,7 +249,7 @@ class ScreenCaptureManager(
             frameCapturedAtNanos,
             currentFps,
         )
-        val publishedAtNanos = SystemClock.elapsedRealtimeNanos()
+        val publishedAtNanos = if (measurePerformance) SystemClock.elapsedRealtimeNanos() else 0L
 
         if (now - lastCaptureLogNanos >= CAPTURE_LOG_INTERVAL_NANOS) {
             Log.i(CookieRunBotApplication.TAG, "[CAPTURE] Frame received: ${width}x$height")
@@ -255,7 +257,7 @@ class ScreenCaptureManager(
                 CookieRunBotApplication.TAG,
                 "[CAPTURE] Normalized: ${FrameNormalizer.LOGICAL_WIDTH}x${FrameNormalizer.LOGICAL_HEIGHT}",
             )
-            Log.i(
+            if (measurePerformance) Log.i(
                 CookieRunBotApplication.TAG,
                 "[CAPTURE PERF] plane_copy=${millis(planeCopiedAtNanos - frameCapturedAtNanos)}ms " +
                     "rgba_mat=${millis(matCreatedAtNanos - planeCopiedAtNanos)}ms " +
@@ -264,7 +266,7 @@ class ScreenCaptureManager(
                     "total=${millis(publishedAtNanos - frameCapturedAtNanos)}ms",
                     // The path marker makes device-side before/after captures comparable.
             )
-            Log.i(CookieRunBotApplication.TAG, "[CAPTURE PERF] exact_size_fast_path=$exactSizeFastPath fps=${String.format(java.util.Locale.US, "%.2f", currentFps)}")
+            if (measurePerformance) Log.i(CookieRunBotApplication.TAG, "[CAPTURE PERF] exact_size_fast_path=$exactSizeFastPath fps=${String.format(java.util.Locale.US, "%.2f", currentFps)}")
             lastCaptureLogNanos = now
         }
         if (now - lastPersistentTraceNanos >= PERSISTENT_TRACE_INTERVAL_NANOS) {

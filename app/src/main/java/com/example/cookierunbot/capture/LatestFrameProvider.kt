@@ -1,6 +1,7 @@
 package com.example.cookierunbot.capture
 
 import android.os.SystemClock
+import com.example.cookierunbot.automation.PerformanceProfile
 import com.example.cookierunbot.detection.DetectionResult
 import org.opencv.core.Mat
 
@@ -59,7 +60,8 @@ object LatestFrameProvider {
 
     fun snapshot(): FrameSnapshot? = synchronized(lock) {
         if (latestNormalized.empty()) return null
-        val cloneStartedAt = SystemClock.elapsedRealtimeNanos()
+        val measureClone = CapturePerformanceProfile.active == PerformanceProfile.REDFINGER_OPTIMIZED
+        val cloneStartedAt = if (measureClone) SystemClock.elapsedRealtimeNanos() else 0L
         val clone = latestNormalized.clone()
         FrameSnapshot(
             mat = clone,
@@ -69,7 +71,7 @@ object LatestFrameProvider {
             publishedAtNanos = publishedAtNanos,
             generation = generation,
             contentTransform = requireNotNull(contentTransform),
-            cloneDurationNanos = SystemClock.elapsedRealtimeNanos() - cloneStartedAt,
+            cloneDurationNanos = if (measureClone) SystemClock.elapsedRealtimeNanos() - cloneStartedAt else 0L,
         )
     }
 
@@ -89,7 +91,8 @@ object LatestFrameProvider {
             lock.wait(waitMs, waitNanos)
         }
         if (latestNormalized.empty() || generation <= afterGeneration) return null
-        val cloneStartedAt = SystemClock.elapsedRealtimeNanos()
+        val measureClone = CapturePerformanceProfile.active == PerformanceProfile.REDFINGER_OPTIMIZED
+        val cloneStartedAt = if (measureClone) SystemClock.elapsedRealtimeNanos() else 0L
         val clone = latestNormalized.clone()
         FrameSnapshot(
             mat = clone,
@@ -99,7 +102,7 @@ object LatestFrameProvider {
             publishedAtNanos = publishedAtNanos,
             generation = generation,
             contentTransform = requireNotNull(contentTransform),
-            cloneDurationNanos = SystemClock.elapsedRealtimeNanos() - cloneStartedAt,
+            cloneDurationNanos = if (measureClone) SystemClock.elapsedRealtimeNanos() - cloneStartedAt else 0L,
         )
     }
 

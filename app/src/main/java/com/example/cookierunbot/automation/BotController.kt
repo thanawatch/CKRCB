@@ -81,6 +81,11 @@ class BotController(
     private var roundNumber = 0
     private var gameStartDetectedForRound = false
     private var fastStartPollDeadlineNanos = 0L
+    private var fastStartAttemptCount = 0L
+    private var fastStartAttemptDurationTotalNanos = 0L
+    private var fastStartAttemptMinNanos = Long.MAX_VALUE
+    private var fastStartAttemptMaxNanos = 0L
+    private var fastStartSkippedGenerations = 0L
     private var postRelaySequenceDone = false
     private var gameCompleteImageSaved = true
     private var mysteryBoxImageSaved = true
@@ -174,6 +179,7 @@ class BotController(
             purchaseItemRetryState.reset()
             gameStartDetectedForRound = false
             fastStartPollDeadlineNanos = 0L
+            resetFastStartAttemptMetrics()
             postRelaySequenceDone = false
             gameCompleteImageSaved = true
             mysteryBoxImageSaved = true
@@ -907,19 +913,17 @@ class BotController(
             logDetectorFrame(frame)
             if (synchronized(lock) { progressRecoveryGate.isActive() }) return
             val detectionStartedAtNanos = SystemClock.elapsedRealtimeNanos()
+            val fastStartPriorityAtDetectionStart = isFastStartPriorityWindow(detectionStartedAtNanos)
+            if (!fastStartPriorityAtDetectionStart) flushFastStartAttemptMetrics()
             val skippedGenerations = if (previousProcessedGeneration < 0L) 0L else
                 (frame.generation - previousProcessedGeneration - 1L).coerceAtLeast(0L)
             var result = detector.detectFirst(stagesFor(group), frame.mat)
             if (!isRunning() || synchronized(lock) { progressRecoveryGate.isActive() }) return
             var detectionMatchedAtNanos = SystemClock.elapsedRealtimeNanos()
-            if (isFastStartPriorityWindow()) {
-                logDiagnostic(
-                    "[GAME_START_ATTEMPT] generation=${frame.generation} " +
-                        "frameAge=${ms(detectionStartedAtNanos - frame.capturedAtNanos)}ms " +
-                        "detectionDuration=${ms(detectionMatchedAtNanos - detectionStartedAtNanos)}ms " +
-                        "snapshotClone=${ms(frame.cloneDurationNanos)}ms " +
-                        "skippedGenerations=$skippedGenerations profile=${options.performanceProfile} " +
-                        "attemptLogInterval=EVERY_ATTEMPT detectionThrottled=false",
+            if (fastStartPriorityAtDetectionStart) {
+                recordFastStartAttempt(
+                    detectionMatchedAtNanos - detectionStartedAtNanos,
+                    skippedGenerations,
                 )
             }
             val now = SystemClock.elapsedRealtime()
@@ -1145,6 +1149,10 @@ class BotController(
             return
         }
         logDiagnostic("[STATE_MATCH] state=PARTY_RUN_SEASON_REWARDS score=${format(result.score)}")
+        if (!PhysicalTargetPolicy.isCalibrated(options.performanceProfile)) {
+            logUncalibratedPhysicalTarget("PARTY_RUN_SEASON_REWARDS", sourceWidth, sourceHeight)
+            return
+        }
         logDiagnostic("[ACTION] state=PARTY_RUN_SEASON_REWARDS action=CONFIRM")
         logDiagnostic(
             "[ACTION_MAP]\n" +
@@ -1259,6 +1267,10 @@ class BotController(
             return
         }
         logDiagnostic("[STATE_MATCH] state=TIME_DEAL score=${format(result.score)}")
+        if (!PhysicalTargetPolicy.isCalibrated(options.performanceProfile)) {
+            logUncalibratedPhysicalTarget("TIME_DEAL", sourceWidth, sourceHeight)
+            return
+        }
         logDiagnostic("[ACTION] state=TIME_DEAL action=CLOSE")
         logDiagnostic("[ACTION_MAP] state=TIME_DEAL coordinateType=PHYSICAL physical=(2000,70)")
         if (timeDealCallbackFailures >= MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS) {
@@ -1707,6 +1719,7 @@ class BotController(
                 postRelaySequenceDone = false
                 gameStartDetectedForRound = false
                 fastStartPollDeadlineNanos = 0L
+                resetFastStartAttemptMetrics()
                 gameCompleteImageSaved = false
                 mysteryBoxImageSaved = false
                 mysteryBoxCount = 0
@@ -1865,14 +1878,17 @@ class BotController(
             if (!accepted) return
             Log.i(CookieRunBotApplication.TAG, "[COOKIE RELAY] Cookie Relay used")
             if (options.postCookieRelaySequence && !postRelaySequenceDone) {
-                postRelaySequenceDone = true
-                postRelaySequence(sourceWidth, sourceHeight)
+                postRelaySequenceDone = postRelaySequence(sourceWidth, sourceHeight)
             } else delayOrStop(randomMs(800, 1200))
         }
         updateGroup(DetectionGroup.IN_GAME)
     }
 
-    private fun postRelaySequence(sourceWidth: Int, sourceHeight: Int) {
+    private fun postRelaySequence(sourceWidth: Int, sourceHeight: Int): Boolean {
+        if (!PhysicalTargetPolicy.isCalibrated(options.performanceProfile)) {
+            logUncalibratedPhysicalTarget("POST_RELAY_SEQUENCE", sourceWidth, sourceHeight)
+            return false
+        }
         val waits = longArrayOf(randomMs(2000, 4000), randomMs(600, 2000), randomMs(600, 2000))
         val points = arrayOf(
             AutomationConfig.POST_RELAY_1 to AutomationConfig.POST_RELAY_1_PHYSICAL,
@@ -1882,15 +1898,16 @@ class BotController(
         points.forEachIndexed { index, (logicalReference, physicalTarget) ->
             Log.i(CookieRunBotApplication.TAG, "[COOKIE RELAY SEQUENCE] Waiting ${waits[index] / 1000.0}s")
             delayOrStop(waits[index])
-            performPostRelayTap(
+            if (!performPostRelayTap(
                 "POST_RELAY_${index + 1}",
                 logicalReference,
                 physicalTarget,
                 sourceWidth,
                 sourceHeight,
-            )
+            )) return false
         }
         Log.i(CookieRunBotApplication.TAG, "[COOKIE RELAY SEQUENCE] Completed")
+        return true
     }
 
     private fun handleGameComplete(detector: StateDetector, sourceWidth: Int, sourceHeight: Int) {
@@ -3361,9 +3378,45 @@ class BotController(
         DetectionGroup.POST_GAME -> ALWAYS + POST_GAME
     }, options.detectRelic, RELIC_STAGES)
 
-    private fun isFastStartPriorityWindow(): Boolean =
+    private fun isFastStartPriorityWindow(nowNanos: Long = SystemClock.elapsedRealtimeNanos()): Boolean =
         group == DetectionGroup.IN_GAME && options.useFastStart && !gameStartDetectedForRound &&
-            SystemClock.elapsedRealtimeNanos() < fastStartPollDeadlineNanos
+            nowNanos < fastStartPollDeadlineNanos
+
+    private fun recordFastStartAttempt(durationNanos: Long, skippedGenerations: Long) {
+        fastStartAttemptCount += 1L
+        fastStartAttemptDurationTotalNanos += durationNanos
+        fastStartAttemptMinNanos = minOf(fastStartAttemptMinNanos, durationNanos)
+        fastStartAttemptMaxNanos = maxOf(fastStartAttemptMaxNanos, durationNanos)
+        fastStartSkippedGenerations += skippedGenerations
+    }
+
+    private fun flushFastStartAttemptMetrics() {
+        val count = fastStartAttemptCount
+        if (count == 0L) return
+        val message = "[GAME_START_ATTEMPT_SUMMARY] attempts=$count " +
+            "durationMin=${ms(fastStartAttemptMinNanos)}ms " +
+            "durationAvg=${ms(fastStartAttemptDurationTotalNanos / count)}ms " +
+            "durationMax=${ms(fastStartAttemptMaxNanos)}ms " +
+            "skippedGenerations=$fastStartSkippedGenerations profile=${options.performanceProfile} " +
+            "windowMembership=captured_at_detection_start"
+        resetFastStartAttemptMetrics()
+        diagnosticExecutor.execute { logDiagnostic(message) }
+    }
+
+    private fun resetFastStartAttemptMetrics() {
+        fastStartAttemptCount = 0L
+        fastStartAttemptDurationTotalNanos = 0L
+        fastStartAttemptMinNanos = Long.MAX_VALUE
+        fastStartAttemptMaxNanos = 0L
+        fastStartSkippedGenerations = 0L
+    }
+
+    private fun logUncalibratedPhysicalTarget(action: String, sourceWidth: Int, sourceHeight: Int) {
+        logDiagnostic(
+            "[UNCALIBRATED_PHYSICAL_TARGET] action=$action profile=${options.performanceProfile} " +
+                "source=${sourceWidth}x$sourceHeight behavior=SKIP_WITHOUT_DISPATCH",
+        )
+    }
 
     private fun recoveryInterval(group: DetectionGroup): Long = when (group) {
         DetectionGroup.PRE_GAME -> 60_000L
