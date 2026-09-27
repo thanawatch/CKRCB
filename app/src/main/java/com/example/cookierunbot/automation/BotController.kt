@@ -6,6 +6,7 @@ import android.os.Process
 import android.util.Log
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.capture.ContentGeometryRegistry
+import com.example.cookierunbot.capture.CapturePerformanceProfile
 import com.example.cookierunbot.capture.FrameNormalizer
 import com.example.cookierunbot.capture.LatestFrameProvider
 import com.example.cookierunbot.capture.FrameSnapshot
@@ -49,6 +50,8 @@ class BotController(
     }
 
     private val lock = Any()
+    private val lifecycleTransition = BotLifecycleTransition()
+    private val calibrationBlockState = CalibrationBlockState()
     private val progressRecoveryGate = ProgressRecoveryGate()
     private val actionExecutor = ActionExecutor(context.applicationContext)
     private val autoTapper = GameAutoTapper(actionExecutor)
@@ -80,6 +83,7 @@ class BotController(
     private var roundNumber = 0
     private var gameStartDetectedForRound = false
     private var fastStartPollDeadlineNanos = 0L
+    private val fastStartAttemptMetrics = FastStartAttemptMetrics()
     private var postRelaySequenceDone = false
     private var gameCompleteImageSaved = true
     private var mysteryBoxImageSaved = true
@@ -148,6 +152,7 @@ class BotController(
                 pendingPreviousResultsGesture?.isCompleted == false -> "PREVIOUS_RESULTS"
                 else -> pendingPopupAction
             },
+            calibrationBlockedAction = calibrationBlockState.action,
             friendLifeWorkflowActive = friendLifeWorkflowActive,
             friendLifeLastProgressAgeMs = friendLifeLastProgressAt.takeIf { it > 0L }?.let {
                 (SystemClock.elapsedRealtime() - it).coerceAtLeast(0L)
@@ -156,11 +161,16 @@ class BotController(
         )
     }
 
-    fun start(options: BotOptions = BotOptions()) {
+    fun start(options: BotOptions = BotOptions()) = lifecycleTransition.run {
+        startWithinLifecycle(options)
+    }
+
+    private fun startWithinLifecycle(options: BotOptions) {
         synchronized(lock) {
             if (running) return
             this.options = options
             botRunGeneration += 1L
+            CapturePerformanceProfile.activate(botRunGeneration, options.performanceProfile)
             progressRecoveryGate.reset()
             roundResultCollector.startNewSession()
             running = true
@@ -172,6 +182,9 @@ class BotController(
             purchaseItemRetryState.reset()
             gameStartDetectedForRound = false
             fastStartPollDeadlineNanos = 0L
+            if (RedfingerPerformancePolicy.profilingEnabled(options.performanceProfile)) {
+                fastStartAttemptMetrics.reset()
+            }
             postRelaySequenceDone = false
             gameCompleteImageSaved = true
             mysteryBoxImageSaved = true
@@ -193,6 +206,7 @@ class BotController(
             freshFrameGateWaitStartedAt = 0L
             currentHandler = "IDLE"
             pendingPopupAction = "NONE"
+            calibrationBlockState.clear()
             friendLifeWorkflowActive = false
             friendLifeLastProgressAt = 0L
             pendingDailyNewTapGeneration = -1L
@@ -206,14 +220,14 @@ class BotController(
             pendingPreviousResultsRedetectBaseline = -1L
             resetNoMatchEpisode("bot_started")
             val runGeneration = botRunGeneration
-            GameProgressWatchdogManager.start(context) { reservation ->
+            GameProgressWatchdogManager.start(context, runGeneration) { reservation ->
                 requestProgressRecovery(runGeneration, reservation)
             }
             executor = Executors.newSingleThreadExecutor { runnable ->
                 Thread(runnable, "cookierun-bot-loop").apply { priority = Thread.NORM_PRIORITY - 1 }
             }.also { it.submit { runLoop(runGeneration) } }
         }
-        Log.i(CookieRunBotApplication.TAG, "[BOT] Started")
+        Log.i(CookieRunBotApplication.TAG, "[BOT] Started profile=${options.performanceProfile}")
         DebugLogStore.log("[BOT] Started")
         PersistentTrace.log("[BOT] started options=$options")
         Log.i(CookieRunBotApplication.TAG, "[BOT] Options=$options")
@@ -224,7 +238,7 @@ class BotController(
     }
 
     fun stop() {
-        stopIfCurrentRun(null)
+        lifecycleTransition.run { stopIfCurrentRun(null) }
     }
 
     private fun stopIfCurrentRun(expectedGeneration: Long?) {
@@ -232,12 +246,15 @@ class BotController(
         val stoppedTimeDealGesture: GestureCancellation?
         val stoppedPreviousResultsGesture: GestureCancellation?
         val stoppedRecoveryGesture: GestureCancellation?
-        val worker = synchronized(lock) {
+        val stoppedRun = synchronized(lock) {
             if (expectedGeneration != null && botRunGeneration != expectedGeneration) return
             if (!running && executor == null) return
+            val stoppedGeneration = botRunGeneration
             running = false
             workerAlive = false
             botRunGeneration += 1L
+            flushFastStartAttemptMetrics("STOP")
+            CapturePerformanceProfile.reset(stoppedGeneration)
             progressRecoveryGate.reset()
             val currentExecutor = executor
             executor = null
@@ -250,7 +267,8 @@ class BotController(
             pendingPreviousResultsGesture = null
             stoppedRecoveryGesture = pendingProgressRecoveryGesture
             pendingProgressRecoveryGesture = null
-            currentExecutor
+            calibrationBlockState.clear()
+            StoppedRun(currentExecutor, stoppedGeneration)
         }
         stoppedPartyGesture?.cancel()
         stoppedTimeDealGesture?.cancel()
@@ -258,11 +276,11 @@ class BotController(
         stoppedRecoveryGesture?.cancel()
         autoTapper.stop("BOT_EXIT")
         friendLifeScheduler.stop()
-        GameProgressWatchdogManager.stop()
+        GameProgressWatchdogManager.stop(stoppedRun.generation)
         friendLifeWorkflowActive = false
         friendLifeLastProgressAt = 0L
         resetNoMatchEpisode("bot_stopped")
-        worker?.shutdownNow()
+        stoppedRun.worker?.shutdownNow()
         Log.i(CookieRunBotApplication.TAG, "[BOT] Stopped")
         DebugLogStore.log("[BOT] Stopped")
         PersistentTrace.log("[BOT] stopped")
@@ -280,7 +298,7 @@ class BotController(
                 workerAlive = true
             }
             if (!waitForReadiness()) return
-            StateDetector(context.applicationContext).use { detector ->
+            StateDetector(context.applicationContext, options.performanceProfile).use { detector ->
                 var lastFrameGeneration = -1L
                 while (isRunning()) {
                     val currentGroup = group
@@ -316,7 +334,7 @@ class BotController(
             }
             if (unexpectedExit) {
                 logDiagnostic("[BOT] Worker exited while running; stopping bot")
-                stopIfCurrentRun(runGeneration)
+                lifecycleTransition.run { stopIfCurrentRun(runGeneration) }
             }
             workerRunGeneration.remove()
         }
@@ -893,6 +911,7 @@ class BotController(
         }
 
         try {
+            val previousProcessedGeneration = lastProcessedFrameSequence
             synchronized(lock) {
                 if (!isCurrentWorkerRunLocked() || progressRecoveryGate.isActive()) return
                 lastProcessedFrameSequence = frame.generation
@@ -903,9 +922,34 @@ class BotController(
             logDetectorFrame(frame)
             if (synchronized(lock) { progressRecoveryGate.isActive() }) return
             val detectionStartedAtNanos = SystemClock.elapsedRealtimeNanos()
-            var result = detector.detectFirst(stagesFor(group), frame.mat)
+            val profilingEnabled = RedfingerPerformancePolicy.profilingEnabled(options.performanceProfile)
+            val fastStartPriorityAtDetectionStart = if (profilingEnabled) {
+                isFastStartPriorityWindow(detectionStartedAtNanos)
+            } else {
+                false
+            }
+            if (profilingEnabled && !fastStartPriorityAtDetectionStart) {
+                flushFastStartAttemptMetrics("WINDOW_ENDED")
+            }
+            val skippedGenerations = if (profilingEnabled && previousProcessedGeneration >= 0L) {
+                (frame.generation - previousProcessedGeneration - 1L).coerceAtLeast(0L)
+            } else {
+                0L
+            }
+            val candidates = if (profilingEnabled) {
+                stagesFor(group, fastStartPriorityAtDetectionStart)
+            } else {
+                stagesFor(group)
+            }
+            var result = detector.detectFirst(candidates, frame.mat)
             if (!isRunning() || synchronized(lock) { progressRecoveryGate.isActive() }) return
             var detectionMatchedAtNanos = SystemClock.elapsedRealtimeNanos()
+            if (profilingEnabled && fastStartPriorityAtDetectionStart) {
+                fastStartAttemptMetrics.record(
+                    detectionMatchedAtNanos - detectionStartedAtNanos,
+                    skippedGenerations,
+                )
+            }
             val now = SystemClock.elapsedRealtime()
             if (friendLifeScheduler.observeTime(now)) {
                 logDiagnostic("[FRIEND_LIFE_DUE] elapsedMs=$now pending=true")
@@ -976,7 +1020,7 @@ class BotController(
                     )
                     lastTraceHeartbeatAt = now
                 }
-                listener.onStateChanged("WAITING_FOR_${group.name}")
+                publishRuntimeState("WAITING_FOR_${group.name}")
                 if (group == DetectionGroup.IN_GAME && gameStartDetectedForRound) {
                     synchronized(lock) { if (!progressRecoveryGate.isActive()) autoTapper.start() }
                 }
@@ -992,6 +1036,7 @@ class BotController(
             if (!stageRecorded || synchronized(lock) { progressRecoveryGate.isActive() }) return
             resetNoMatchEpisode("state_matched", result.state)
             lastDetectionAt = now
+            clearCalibrationBlockIfPopupChanged(result.state)
             if (result.state == lastStage) {
                 if (result.state == BotStage.DAILY_NEW) {
                     logDiagnostic("[DAILY_NEW_SKIP] reason=same_state_lastStage")
@@ -1129,6 +1174,12 @@ class BotController(
             return
         }
         logDiagnostic("[STATE_MATCH] state=PARTY_RUN_SEASON_REWARDS score=${format(result.score)}")
+        if (!PhysicalTargetPolicy.isCalibrated(options.performanceProfile)) {
+            blockForUncalibratedPhysicalTarget(
+                "PARTY_RUN_SEASON_REWARDS", sourceWidth, sourceHeight,
+            )
+            return
+        }
         logDiagnostic("[ACTION] state=PARTY_RUN_SEASON_REWARDS action=CONFIRM")
         logDiagnostic(
             "[ACTION_MAP]\n" +
@@ -1243,6 +1294,10 @@ class BotController(
             return
         }
         logDiagnostic("[STATE_MATCH] state=TIME_DEAL score=${format(result.score)}")
+        if (!PhysicalTargetPolicy.isCalibrated(options.performanceProfile)) {
+            blockForUncalibratedPhysicalTarget("TIME_DEAL", sourceWidth, sourceHeight)
+            return
+        }
         logDiagnostic("[ACTION] state=TIME_DEAL action=CLOSE")
         logDiagnostic("[ACTION_MAP] state=TIME_DEAL coordinateType=PHYSICAL physical=(2000,70)")
         if (timeDealCallbackFailures >= MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS) {
@@ -1691,6 +1746,7 @@ class BotController(
                 postRelaySequenceDone = false
                 gameStartDetectedForRound = false
                 fastStartPollDeadlineNanos = 0L
+                flushFastStartAttemptMetrics("NEW_ROUND")
                 gameCompleteImageSaved = false
                 mysteryBoxImageSaved = false
                 mysteryBoxCount = 0
@@ -1822,6 +1878,7 @@ class BotController(
         }
         synchronized(lock) {
             if (!canDispatchActionLocked()) return
+            flushFastStartAttemptMetrics("GAME_START_COMPLETED")
             gameStartDetectedForRound = true
             fastStartPollDeadlineNanos = 0L
             Log.i(CookieRunBotApplication.TAG, "[AUTO TAP] Trigger: GAME_START")
@@ -1849,8 +1906,16 @@ class BotController(
             if (!accepted) return
             Log.i(CookieRunBotApplication.TAG, "[COOKIE RELAY] Cookie Relay used")
             if (options.postCookieRelaySequence && !postRelaySequenceDone) {
-                postRelaySequenceDone = true
-                postRelaySequence(sourceWidth, sourceHeight)
+                if (options.performanceProfile == PerformanceProfile.LEGACY) {
+                    // Preserve the established fire-once semantics: Legacy marks the sequence
+                    // before dispatch and attempts all three raw targets regardless of acceptance.
+                    postRelaySequenceDone = true
+                    postRelaySequence(sourceWidth, sourceHeight)
+                } else {
+                    logSkippedUncalibratedPhysicalTarget(
+                        "POST_RELAY_SEQUENCE", sourceWidth, sourceHeight,
+                    )
+                }
             } else delayOrStop(randomMs(800, 1200))
         }
         updateGroup(DetectionGroup.IN_GAME)
@@ -1878,6 +1943,7 @@ class BotController(
     }
 
     private fun handleGameComplete(detector: StateDetector, sourceWidth: Int, sourceHeight: Int) {
+        flushFastStartAttemptMetrics("ROUND_ENDED")
         autoTapper.stop("GAME_COMPLETE")
         Log.i(CookieRunBotApplication.TAG, "[RESULT] GAME_COMPLETE detected")
         if (!gameCompleteImageSaved) {
@@ -3329,14 +3395,17 @@ class BotController(
         DebugLogStore.log("[STATE] detection_group=${next.name}")
     }
 
-    private fun stagesFor(group: DetectionGroup): List<BotStage> = filterRelicStages(when (group) {
+    private fun stagesFor(
+        group: DetectionGroup,
+        fastStartPriorityOverride: Boolean? = null,
+    ): List<BotStage> = filterRelicStages(when (group) {
         DetectionGroup.PRE_GAME -> ALWAYS + PRE_GAME
         DetectionGroup.IN_GAME -> {
-            if (
-                options.useFastStart &&
-                !gameStartDetectedForRound &&
-                SystemClock.elapsedRealtimeNanos() < fastStartPollDeadlineNanos
-            ) {
+            val fastStartPriority = fastStartPriorityOverride ?: (
+                options.useFastStart && !gameStartDetectedForRound &&
+                    SystemClock.elapsedRealtimeNanos() < fastStartPollDeadlineNanos
+                )
+            if (fastStartPriority) {
                 FAST_START_PRIORITY + ALWAYS
             } else {
                 IN_GAME + ALWAYS
@@ -3344,6 +3413,57 @@ class BotController(
         }
         DetectionGroup.POST_GAME -> ALWAYS + POST_GAME
     }, options.detectRelic, RELIC_STAGES)
+
+    private fun isFastStartPriorityWindow(nowNanos: Long = SystemClock.elapsedRealtimeNanos()): Boolean =
+        group == DetectionGroup.IN_GAME && options.useFastStart && !gameStartDetectedForRound &&
+            nowNanos < fastStartPollDeadlineNanos
+
+    private fun flushFastStartAttemptMetrics(reason: String) {
+        if (!RedfingerPerformancePolicy.profilingEnabled(options.performanceProfile)) return
+        val summary = fastStartAttemptMetrics.drain() ?: return
+        diagnosticExecutor.execute {
+            logDiagnostic(
+                "[GAME_START_ATTEMPT_SUMMARY] attempts=${summary.count} " +
+                    "durationMin=${ms(summary.minDurationNanos)}ms " +
+                    "durationAvg=${ms(summary.totalDurationNanos / summary.count)}ms " +
+                    "durationMax=${ms(summary.maxDurationNanos)}ms " +
+                    "skippedGenerations=${summary.skippedGenerations} " +
+                    "profile=${PerformanceProfile.REDFINGER_OPTIMIZED} " +
+                    "windowMembership=captured_at_detection_start flushReason=$reason",
+            )
+        }
+    }
+
+    private fun blockForUncalibratedPhysicalTarget(action: String, sourceWidth: Int, sourceHeight: Int) {
+        if (!calibrationBlockState.block(action)) return
+        pendingPopupAction = CalibrationBlockState.WAITING_FOR_REDFINGER_CALIBRATION
+        logDiagnostic(
+            "[UNCALIBRATED_PHYSICAL_TARGET] action=$action profile=${options.performanceProfile} " +
+                "source=${sourceWidth}x$sourceHeight " +
+                "behavior=WAITING_FOR_REDFINGER_CALIBRATION_MANUAL_CLEAR_REQUIRED",
+        )
+        publishRuntimeState(CalibrationBlockState.WAITING_FOR_REDFINGER_CALIBRATION)
+    }
+
+    private fun clearCalibrationBlockIfPopupChanged(detectedStage: BotStage) {
+        val blockedAction = calibrationBlockState.clearIfDifferent(detectedStage.name) ?: return
+        pendingPopupAction = "NONE"
+        logDiagnostic(
+            "[REDFINGER_CALIBRATION_BLOCK_CLEARED] action=$blockedAction " +
+                "resumeDetectedState=${detectedStage.name}",
+        )
+    }
+
+    private fun logSkippedUncalibratedPhysicalTarget(action: String, sourceWidth: Int, sourceHeight: Int) {
+        logDiagnostic(
+            "[UNCALIBRATED_PHYSICAL_TARGET] action=$action profile=${options.performanceProfile} " +
+                "source=${sourceWidth}x$sourceHeight behavior=SKIPPED_UNPERFORMED_CONTINUE_IN_GAME",
+        )
+    }
+
+    private fun publishRuntimeState(state: String) {
+        listener.onStateChanged(calibrationBlockState.authoritativeState(state))
+    }
 
     private fun recoveryInterval(group: DetectionGroup): Long = when (group) {
         DetectionGroup.PRE_GAME -> 60_000L
@@ -3384,7 +3504,17 @@ class BotController(
 
     private fun handleNoMatchDiagnostics(detector: StateDetector, frame: FrameSnapshot) {
         val now = SystemClock.elapsedRealtime()
-        if (now - lastNoMatchDiagnosticAt >= NO_MATCH_DIAGNOSTIC_INTERVAL_MS) {
+        val deferHeavyScoring = options.performanceProfile == PerformanceProfile.REDFINGER_OPTIMIZED &&
+            isFastStartPriorityWindow()
+        if (deferHeavyScoring && now - lastNoMatchDiagnosticAt >= NO_MATCH_DIAGNOSTIC_INTERVAL_MS) {
+            logDiagnostic(
+                "[NO_MATCH PERF] heavyScoringDeferred=true logIntervalMs=$NO_MATCH_DIAGNOSTIC_INTERVAL_MS " +
+                    "detectionThrottled=false",
+            )
+            lastNoMatchDiagnosticAt = now
+        }
+        if (!deferHeavyScoring && now - lastNoMatchDiagnosticAt >= NO_MATCH_DIAGNOSTIC_INTERVAL_MS) {
+            val diagnosticStartedAt = SystemClock.elapsedRealtimeNanos()
             val scores = detector.scoreStages(noMatchDiagnosticStages(group), frame.mat)
             val best = scores.maxByOrNull(DetectionResult::score)
             scores.firstOrNull { it.state == BotStage.DAILY_NEW }?.let { dailyNew ->
@@ -3405,6 +3535,10 @@ class BotController(
                     scoreText,
             )
             lastNoMatchDiagnosticAt = now
+            logDiagnostic(
+                "[NO_MATCH PERF] duration=${ms(SystemClock.elapsedRealtimeNanos() - diagnosticStartedAt)}ms " +
+                    "logIntervalMs=$NO_MATCH_DIAGNOSTIC_INTERVAL_MS detectionThrottled=false",
+            )
         }
 
         if (!BotOptionsStore.shouldSaveNoMatchImages(context)) {
@@ -3441,6 +3575,7 @@ class BotController(
 
     private fun enqueueNoMatchDebugSave(pair: com.example.cookierunbot.capture.DebugFramePair) {
         diagnosticExecutor.execute {
+            val diagnosticStartedAt = SystemClock.elapsedRealtimeNanos()
             try {
                 if (!BotOptionsStore.shouldSaveNoMatchImages(context)) return@execute
                 runCatching { noMatchDebugFrameSaver.save(pair) }
@@ -3464,6 +3599,10 @@ class BotController(
                         )
                     }
             } finally { pair.release() }
+            logDiagnostic(
+                "[NO_MATCH PERF] imageSaveDuration=" +
+                    "${ms(SystemClock.elapsedRealtimeNanos() - diagnosticStartedAt)}ms generation=${pair.generation}",
+            )
         }
     }
 
@@ -3610,6 +3749,7 @@ data class BotControllerDiagnostics(
     val minimumFreshFrameGeneration: Long,
     val gestureBusy: Boolean,
     val pendingPopupAction: String,
+    val calibrationBlockedAction: String?,
     val friendLifeWorkflowActive: Boolean,
     val friendLifeLastProgressAgeMs: Long?,
     val roundNumber: Int,
@@ -3629,6 +3769,11 @@ private data class FastPathTiming(
     val latestFramePublishedAtNanos: Long,
     val detectionStartedAtNanos: Long,
     val detectionMatchedAtNanos: Long,
+)
+
+private data class StoppedRun(
+    val worker: ExecutorService?,
+    val generation: Long,
 )
 
 private data class ProgressRecoveryFreshFrame(

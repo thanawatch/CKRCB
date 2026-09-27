@@ -8,6 +8,7 @@ object BotOptionsStore {
     fun save(context: Context, options: BotOptions) {
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit()
             .putBoolean("fast_start", options.useFastStart)
+            .putString("performance_profile", options.performanceProfile.name)
             .putBoolean("cookie_relay", options.useCookieRelay)
             .putBoolean("post_relay", options.postCookieRelaySequence)
             .putBoolean("desired_boost", options.useDesiredRandomBoost)
@@ -36,6 +37,9 @@ object BotOptionsStore {
         val cookieRelay = preferences.getBoolean("cookie_relay", false)
         return runCatching {
             BotOptions(
+                performanceProfile = performanceProfileFromStoredValue(
+                    preferences.getString("performance_profile", null),
+                ),
                 useFastStart = preferences.getBoolean("fast_start", false),
                 useCookieRelay = cookieRelay,
                 postCookieRelaySequence = cookieRelay && preferences.getBoolean("post_relay", false),
@@ -79,4 +83,7 @@ object BotOptionsStore {
 
     private inline fun <reified T : Enum<T>> enumValueOrDefault(value: String?, default: T): T =
         value?.let { runCatching { enumValueOf<T>(it) }.getOrNull() } ?: default
+
+    internal fun performanceProfileFromStoredValue(value: String?): PerformanceProfile =
+        enumValueOrDefault(value, PerformanceProfile.LEGACY)
 }

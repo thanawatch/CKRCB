@@ -1,6 +1,7 @@
 package com.example.cookierunbot.capture
 
 import android.os.SystemClock
+import com.example.cookierunbot.automation.PerformanceProfile
 import com.example.cookierunbot.detection.DetectionResult
 import org.opencv.core.Mat
 
@@ -59,14 +60,18 @@ object LatestFrameProvider {
 
     fun snapshot(): FrameSnapshot? = synchronized(lock) {
         if (latestNormalized.empty()) return null
+        val measureClone = CapturePerformanceProfile.active == PerformanceProfile.REDFINGER_OPTIMIZED
+        val cloneStartedAt = if (measureClone) SystemClock.elapsedRealtimeNanos() else 0L
+        val clone = latestNormalized.clone()
         FrameSnapshot(
-            mat = latestNormalized.clone(),
+            mat = clone,
             sourceWidth = sourceWidth,
             sourceHeight = sourceHeight,
             capturedAtNanos = capturedAtNanos,
             publishedAtNanos = publishedAtNanos,
             generation = generation,
             contentTransform = requireNotNull(contentTransform),
+            cloneDurationNanos = if (measureClone) SystemClock.elapsedRealtimeNanos() - cloneStartedAt else 0L,
         )
     }
 
@@ -86,14 +91,18 @@ object LatestFrameProvider {
             lock.wait(waitMs, waitNanos)
         }
         if (latestNormalized.empty() || generation <= afterGeneration) return null
+        val measureClone = CapturePerformanceProfile.active == PerformanceProfile.REDFINGER_OPTIMIZED
+        val cloneStartedAt = if (measureClone) SystemClock.elapsedRealtimeNanos() else 0L
+        val clone = latestNormalized.clone()
         FrameSnapshot(
-            mat = latestNormalized.clone(),
+            mat = clone,
             sourceWidth = sourceWidth,
             sourceHeight = sourceHeight,
             capturedAtNanos = capturedAtNanos,
             publishedAtNanos = publishedAtNanos,
             generation = generation,
             contentTransform = requireNotNull(contentTransform),
+            cloneDurationNanos = if (measureClone) SystemClock.elapsedRealtimeNanos() - cloneStartedAt else 0L,
         )
     }
 
@@ -194,6 +203,7 @@ data class FrameSnapshot(
     val publishedAtNanos: Long,
     val generation: Long,
     val contentTransform: ContentTransform,
+    val cloneDurationNanos: Long,
 )
 
 data class DebugFramePair(

@@ -5,6 +5,8 @@ import android.graphics.BitmapFactory
 import android.util.Log
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.automation.BotStage
+import com.example.cookierunbot.automation.PerformanceProfile
+import android.os.SystemClock
 import org.opencv.android.Utils
 import org.opencv.core.Core
 import org.opencv.core.Mat
@@ -13,15 +15,20 @@ import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
 import java.util.EnumMap
 import java.util.Locale
+import java.util.concurrent.Executors
 import kotlin.math.roundToInt
 
-class StateDetector(context: Context) : AutoCloseable {
+class StateDetector(
+    context: Context,
+    private val performanceProfile: PerformanceProfile = PerformanceProfile.LEGACY,
+) : AutoCloseable {
     private val appContext = context.applicationContext
     private val templates = EnumMap<BotStage, List<Mat>>(BotStage::class.java)
     private val auxiliaryTemplates = mutableMapOf<String, Mat>()
     private val maskedAuxiliaryTemplates = mutableMapOf<String, MaskedTemplate>()
     private val reusableScreenGray = Mat()
     private val reusableStageMatch = Mat()
+    private val lastScaleBenchmarkLogAt = EnumMap<BotStage, Long>(BotStage::class.java)
 
     init {
         for (stage in DETECTABLE_STAGES) {
@@ -236,10 +243,27 @@ class StateDetector(context: Context) : AutoCloseable {
                 }
             }
 
-            for (template in templatesForStage) {
+            val benchmarkScaleDurations = if (
+                performanceProfile == PerformanceProfile.REDFINGER_OPTIMIZED &&
+                (stage == BotStage.GAME_START || stage == BotStage.GAME_RELAY)
+            ) {
+                val benchmarkNow = SystemClock.elapsedRealtime()
+                if (benchmarkNow - (lastScaleBenchmarkLogAt[stage] ?: 0L) >=
+                    SCALE_BENCHMARK_LOG_INTERVAL_MS
+                ) {
+                    lastScaleBenchmarkLogAt[stage] = benchmarkNow
+                    mutableListOf<Pair<Double, Double>>()
+                } else {
+                    null
+                }
+            } else {
+                null
+            }
+            for ((index, template) in templatesForStage.withIndex()) {
                 if (roiGray.cols() < template.cols() || roiGray.rows() < template.rows()) {
                     continue
                 }
+                val scaleStartedAt = if (benchmarkScaleDurations != null) SystemClock.elapsedRealtimeNanos() else 0L
                 Imgproc.matchTemplate(
                     roiGray,
                     template,
@@ -247,12 +271,32 @@ class StateDetector(context: Context) : AutoCloseable {
                     Imgproc.TM_CCOEFF_NORMED,
                 )
                 val match = Core.minMaxLoc(reusableStageMatch)
+                benchmarkScaleDurations?.add(
+                    SCALE_BY_STAGE.getValue(stage)[index] to
+                        (SystemClock.elapsedRealtimeNanos() - scaleStartedAt) / 1_000_000.0,
+                )
                 if (match.maxVal > bestScore) {
                     bestScore = match.maxVal
                     bestX = match.maxLoc.x.toInt() + roiRect.x
                     bestY = match.maxLoc.y.toInt() + roiRect.y
                     bestWidth = template.cols()
                     bestHeight = template.rows()
+                }
+            }
+
+            if (benchmarkScaleDurations != null) {
+                val sampledStage = stage.name
+                val immutableSamples = benchmarkScaleDurations.toList()
+                PERFORMANCE_LOG_EXECUTOR.execute {
+                    val measurements = immutableSamples.joinToString(",") { (scale, duration) ->
+                        "${String.format(Locale.US, "%.2f", scale)}=" +
+                            String.format(Locale.US, "%.2fms", duration)
+                    }
+                    Log.i(
+                        CookieRunBotApplication.TAG,
+                        "[MATCH PERF] stage=$sampledStage scales=[$measurements] " +
+                            "total=${String.format(Locale.US, "%.2f", immutableSamples.sumOf { it.second })}ms",
+                    )
                 }
             }
 
@@ -388,6 +432,10 @@ class StateDetector(context: Context) : AutoCloseable {
     }
 
     companion object {
+        private val PERFORMANCE_LOG_EXECUTOR = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "match-performance-logs")
+        }
+        private const val SCALE_BENCHMARK_LOG_INTERVAL_MS = 5_000L
         private const val LOGICAL_WIDTH = 1280
         private const val LOGICAL_HEIGHT = 720
         private const val MATCH_THRESHOLD = 0.8

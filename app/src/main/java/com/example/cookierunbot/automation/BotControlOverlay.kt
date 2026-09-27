@@ -50,6 +50,7 @@ class BotControlOverlay(private val context: Context) {
     private val statsTime = TextView(context)
     private val statsBoxCounts = linkedMapOf<String, TextView>()
     private val fastStart = Switch(context)
+    private val redfingerProfile = Switch(context)
     private val cookieRelay = Switch(context)
     private val postRelay = Switch(context)
     private val desiredBoost = Switch(context)
@@ -153,6 +154,11 @@ class BotControlOverlay(private val context: Context) {
         panel.addView(buildStatisticsSummary(), matchWidth())
 
         val options = BotOptionsStore.load(context)
+        addSwitch(
+            redfingerProfile,
+            "Experimental Redfinger Performance Profile",
+            options.performanceProfile == PerformanceProfile.REDFINGER_OPTIMIZED,
+        )
         addSwitch(fastStart, "Use owned Fast Start", options.useFastStart)
         addSwitch(cookieRelay, "Use owned Cookie Relay", options.useCookieRelay)
         addSwitch(postRelay, "Run action sequence after Cookie Relay", options.postCookieRelaySequence)
@@ -338,6 +344,11 @@ class BotControlOverlay(private val context: Context) {
         val count = fixedCount.text.toString().toIntOrNull() ?: 0
         val tapInterval = interval.text.toString().toIntOrNull() ?: 250
         return BotOptions(
+            performanceProfile = if (redfingerProfile.isChecked) {
+                PerformanceProfile.REDFINGER_OPTIMIZED
+            } else {
+                PerformanceProfile.LEGACY
+            },
             useFastStart = fastStart.isChecked,
             useCookieRelay = cookieRelay.isChecked,
             postCookieRelaySequence = cookieRelay.isChecked && postRelay.isChecked,
@@ -371,6 +382,7 @@ class BotControlOverlay(private val context: Context) {
 
     private fun updateStatus() {
         val running = BotRuntime.isRunning()
+        val botDiagnostics = BotRuntime.diagnostics()
         val capture = LatestFrameProvider.diagnostics()
         val accessibilityEnabled = BotAccessibilityService.isEnabled(context)
         val accessibilityConnected = BotAccessibilityService.isConnected()
@@ -378,14 +390,17 @@ class BotControlOverlay(private val context: Context) {
             capture.frameAgeMs != null &&
             capture.frameAgeMs <= AutomationConfig.MAX_FRAME_AGE_MS
         val ready = accessibilityEnabled && accessibilityConnected && frameReady
+        val blockedAction = botDiagnostics.calibrationBlockedAction
         bubble.text = when {
             !running -> "BOT\nOFF"
+            blockedAction != null -> "BOT\nWAIT"
             ready -> "BOT\nON"
             else -> "BOT\nWAIT"
         }
         bubble.background = roundedBackground(
             when {
                 !running -> Color.rgb(20, 110, 190)
+                blockedAction != null -> Color.rgb(210, 125, 20)
                 ready -> Color.rgb(20, 150, 70)
                 else -> Color.rgb(210, 125, 20)
             },
@@ -393,6 +408,7 @@ class BotControlOverlay(private val context: Context) {
         )
         panelStatus.text = when {
             !running -> "Status: Stopped"
+            blockedAction != null -> redfingerCalibrationStatusText(blockedAction)
             !capture.captureRunning -> "Waiting: Screen capture"
             !frameReady -> "Waiting: Fresh screen frame"
             !accessibilityEnabled -> "Waiting: Accessibility permission disabled"

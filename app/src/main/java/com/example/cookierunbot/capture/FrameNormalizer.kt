@@ -80,6 +80,15 @@ object FrameNormalizer {
         }
     }
 
+    /** Pixel-exact copy used only by the explicitly selected Redfinger session profile. */
+    fun normalizeExactSize(sourceRgba: Mat, outputRgba: Mat, transform: ContentTransform) {
+        require(CapturePerformanceProfile.hasExactSizeGeometry(transform)) {
+            "Exact-size normalization requires 1280x720 source and content rectangle"
+        }
+        require(sourceRgba.cols() == LOGICAL_WIDTH && sourceRgba.rows() == LOGICAL_HEIGHT)
+        sourceRgba.copyTo(outputRgba)
+    }
+
     /** Center-crop fallback for callers without display inset metadata. */
     fun normalize(sourceRgba: Mat, outputRgba: Mat) = normalize(
         sourceRgba,
