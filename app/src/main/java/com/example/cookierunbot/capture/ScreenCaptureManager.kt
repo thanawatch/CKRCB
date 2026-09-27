@@ -218,7 +218,12 @@ class ScreenCaptureManager(
         val transform = activeTransform?.takeIf {
             it.sourceWidth == width && it.sourceHeight == height
         } ?: updateContentTransform(width, height, "frame-size-change")
-        FrameNormalizer.normalize(sourceRgba, normalizedRgba, transform)
+        val exactSizeFastPath = CapturePerformanceProfile.canUseExactSizeFastPath(transform)
+        if (exactSizeFastPath) {
+            FrameNormalizer.normalizeExactSize(sourceRgba, normalizedRgba, transform)
+        } else {
+            FrameNormalizer.normalize(sourceRgba, normalizedRgba, transform)
+        }
         val normalizedAtNanos = SystemClock.elapsedRealtimeNanos()
 
         val now = SystemClock.elapsedRealtimeNanos()
@@ -257,7 +262,9 @@ class ScreenCaptureManager(
                     "normalize=${millis(normalizedAtNanos - matCreatedAtNanos)}ms " +
                     "publish=${millis(publishedAtNanos - normalizedAtNanos)}ms " +
                     "total=${millis(publishedAtNanos - frameCapturedAtNanos)}ms",
+                    // The path marker makes device-side before/after captures comparable.
             )
+            Log.i(CookieRunBotApplication.TAG, "[CAPTURE PERF] exact_size_fast_path=$exactSizeFastPath fps=${String.format(java.util.Locale.US, "%.2f", currentFps)}")
             lastCaptureLogNanos = now
         }
         if (now - lastPersistentTraceNanos >= PERSISTENT_TRACE_INTERVAL_NANOS) {

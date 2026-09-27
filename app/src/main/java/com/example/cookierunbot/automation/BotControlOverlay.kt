@@ -50,6 +50,7 @@ class BotControlOverlay(private val context: Context) {
     private val statsTime = TextView(context)
     private val statsBoxCounts = linkedMapOf<String, TextView>()
     private val fastStart = Switch(context)
+    private val redfingerProfile = Switch(context)
     private val cookieRelay = Switch(context)
     private val postRelay = Switch(context)
     private val desiredBoost = Switch(context)
@@ -153,6 +154,11 @@ class BotControlOverlay(private val context: Context) {
         panel.addView(buildStatisticsSummary(), matchWidth())
 
         val options = BotOptionsStore.load(context)
+        addSwitch(
+            redfingerProfile,
+            "Experimental Redfinger Performance Profile",
+            options.performanceProfile == PerformanceProfile.REDFINGER_OPTIMIZED,
+        )
         addSwitch(fastStart, "Use owned Fast Start", options.useFastStart)
         addSwitch(cookieRelay, "Use owned Cookie Relay", options.useCookieRelay)
         addSwitch(postRelay, "Run action sequence after Cookie Relay", options.postCookieRelaySequence)
@@ -338,6 +344,11 @@ class BotControlOverlay(private val context: Context) {
         val count = fixedCount.text.toString().toIntOrNull() ?: 0
         val tapInterval = interval.text.toString().toIntOrNull() ?: 250
         return BotOptions(
+            performanceProfile = if (redfingerProfile.isChecked) {
+                PerformanceProfile.REDFINGER_OPTIMIZED
+            } else {
+                PerformanceProfile.LEGACY
+            },
             useFastStart = fastStart.isChecked,
             useCookieRelay = cookieRelay.isChecked,
             postCookieRelaySequence = cookieRelay.isChecked && postRelay.isChecked,

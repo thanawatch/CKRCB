@@ -5,6 +5,8 @@ import android.graphics.BitmapFactory
 import android.util.Log
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.automation.BotStage
+import com.example.cookierunbot.automation.PerformanceProfile
+import android.os.SystemClock
 import org.opencv.android.Utils
 import org.opencv.core.Core
 import org.opencv.core.Mat
@@ -15,13 +17,17 @@ import java.util.EnumMap
 import java.util.Locale
 import kotlin.math.roundToInt
 
-class StateDetector(context: Context) : AutoCloseable {
+class StateDetector(
+    context: Context,
+    private val performanceProfile: PerformanceProfile = PerformanceProfile.LEGACY,
+) : AutoCloseable {
     private val appContext = context.applicationContext
     private val templates = EnumMap<BotStage, List<Mat>>(BotStage::class.java)
     private val auxiliaryTemplates = mutableMapOf<String, Mat>()
     private val maskedAuxiliaryTemplates = mutableMapOf<String, MaskedTemplate>()
     private val reusableScreenGray = Mat()
     private val reusableStageMatch = Mat()
+    private val lastScaleBenchmarkLogAt = EnumMap<BotStage, Long>(BotStage::class.java)
 
     init {
         for (stage in DETECTABLE_STAGES) {
@@ -236,10 +242,15 @@ class StateDetector(context: Context) : AutoCloseable {
                 }
             }
 
+            val benchmarkScaleDurations = if (
+                performanceProfile == PerformanceProfile.REDFINGER_OPTIMIZED &&
+                (stage == BotStage.GAME_START || stage == BotStage.GAME_RELAY)
+            ) mutableListOf<Double>() else null
             for (template in templatesForStage) {
                 if (roiGray.cols() < template.cols() || roiGray.rows() < template.rows()) {
                     continue
                 }
+                val scaleStartedAt = SystemClock.elapsedRealtimeNanos()
                 Imgproc.matchTemplate(
                     roiGray,
                     template,
@@ -247,6 +258,9 @@ class StateDetector(context: Context) : AutoCloseable {
                     Imgproc.TM_CCOEFF_NORMED,
                 )
                 val match = Core.minMaxLoc(reusableStageMatch)
+                benchmarkScaleDurations?.add(
+                    (SystemClock.elapsedRealtimeNanos() - scaleStartedAt) / 1_000_000.0,
+                )
                 if (match.maxVal > bestScore) {
                     bestScore = match.maxVal
                     bestX = match.maxLoc.x.toInt() + roiRect.x
@@ -254,6 +268,23 @@ class StateDetector(context: Context) : AutoCloseable {
                     bestWidth = template.cols()
                     bestHeight = template.rows()
                 }
+            }
+
+            val benchmarkNow = SystemClock.elapsedRealtime()
+            if (benchmarkScaleDurations != null &&
+                benchmarkNow - (lastScaleBenchmarkLogAt[stage] ?: 0L) >= SCALE_BENCHMARK_LOG_INTERVAL_MS
+            ) {
+                val scales = SCALE_BY_STAGE.getValue(stage)
+                val measurements = benchmarkScaleDurations.mapIndexed { index, duration ->
+                    "${String.format(Locale.US, "%.2f", scales[index])}=" +
+                        String.format(Locale.US, "%.2fms", duration)
+                }.joinToString(",")
+                Log.i(
+                    CookieRunBotApplication.TAG,
+                    "[MATCH PERF] stage=${stage.name} scales=[$measurements] " +
+                        "total=${String.format(Locale.US, "%.2f", benchmarkScaleDurations.sum())}ms",
+                )
+                lastScaleBenchmarkLogAt[stage] = benchmarkNow
             }
 
             val matched = bestScore >= MATCH_THRESHOLD
@@ -388,6 +419,7 @@ class StateDetector(context: Context) : AutoCloseable {
     }
 
     companion object {
+        private const val SCALE_BENCHMARK_LOG_INTERVAL_MS = 5_000L
         private const val LOGICAL_WIDTH = 1280
         private const val LOGICAL_HEIGHT = 720
         private const val MATCH_THRESHOLD = 0.8

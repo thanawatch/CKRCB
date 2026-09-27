@@ -59,14 +59,17 @@ object LatestFrameProvider {
 
     fun snapshot(): FrameSnapshot? = synchronized(lock) {
         if (latestNormalized.empty()) return null
+        val cloneStartedAt = SystemClock.elapsedRealtimeNanos()
+        val clone = latestNormalized.clone()
         FrameSnapshot(
-            mat = latestNormalized.clone(),
+            mat = clone,
             sourceWidth = sourceWidth,
             sourceHeight = sourceHeight,
             capturedAtNanos = capturedAtNanos,
             publishedAtNanos = publishedAtNanos,
             generation = generation,
             contentTransform = requireNotNull(contentTransform),
+            cloneDurationNanos = SystemClock.elapsedRealtimeNanos() - cloneStartedAt,
         )
     }
 
@@ -86,14 +89,17 @@ object LatestFrameProvider {
             lock.wait(waitMs, waitNanos)
         }
         if (latestNormalized.empty() || generation <= afterGeneration) return null
+        val cloneStartedAt = SystemClock.elapsedRealtimeNanos()
+        val clone = latestNormalized.clone()
         FrameSnapshot(
-            mat = latestNormalized.clone(),
+            mat = clone,
             sourceWidth = sourceWidth,
             sourceHeight = sourceHeight,
             capturedAtNanos = capturedAtNanos,
             publishedAtNanos = publishedAtNanos,
             generation = generation,
             contentTransform = requireNotNull(contentTransform),
+            cloneDurationNanos = SystemClock.elapsedRealtimeNanos() - cloneStartedAt,
         )
     }
 
@@ -194,6 +200,7 @@ data class FrameSnapshot(
     val publishedAtNanos: Long,
     val generation: Long,
     val contentTransform: ContentTransform,
+    val cloneDurationNanos: Long,
 )
 
 data class DebugFramePair(

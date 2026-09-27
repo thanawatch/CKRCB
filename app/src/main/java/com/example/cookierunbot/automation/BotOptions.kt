@@ -2,6 +2,8 @@ package com.example.cookierunbot.automation
 
 enum class JumpMode { NONE, FIXED_COUNT, CONTINUOUS }
 
+enum class PerformanceProfile { LEGACY, REDFINGER_OPTIMIZED }
+
 enum class BoostChoice(val displayName: String, val assetName: String) {
     DOUBLE_COINS("Double Coins", "BOOST_DOUBLE_COINS_1.png"),
     SCORE_BONUS("+15% Score Bonus", "BOOST_15P_SCORE_BONUS_1.png"),
@@ -17,6 +19,7 @@ enum class BoostChoice(val displayName: String, val assetName: String) {
 }
 
 data class BotOptions(
+    val performanceProfile: PerformanceProfile = PerformanceProfile.LEGACY,
     val useFastStart: Boolean = false,
     val useCookieRelay: Boolean = false,
     val postCookieRelaySequence: Boolean = false,

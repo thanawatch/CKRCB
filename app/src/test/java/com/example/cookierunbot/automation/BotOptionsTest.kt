@@ -40,4 +40,29 @@ class BotOptionsTest {
         assertEquals(true, resultsOff.saveDebugImages)
         assertEquals(false, resultsOff.saveResultImages)
     }
+
+    @Test
+    fun performanceProfileDefaultsToLegacyAndCanBeSelected() {
+        assertEquals(PerformanceProfile.LEGACY, BotOptions().performanceProfile)
+        assertEquals(
+            PerformanceProfile.REDFINGER_OPTIMIZED,
+            BotOptions(performanceProfile = PerformanceProfile.REDFINGER_OPTIMIZED).performanceProfile,
+        )
+    }
+
+    @Test
+    fun storedPerformanceProfileSafelyDefaultsAndRoundTripsSelection() {
+        assertEquals(
+            PerformanceProfile.LEGACY,
+            BotOptionsStore.performanceProfileFromStoredValue(null),
+        )
+        assertEquals(
+            PerformanceProfile.LEGACY,
+            BotOptionsStore.performanceProfileFromStoredValue("UNKNOWN_FUTURE_PROFILE"),
+        )
+        assertEquals(
+            PerformanceProfile.REDFINGER_OPTIMIZED,
+            BotOptionsStore.performanceProfileFromStoredValue("REDFINGER_OPTIMIZED"),
+        )
+    }
 }
