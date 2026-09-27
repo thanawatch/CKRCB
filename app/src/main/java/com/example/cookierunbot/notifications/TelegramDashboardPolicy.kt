@@ -12,6 +12,7 @@ internal object TelegramDashboardPolicy {
     const val WATCHDOG = "⏱ Watchdog"
     const val ROUNDS = "🎮 Rounds"
     const val ERRORS = "⚠️ Errors"
+    const val UPDATE = "📦 Update App"
     const val DASHBOARD = "🏠 Dashboard"
     const val REFRESH = "🔄 Refresh"
 
@@ -20,8 +21,8 @@ internal object TelegramDashboardPolicy {
           [{"text":"📊 All"},{"text":"📸 Screen"}],
           [{"text":"❤️ Friend Life"},{"text":"🩺 Health"}],
           [{"text":"⏱ Watchdog"},{"text":"🎮 Rounds"}],
-          [{"text":"⚠️ Errors"},{"text":"🏠 Dashboard"}],
-          [{"text":"🔄 Refresh"}]
+          [{"text":"⚠️ Errors"},{"text":"📦 Update App"}],
+          [{"text":"🏠 Dashboard"},{"text":"🔄 Refresh"}]
         ],"resize_keyboard":true,"is_persistent":true,"one_time_keyboard":false}
     """
 
@@ -37,6 +38,7 @@ internal object TelegramDashboardPolicy {
         WATCHDOG -> "/watchdog"
         ROUNDS -> "/rounds"
         ERRORS -> "/errors"
+        UPDATE -> "/update"
         DASHBOARD -> "/dashboard"
         else -> null
     }

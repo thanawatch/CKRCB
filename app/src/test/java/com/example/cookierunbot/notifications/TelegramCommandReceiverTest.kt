@@ -13,7 +13,7 @@ import org.junit.Test
 class TelegramCommandReceiverTest {
     @Test fun parsesAllReadOnlyCommands() {
         listOf("/help", "/status", "/stats", "/last", "/boxes", "/all", "/friend", "/health",
-            "/screen", "/watchdog", "/rounds", "/errors", "/dashboard").forEach { command ->
+            "/screen", "/watchdog", "/rounds", "/errors", "/dashboard", "/update").forEach { command ->
             assertEquals(command, parseTelegramCommand(command))
         }
         assertNull(parseTelegramCommand("/startbot"))
@@ -27,6 +27,7 @@ class TelegramCommandReceiverTest {
         assertEquals("/friend", parseTelegramCommand("/friend@RobotRunBot"))
         assertEquals("/dashboard", parseTelegramCommand("/start"))
         assertEquals("/dashboard", parseTelegramCommand("/menu@RobotRunBot"))
+        assertEquals("/update", parseTelegramCommand("/update@RobotRunBot"))
     }
 
     @Test fun configuredChatIdIsTheOnlyAuthorizedChat() {

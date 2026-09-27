@@ -1,12 +1,14 @@
 package com.example.cookierunbot.notifications
 
 import android.content.Context
+import android.os.Build
 import android.os.SystemClock
 import android.util.Log
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.automation.NoMatchDebugFrameSaver
 import com.example.cookierunbot.capture.LatestFrameProvider
 import com.example.cookierunbot.diagnostics.DebugLogStore
+import com.example.cookierunbot.update.UpdateFeedClient
 import java.io.BufferedOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -139,6 +141,39 @@ class TelegramNotifier(context: Context) {
             0L,
             callback,
         )
+    }
+
+    /** Check the same feed configured by UpdateActivity, without remote installation. */
+    @Suppress("DEPRECATION")
+    internal fun sendCommandUpdate(target: TelegramCommandReplyTarget) {
+        try {
+            executor.execute {
+                if (!target.matches(TelegramConfigStore.load(appContext))) return@execute
+                val info = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
+                val installedCode = if (Build.VERSION.SDK_INT >= 28) {
+                    info.longVersionCode
+                } else {
+                    info.versionCode.toLong()
+                }
+                val installedName = info.versionName ?: "unknown"
+                val feedUrl = appContext.getSharedPreferences("robotrun_update", Context.MODE_PRIVATE)
+                    .getString("https_update_feed", "").orEmpty().trim()
+                val reply = if (feedUrl.isBlank()) {
+                    formatTelegramUpdateReply(installedName, installedCode, null, false)
+                } else {
+                    try {
+                        val available = UpdateFeedClient(appContext).check(feedUrl)
+                        formatTelegramUpdateReply(installedName, installedCode, available, true)
+                    } catch (error: Exception) {
+                        log("[TELEGRAM_UPDATE] check_failed=true type=${error.javaClass.simpleName}")
+                        formatTelegramUpdateReply(installedName, installedCode, null, true, true)
+                    }
+                }
+                sendCommandReply(reply, target)
+            }
+        } catch (error: Exception) {
+            log("[TELEGRAM_UPDATE] queue_rejected=true type=${error.javaClass.simpleName}")
+        }
     }
 
     internal fun sendCommandScreenshot(target: TelegramCommandReplyTarget) {

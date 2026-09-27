@@ -6,6 +6,7 @@ import com.example.cookierunbot.automation.GameProgressWatchdog
 import com.example.cookierunbot.capture.Diagnostics
 import com.example.cookierunbot.statistics.RoundResult
 import com.example.cookierunbot.statistics.SessionStatistics
+import com.example.cookierunbot.update.UpdateDescriptor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -23,6 +24,7 @@ class TelegramDashboardTest {
         assertEquals("/rounds", parseTelegramCommand(TelegramDashboardPolicy.ROUNDS))
         assertEquals("/errors", parseTelegramCommand(TelegramDashboardPolicy.ERRORS))
         assertEquals("/dashboard", parseTelegramCommand(TelegramDashboardPolicy.DASHBOARD))
+        assertEquals("/update", parseTelegramCommand(TelegramDashboardPolicy.UPDATE))
         assertNull(parseTelegramCommand("Stop Bot"))
     }
 
@@ -43,10 +45,30 @@ class TelegramDashboardTest {
         assertTrue(markup.contains("\"one_time_keyboard\":false"))
         assertTrue(markup.contains("📊 All"))
         assertTrue(markup.contains("📸 Screen"))
+        assertTrue(markup.contains("📦 Update App"))
         assertTrue(requireNotNull(telegramCommandReply("/help")).contains("/all"))
         assertTrue(requireNotNull(telegramCommandReply("/help")).contains("/friend"))
         assertTrue(requireNotNull(telegramCommandReply("/help")).contains("/screen"))
+        assertTrue(requireNotNull(telegramCommandReply("/help")).contains("/update"))
         assertTrue(requireNotNull(telegramCommandReply("/dashboard")).contains("Tap a button below"))
+    }
+
+    @Test fun updateButtonReportsConfiguredFeedAvailabilityWithoutInstalling() {
+        val noFeed = formatTelegramUpdateReply("1.1.1", 3L, null, false)
+        assertTrue(noFeed.contains("not configured"))
+        assertTrue(noFeed.contains("Update App"))
+        val update = UpdateDescriptor(
+            packageName = "com.example.cookierunbot", versionCode = 4,
+            versionName = "1.1.2", apkUrl = "https://updates.example.com/robotrun.apk",
+            sha256 = "ab".repeat(32), notes = "Fixes and improvements",
+        )
+        val available = formatTelegramUpdateReply("1.1.1", 3L, update, true)
+        assertTrue(available.contains("New update available"))
+        assertTrue(available.contains("1.1.2 (code 4)"))
+        assertTrue(available.contains("Fixes and improvements"))
+        assertFalse(available.contains(update.apkUrl))
+        assertTrue(formatTelegramUpdateReply("1.1.2", 4L, update, true).contains("up to date"))
+        assertTrue(formatTelegramUpdateReply("1.1.1", 3L, null, true, true).contains("Could not check"))
     }
 
     @Test fun screenshotRequiresRecentPostCaptureTimestamp() {
