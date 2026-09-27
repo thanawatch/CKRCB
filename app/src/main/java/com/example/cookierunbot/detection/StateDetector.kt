@@ -7,6 +7,7 @@ import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.automation.BotStage
 import com.example.cookierunbot.automation.PerformanceProfile
+import com.example.cookierunbot.automation.RedfingerPerformancePolicy
 import android.os.SystemClock
 import org.opencv.android.Utils
 import org.opencv.core.Core
@@ -30,6 +31,11 @@ class StateDetector(
     private val reusableScreenGray = Mat()
     private val reusableStageMatch = Mat()
     private val lastScaleBenchmarkLogAt = EnumMap<BotStage, Long>(BotStage::class.java)
+
+    private fun matchScales(stage: BotStage): List<Double> =
+        RedfingerPerformancePolicy.matchScales(
+            performanceProfile, stage, SCALE_BY_STAGE.getValue(stage),
+        )
 
     init {
         for (stage in DETECTABLE_STAGES) {
@@ -199,6 +205,7 @@ class StateDetector(
             var bestHeight = 0
 
             val templatesForStage = templates.getValue(stage)
+            val scalesForStage = matchScales(stage)
             val template = templatesForStage.firstOrNull()
             if (stage == BotStage.DAILY_NEW && template != null) {
                 val templateWidth = template.cols()
@@ -278,7 +285,7 @@ class StateDetector(
                 )
                 val match = Core.minMaxLoc(reusableStageMatch)
                 benchmarkScaleDurations?.add(
-                    SCALE_BY_STAGE.getValue(stage)[index] to
+                    scalesForStage[index] to
                         (SystemClock.elapsedRealtimeNanos() - scaleStartedAt) / 1_000_000.0,
                 )
                 if (match.maxVal > bestScore) {
@@ -373,7 +380,7 @@ class StateDetector(
             try {
                 Utils.bitmapToMat(bitmap, templateRgba)
                 Imgproc.cvtColor(templateRgba, templateGray, Imgproc.COLOR_RGBA2GRAY)
-                for (scale in SCALE_BY_STAGE.getValue(stage)) {
+                for (scale in matchScales(stage)) {
                     variants += if (scale == 1.0) {
                         templateGray.clone()
                     } else {
@@ -534,8 +541,7 @@ private val TEMPLATE_PATHS_BY_STAGE = mapOf(
         private val SCALE_BY_STAGE = mapOf(
             BotStage.MAINMENU to listOf(1.0),
             BotStage.PURCHASE_ITEM to listOf(1.0),
-            // Same animation-aware scale set used by Python's transient
-            // GAME_START polling, without changing threshold or ROI.
+            // Legacy retains all seven animation-aware scales; Redfinger uses 1.0 only.
             BotStage.GAME_START to listOf(0.70, 0.80, 0.90, 1.00, 1.10, 1.20, 1.30),
             BotStage.GAME_RELAY to listOf(0.70, 0.80, 0.90, 1.00, 1.10, 1.20, 1.30),
             BotStage.GAME_COMPLETE to listOf(1.0),
