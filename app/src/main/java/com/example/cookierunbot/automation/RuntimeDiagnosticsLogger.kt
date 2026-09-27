@@ -7,7 +7,7 @@ import android.os.BatteryManager
 import android.os.PowerManager
 import android.os.Process
 import android.os.SystemClock
-import android.util.Log
+import com.example.cookierunbot.diagnostics.RobotLog as Log
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.capture.LatestFrameProvider
 import com.example.cookierunbot.diagnostics.DebugLogStore

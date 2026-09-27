@@ -3,7 +3,7 @@ package com.example.cookierunbot.automation
 import android.content.Context
 import android.os.SystemClock
 import android.os.Process
-import android.util.Log
+import com.example.cookierunbot.diagnostics.RobotLog as Log
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.capture.ContentGeometryRegistry
 import com.example.cookierunbot.capture.CapturePerformanceProfile
@@ -13,6 +13,7 @@ import com.example.cookierunbot.capture.FrameSnapshot
 import com.example.cookierunbot.detection.DetectionResult
 import com.example.cookierunbot.detection.StateDetector
 import com.example.cookierunbot.detection.TemplateMatch
+import com.example.cookierunbot.diagnostics.IncidentManager
 import com.example.cookierunbot.diagnostics.PersistentTrace
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.statistics.RoundResultCollector
@@ -406,6 +407,7 @@ class BotController(
     ) {
         var currentFrame: FrameSnapshot? = null
         var gateStarted = false
+        var incidentOutcome = "ended_without_detector_resume_see_timeline"
         var finalPostTapBaseline: Long? = null
         var finalFreshGeneration: Long? = null
         try {
@@ -413,6 +415,7 @@ class BotController(
             val initialGeneration = LatestFrameProvider.currentGeneration()
             currentFrame = LatestFrameProvider.awaitNextSnapshot(initialGeneration, PROGRESS_RECOVERY_FRAME_TIMEOUT_MS)
             if (currentFrame == null) {
+                incidentOutcome = "no_fresh_frame"
                 logDiagnostic("[GAME_PROGRESS_RECOVERY] skipped=true reason=no_fresh_frame")
                 return
             }
@@ -560,6 +563,7 @@ class BotController(
                         val previousGroup = routeProgressRecoveryMainMenu(
                             runGeneration, reservation, true,
                         ) ?: return
+                        incidentOutcome = "mainmenu_routed_pre_game"
                         logDiagnostic(
                             "[GAME_PROGRESS_MAINMENU_CHECK] attempt=$menuCheckAttempt matched=true " +
                                 "score=${format(mainMenu.score)} previousGroup=$previousGroup action=SET_PRE_GAME",
@@ -602,6 +606,7 @@ class BotController(
                     if (lastPostTapBaseline >= 0L) finalFreshGeneration = requireNotNull(currentFrame).generation
                 }
                 if (menuTimedOut && recoveryRunIsCurrent(runGeneration, reservation)) {
+                    incidentOutcome = "mainmenu_timeout_keep_group"
                     logDiagnostic(
                         "[GAME_PROGRESS_MAINMENU_CHECK] matched=false action=KEEP_GROUP reason=timeout " +
                             "previousGroup=${synchronized(lock) { group }} " +
@@ -613,8 +618,10 @@ class BotController(
             }
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
+            incidentOutcome = "interrupted"
             logDiagnostic("[GAME_PROGRESS_RECOVERY] failed=true reason=interrupted")
         } catch (error: Exception) {
+            incidentOutcome = "failed_${error.javaClass.simpleName}"
             logDiagnostic("[GAME_PROGRESS_RECOVERY] failed=true type=${error.javaClass.simpleName}")
         } finally {
             try {
@@ -628,9 +635,14 @@ class BotController(
                     // A stale worker cannot clear a gate owned by a newer bot run.
                     if (!resumed) clearProgressRecoveryGate(runGeneration)
                     if (resumed) {
+                        incidentOutcome = "resumed_detector"
                         logDiagnostic("[GAME_PROGRESS_RECOVERY] freshGeneration=$freshGeneration resumed_detector=true")
                     }
                 }
+                runCatching { IncidentManager.finish(reservation.generation, incidentOutcome) }
+                    .onFailure { error ->
+                        Log.w(CookieRunBotApplication.TAG, "[INCIDENT] finish_failed type=${error.javaClass.simpleName}")
+                    }
                 GameProgressWatchdogManager.finishRecovery(reservation)
             }
         }
@@ -651,6 +663,11 @@ class BotController(
         val action = dispatchProgressRecoveryTap(
             runGeneration, reservation, snapshot, point, completion, gestureSucceeded, actionName,
         ) ?: return null
+        logDiagnostic(
+            "[GAME_PROGRESS_RECOVERY_ACTION] action=$actionName " +
+                "logical=(${point.x},${point.y}) physical=${action.physical} " +
+                "mapping=DETECTOR_CONTENT dispatchAccepted=${action.accepted}",
+        )
         if (closeAttempt == null) {
             logDiagnostic("[GAME_PROGRESS_RECOVERY] dispatchAccepted=${action.accepted}")
         } else {
@@ -3749,6 +3766,7 @@ class BotController(
         "(${rect.x},${rect.y},${rect.x + rect.width},${rect.y + rect.height})"
 
     private fun logDiagnostic(message: String) {
+        runCatching { IncidentManager.recoveryLine(message) }
         Log.i(CookieRunBotApplication.TAG, message)
         DebugLogStore.log(message)
         PersistentTrace.log(message)

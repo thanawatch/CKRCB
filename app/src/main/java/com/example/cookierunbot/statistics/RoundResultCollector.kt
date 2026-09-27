@@ -2,7 +2,7 @@ package com.example.cookierunbot.statistics
 
 import android.content.Context
 import android.os.SystemClock
-import android.util.Log
+import com.example.cookierunbot.diagnostics.RobotLog as Log
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import org.opencv.core.Mat

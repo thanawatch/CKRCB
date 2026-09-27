@@ -13,7 +13,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.Build
 import android.os.SystemClock
-import android.util.Log
+import com.example.cookierunbot.diagnostics.RobotLog as Log
 import android.util.DisplayMetrics
 import android.view.WindowManager
 import android.view.WindowInsets

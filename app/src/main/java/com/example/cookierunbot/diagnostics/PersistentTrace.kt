@@ -38,6 +38,7 @@ object PersistentTrace {
         val file = traceFile ?: return
         runCatching {
             file.appendText("[${timestamp.format(Date())}] $message\n", Charsets.UTF_8)
+            OvernightLogArchive.log(message)
         }
     }
 

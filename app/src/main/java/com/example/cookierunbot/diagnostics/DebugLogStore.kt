@@ -16,6 +16,7 @@ object DebugLogStore {
         val clean = message.replace('\n', ' ').replace('\r', ' ')
         if (lines.size >= MAX_LINES) lines.removeFirst()
         lines.addLast("[${timestamp.format(Date())}] $clean")
+        OvernightLogArchive.log(clean)
         revision += 1L
     }
 

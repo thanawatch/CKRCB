@@ -21,6 +21,8 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import com.example.cookierunbot.diagnostics.DebugLogStore
+import com.example.cookierunbot.diagnostics.LogPackageBuilder
+import com.example.cookierunbot.capture.IncidentVideoRecorder
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -73,6 +75,15 @@ class DebugLogActivity : ComponentActivity() {
         buttons.addView(actionButton("Copy Log", ::copyLog))
         buttons.addView(actionButton("Clear Log", ::clearLog))
         buttons.addView(actionButton("Save Log", ::saveLog))
+        buttons.addView(actionButton("Save 24h ZIP", ::save24Hours))
+        val videoButton = actionButton(if (IncidentVideoRecorder.isEnabled(this)) "Video ON" else "Video OFF") {}
+        videoButton.setOnClickListener {
+            val newValue = !IncidentVideoRecorder.isEnabled(this)
+            IncidentVideoRecorder.setEnabled(this, newValue)
+            videoButton.text = if (newValue) "Video ON" else "Video OFF"
+            Toast.makeText(this, "Incident video ${if (newValue) "enabled" else "disabled"}", Toast.LENGTH_SHORT).show()
+        }
+        buttons.addView(videoButton)
         buttons.addView(actionButton("Close") { finish() })
         root.addView(HorizontalScrollView(this).apply { addView(buttons) }, matchWidth())
 
@@ -149,6 +160,41 @@ class DebugLogActivity : ComponentActivity() {
         }.onFailure { error ->
             Toast.makeText(this, "Save failed: ${error.message}", Toast.LENGTH_LONG).show()
         }
+    }
+
+    private fun save24Hours() {
+        Thread({
+            var archive: File? = null
+            try {
+                archive = LogPackageBuilder.create(applicationContext, Long.MAX_VALUE)
+                val file = requireNotNull(archive)
+                val saved = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val values = ContentValues().apply {
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+                        put(MediaStore.MediaColumns.MIME_TYPE, "application/zip")
+                        put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/RobotRun")
+                    }
+                    val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                        ?: error("Unable to create ZIP")
+                    contentResolver.openOutputStream(uri, "w")!!.use { out ->
+                        file.inputStream().use { it.copyTo(out, 32 * 1024) }
+                    }
+                    "Download/RobotRun/${file.name}"
+                } else {
+                    val dir = File(getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS), "RobotRun")
+                        .apply { mkdirs() }
+                    file.copyTo(File(dir, file.name), overwrite = true).absolutePath
+                }
+                runOnUiThread { Toast.makeText(this, "Saved: $saved", Toast.LENGTH_LONG).show() }
+            } catch (error: Exception) {
+                runOnUiThread {
+                    Toast.makeText(this, "24h export failed: ${error.javaClass.simpleName}",
+                        Toast.LENGTH_LONG).show()
+                }
+            } finally {
+                archive?.let(LogPackageBuilder::cleanup)
+            }
+        }, "robotrun-local-log-export").start()
     }
 
     private fun matchWidth() = ViewGroup.LayoutParams(

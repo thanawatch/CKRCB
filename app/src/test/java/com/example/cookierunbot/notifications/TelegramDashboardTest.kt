@@ -25,6 +25,8 @@ class TelegramDashboardTest {
         assertEquals("/errors", parseTelegramCommand(TelegramDashboardPolicy.ERRORS))
         assertEquals("/dashboard", parseTelegramCommand(TelegramDashboardPolicy.DASHBOARD))
         assertEquals("/update", parseTelegramCommand(TelegramDashboardPolicy.UPDATE))
+        assertEquals("/logs", parseTelegramCommand(TelegramDashboardPolicy.LOGS))
+        assertEquals("/logs", parseTelegramCommand("/logs"))
         assertNull(parseTelegramCommand("Stop Bot"))
     }
 
@@ -46,10 +48,12 @@ class TelegramDashboardTest {
         assertTrue(markup.contains("📊 All"))
         assertTrue(markup.contains("📸 Screen"))
         assertTrue(markup.contains("📦 Update App"))
+        assertTrue(markup.contains("📥 Download Logs"))
         assertTrue(requireNotNull(telegramCommandReply("/help")).contains("/all"))
         assertTrue(requireNotNull(telegramCommandReply("/help")).contains("/friend"))
         assertTrue(requireNotNull(telegramCommandReply("/help")).contains("/screen"))
         assertTrue(requireNotNull(telegramCommandReply("/help")).contains("/update"))
+        assertTrue(requireNotNull(telegramCommandReply("/help")).contains("/logs"))
         assertTrue(requireNotNull(telegramCommandReply("/dashboard")).contains("Tap a button below"))
     }
 

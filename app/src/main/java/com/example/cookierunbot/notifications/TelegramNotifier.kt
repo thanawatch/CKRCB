@@ -3,10 +3,11 @@ package com.example.cookierunbot.notifications
 import android.content.Context
 import android.os.Build
 import android.os.SystemClock
-import android.util.Log
+import com.example.cookierunbot.diagnostics.RobotLog as Log
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.capture.LatestFrameProvider
 import com.example.cookierunbot.diagnostics.DebugLogStore
+import com.example.cookierunbot.diagnostics.LogPackageBuilder
 import com.example.cookierunbot.update.UpdateFeedClient
 import com.example.cookierunbot.update.UpdatePolicy
 import com.example.cookierunbot.update.UpdateDescriptor
@@ -116,11 +117,15 @@ class TelegramNotifier(context: Context) {
     private val appContext = context.applicationContext
     private var lastOnDemandScreenAtMs = 0L
     private val updateRequestBusy = AtomicBoolean(false)
+    private val logRequestBusy = AtomicBoolean(false)
     private var lastDeliveredApkHash: String? = null // update executor only
     private var lastDeliveredApkTarget: TelegramCommandReplyTarget? = null // update executor only
     private var lastDeliveredApkAtMs = 0L // update executor only
     private val updateExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "telegram-apk-delivery")
+    }
+    private val logsExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "telegram-log-delivery")
     }
     private val executor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "telegram-notifications")
@@ -294,6 +299,58 @@ class TelegramNotifier(context: Context) {
                     "the Android installer. This message does not install the app.",
                 TelegramDashboardPolicy.keyboardJson,
             )
+        }
+    }
+
+    /** Manual authorized /logs only. Build and upload off the notification/watchdog executors. */
+    internal fun sendCommandLogs(target: TelegramCommandReplyTarget) {
+        if (!logRequestBusy.compareAndSet(false, true)) {
+            sendCommandReply("📥 A log export is already in progress.", target)
+            return
+        }
+        try {
+            logsExecutor.execute {
+                var archive: File? = null
+                try {
+                    if (!target.matches(TelegramConfigStore.load(appContext))) return@execute
+                    archive = LogPackageBuilder.create(appContext)
+                    val current = TelegramConfigStore.load(appContext)
+                    if (!target.matches(current)) return@execute
+                    val boundary = "RobotRunBoundary${System.nanoTime()}"
+                    val file = requireNotNull(archive)
+                    val result = request(
+                        current, "sendDocument", "multipart/form-data; boundary=$boundary",
+                        streamed = true, readTimeoutMs = 120_000,
+                    ) { output ->
+                        writeTelegramLogMultipart(
+                            output, boundary, current.chatId, file,
+                            { target.matches(TelegramConfigStore.load(appContext)) },
+                            TelegramDashboardPolicy.keyboardJson,
+                        )
+                    }
+                    if (target.matches(TelegramConfigStore.load(appContext))) {
+                        sendCommandReply(
+                            if (result.success) "📥 The 24-hour diagnostic ZIP was sent above."
+                            else "📥 Log upload failed. Use RobotRun → Debug Log → Save 24h ZIP.",
+                            target,
+                        )
+                    }
+                } catch (error: Exception) {
+                    log("[TELEGRAM_LOGS] export_failed type=${error.javaClass.simpleName}")
+                    if (target.matches(TelegramConfigStore.load(appContext))) {
+                        sendCommandReply(
+                            "📥 Log export is unavailable or exceeds Telegram's 49 MB limit. " +
+                                "Use RobotRun → Debug Log → Save 24h ZIP.", target,
+                        )
+                    }
+                } finally {
+                    archive?.let(LogPackageBuilder::cleanup)
+                    logRequestBusy.set(false)
+                }
+            }
+        } catch (error: Exception) {
+            logRequestBusy.set(false)
+            log("[TELEGRAM_LOGS] queue_rejected type=${error.javaClass.simpleName}")
         }
     }
 

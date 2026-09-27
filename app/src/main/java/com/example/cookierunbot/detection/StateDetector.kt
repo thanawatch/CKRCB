@@ -2,7 +2,7 @@ package com.example.cookierunbot.detection
 
 import android.content.Context
 import android.graphics.BitmapFactory
-import android.util.Log
+import com.example.cookierunbot.diagnostics.RobotLog as Log
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.automation.BotStage

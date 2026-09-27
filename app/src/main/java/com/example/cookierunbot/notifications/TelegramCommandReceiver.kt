@@ -1,7 +1,7 @@
 package com.example.cookierunbot.notifications
 
 import android.content.Context
-import android.util.Log
+import com.example.cookierunbot.diagnostics.RobotLog as Log
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.automation.BotRuntime
 import com.example.cookierunbot.automation.BotAccessibilityService
@@ -71,6 +71,7 @@ object TelegramCommandReceiver {
                 when (command) {
                     "/screen" -> commandNotifier?.sendCommandScreenshot(replyTarget)
                     "/update" -> commandNotifier?.sendCommandUpdate(replyTarget)
+                    "/logs" -> commandNotifier?.sendCommandLogs(replyTarget)
                     "/all" -> {
                         val reply = telegramCommandReply(command) ?: return@poll
                         commandNotifier?.sendCommandAll(reply, replyTarget)
@@ -150,7 +151,7 @@ internal fun parseTelegramCommand(text: String): String? {
     if (command == "/start" || command == "/menu") return "/dashboard"
     return command.takeIf {
         it in setOf("/help", "/status", "/stats", "/last", "/boxes", "/all",
-            "/friend", "/health", "/screen", "/watchdog", "/rounds", "/errors", "/dashboard", "/update")
+            "/friend", "/health", "/screen", "/watchdog", "/rounds", "/errors", "/dashboard", "/update", "/logs")
     }
 }
 
@@ -176,6 +177,7 @@ internal fun telegramCommandReply(command: String): String? = when (command) {
         "/friend - Friend Life schedule and progress\n/health - Capture, accessibility and worker\n" +
         "/screen - Current normalized screenshot\n/watchdog - Watchdog and recovery state\n" +
         "/rounds - Last five rounds\n/errors - Recent local error summary\n" +
+        "/logs - Download private 24-hour diagnostic ZIP\n" +
         "/dashboard - Show the one-tap button dashboard\n/update - Check and send a verified newer APK\n" +
         "/status - Bot status\n/stats - Current session totals\n" +
         "/last - Last completed round\n/boxes - Mystery Box totals\n/help - Show commands"
@@ -198,7 +200,7 @@ internal fun telegramCommandReply(command: String): String? = when (command) {
     )
     "/rounds" -> formatRoundsReply(RoundResultStore.snapshot())
     "/errors" -> formatErrorsReply(DebugLogStore.snapshot().text)
-    "/dashboard" -> "🤖 RobotRun Dashboard\n\nTap a button below. 📊 All shows stats, status and last round; 📦 Update App checks the feed and sends a verified newer APK."
+    "/dashboard" -> "🤖 RobotRun Dashboard\n\nTap a button below. 📊 All shows stats, status and last round; 📥 Download Logs sends a private ZIP; 📦 Update App checks the feed and sends a verified newer APK."
     else -> null
 }
 

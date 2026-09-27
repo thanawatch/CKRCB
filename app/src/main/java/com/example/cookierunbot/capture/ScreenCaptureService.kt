@@ -13,7 +13,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
-import android.util.Log
+import com.example.cookierunbot.diagnostics.RobotLog as Log
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.MainActivity
 import com.example.cookierunbot.R
@@ -103,6 +103,11 @@ class ScreenCaptureService : Service() {
             }
             captureManager = newCaptureManager
             newCaptureManager.start(resultCode, permissionData)
+            runCatching { IncidentVideoRecorder.start(applicationContext) }
+                .onFailure { error ->
+                    Log.w(CookieRunBotApplication.TAG,
+                        "[INCIDENT_VIDEO] unavailable type=${error.javaClass.simpleName}")
+                }
             RuntimeDiagnosticsLogger.log(applicationContext, "MediaProjection created")
             botControlOverlay = BotControlOverlay(applicationContext).also { overlay ->
                 if (!overlay.show()) {
@@ -171,6 +176,7 @@ class ScreenCaptureService : Service() {
     }
 
     private fun shutdownResources() {
+        runCatching { IncidentVideoRecorder.stop() }
         botControlOverlay?.dismiss()
         botControlOverlay = null
         BotRuntime.stop()

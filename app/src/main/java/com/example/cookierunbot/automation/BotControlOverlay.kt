@@ -29,7 +29,7 @@ import android.widget.Toast
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.capture.LatestFrameProvider
 import com.example.cookierunbot.statistics.RoundResultStore
-import android.util.Log
+import com.example.cookierunbot.diagnostics.RobotLog as Log
 import android.util.DisplayMetrics
 import java.text.NumberFormat
 import java.util.Locale

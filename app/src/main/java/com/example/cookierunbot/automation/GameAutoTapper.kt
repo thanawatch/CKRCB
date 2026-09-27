@@ -1,6 +1,6 @@
 package com.example.cookierunbot.automation
 
-import android.util.Log
+import com.example.cookierunbot.diagnostics.RobotLog as Log
 import com.example.cookierunbot.CookieRunBotApplication
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.PI

@@ -9,7 +9,7 @@ import android.graphics.Path
 import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
-import android.util.Log
+import com.example.cookierunbot.diagnostics.RobotLog as Log
 import android.view.accessibility.AccessibilityEvent
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.diagnostics.PersistentTrace

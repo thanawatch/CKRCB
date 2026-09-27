@@ -1,7 +1,7 @@
 package com.example.cookierunbot.automation
 
 import android.content.Context
-import android.util.Log
+import com.example.cookierunbot.diagnostics.RobotLog as Log
 import android.os.SystemClock
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.diagnostics.PersistentTrace

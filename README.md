@@ -93,6 +93,35 @@ A new Start Bot creates a new statistics session. Result OCR/classification runs
 
 Captured images may contain personal information and can be visible to gallery/file applications. Do not share them or logs without inspection.
 
+## Overnight Diagnostics and 30-second pre-incident video
+
+The in-app Debug Log still shows its latest 500 RAM lines; a separate owned-app rolling text
+archive now records up to the previous **24 hours** (nominal 200 MiB size cap, loss markers) in
+private files across ordinary Process restarts. The **Save 24h ZIP** button exports a local ZIP.
+It does not include system/other-app Logcat or an unlimited per-frame screenshot archive.
+
+When the genuine 15-minute Watchdog reserves a Recovery, one Incident freezes the previous
+**30 minutes of logs**, current Bot/Capture state and normalized PNG; the full `[GAME_PROGRESS_*]`
+action timeline (template, score, logical/physical target, dispatch, completion, fresh frame,
+MAINMENU result) and final recovery result are appended. Independent retention: 72h/200 MiB.
+
+The optional incident-video sampler uses the EXISTING capture snapshots at target 3fps/960×540
+and a 30-second compressed pre-roll. It records until the earlier of **Recovery ends + 10 seconds**
+and **3 minutes after trigger**, or earlier if Screen Capture stops. An MP4 is encoded
+asynchronously after recording finishes, so it may not be immediately available when the
+Watchdog alert arrives. If encoding fails or Process ends, saved JPEG frames and a status file
+remain as fallback. Use Debug Log's **Video ON / Video OFF** toggle (enabled by default in this
+source version). No second MediaProjection, no new game gestures, and no watchdog rule changes.
+
+Use authorized Telegram **/logs** or **📥 Download Logs** to request the 24h diagnostic ZIP
+(`sendDocument`, separate worker, 49 MB public Bot API transfer limit). It can include the
+five most recent incidents and MP4/JPEG fallback within a 35 MiB video budget; the manifest
+lists omissions. It never auto-uploads logs. If Telegram file size/network prevents delivery,
+use **Debug Log → Save 24h ZIP** on-device. If the entire Process was killed, launch RobotRun
+again before requesting /logs; already written private logs are recoverable unless app data
+was cleared/uninstalled. See [docs/OVERNIGHT_DIAGNOSTICS.md](docs/OVERNIGHT_DIAGNOSTICS.md).
+MediaCodec MP4 quality and performance on Redfinger require an actual APK/device test.
+
 ## Calibration panel across orientation changes
 
 Capture Calibration is a separate overlay containing a **frozen 1280×720 frame**, not a live game view. The panel now refits its width and height to the currently usable screen area after switching landscape ↔ portrait, avoiding status/navigation bars and cutouts. Its **✕ Close** control is in a fixed header that does not scroll away. Rotation never triggers a tap or automatic recapture; a displayed physical X/Y always refers to the still image's original `contentRect`. Use **Capture new clean frame** after rotation to calibrate the new display geometry.
@@ -101,9 +130,9 @@ On an older installed build with an off-screen Close button, rotate back to land
 
 ## In-app updates (independent of Telegram)
 
-The main screen includes **Update App**, implemented in `UpdateActivity`. The source baseline is **v1.1.4 (versionCode 6)**; an installed APK can still be older until rebuilt and installed. The owner must configure a trusted anonymous HTTPS `update.json` URL in that screen for **online** update checks; a private GitHub Actions artifact is not a permanent anonymous download link, and no public feed is provided by committing this code. See [the example feed](docs/update-feed.example.json). This updater does not embed GitHub tokens, signing keys, or credentials.
+The main screen includes **Update App**, implemented in `UpdateActivity`. The source baseline is **v1.1.5 (versionCode 7)**; an installed APK can still be older until rebuilt and installed. The owner must configure a trusted anonymous HTTPS `update.json` URL in that screen for **online** update checks; a private GitHub Actions artifact is not a permanent anonymous download link, and no public feed is provided by committing this code. See [the example feed](docs/update-feed.example.json). This updater does not embed GitHub tokens, signing keys, or credentials.
 
-To publish a future build, increment both `versionCode` and `versionName` (e.g. `7` / `1.1.5`), build a **single signed APK with the same signing certificate as the currently installed application**, host that APK on HTTPS, calculate its SHA-256 (`Get-FileHash -Algorithm SHA256` on PowerShell or `sha256sum` on Linux), and publish the feed with its actual URL, package name, code, name, checksum, and notes. Only publish signed binaries and feed data to the distribution host; the source repository may remain private. Do not publish the sample placeholder checksum as a real feed.
+To publish a future build, increment both `versionCode` and `versionName` (e.g. `8` / `1.1.6`), build a **single signed APK with the same signing certificate as the currently installed application**, host that APK on HTTPS, calculate its SHA-256 (`Get-FileHash -Algorithm SHA256` on PowerShell or `sha256sum` on Linux), and publish the feed with its actual URL, package name, code, name, checksum, and notes. Only publish signed binaries and feed data to the distribution host; the source repository may remain private. Do not publish the sample placeholder checksum as a real feed.
 
 Alternatively, without any hosted feed, tap **Choose downloaded APK (offline)** and select a local APK through Android's document picker. It still must be a strictly newer RobotRun APK signed with the installed signing certificate; no network checksum is available for this deliberate local-file path.
 
@@ -113,7 +142,7 @@ Checking and downloading are user initiated. The network work runs off the UI, c
 
 Telegram settings store the bot token encrypted with an Android Keystore-backed AES-GCM key. The configured Chat ID is both the notification destination and the only authorized incoming-command chat. Networking and encoding run asynchronously and failures do not stop gameplay.
 
-Supported read-only commands are `/help`, `/status`, `/stats`, `/last`, `/boxes`, `/all` (a fresh 1280×720 PNG **document** followed by a separate `/stats` → `/status` → `/last` message; if the document is unavailable, the full text still arrives with a short Screen note), `/friend`, `/health`, `/screen`, `/watchdog`, `/rounds`, `/errors`, `/update`, and `/dashboard` (also `/start` and `/menu`). The persistent one-tap reply keyboard is included in each command reply, with **📊 All** and **🔄 Refresh** mapped to `/all`, plus **📦 Update App** mapped to `/update`; send `/dashboard` to show it on demand. `/update` reads the same configured HTTPS feed and reports installed/available versions. For a newer release, it downloads the candidate into a separate private cache, validates SHA-256, package/version and the installed signing certificate, then sends the verified APK as a Telegram file in the authorized chat (maximum 49,000,000 bytes). This runs on a separate worker with one request at a time and a five-minute same-file success cooldown. If no feed is configured, the file is invalid/too large or upload fails, use the in-app updater. **Receiving an APK is not installing it:** open Telegram on the destination Android/Redfinger, download the attachment, stop Bot and Screen Capture and approve the Android install dialog. The source repo remains private, with no embedded GitHub token. `/screen` and `/all` share a Telegram-only RGBA→BGRA PNG encoder plus an original-file `sendDocument` upload (not compressed photo), and the same fresh normalized 1280×720 snapshot path and 15-second on-demand cooldown, and does not depend on the automatic debug-image setting; stale/unavailable frames return text instead. It is processed on the Telegram notification executor, not the capture/detector thread. `/errors` only returns up to five allowlisted local failure lines on demand; it never adds an automatic NO_MATCH/DETECT_STALL alert. Supported slash commands accept the current parser's `@BotUsername` suffix form. Only the configured Chat ID is authorized. There is no remote Start/Stop, gameplay control or remote APK installation. **The Telegram buttons exist in the installed APK, not on GitHub or in BotFather:** install a build containing the new Kotlin code and send `/dashboard` to refresh the persistent keyboard. BotFather's slash-command menu is a separate configuration. Never commit credentials or paste token-bearing URLs into logs/issues.
+Supported read-only commands are `/help`, `/status`, `/stats`, `/last`, `/boxes`, `/all` (a fresh 1280×720 PNG **document** followed by a separate `/stats` → `/status` → `/last` message; if the document is unavailable, the full text still arrives with a short Screen note), `/friend`, `/health`, `/screen`, `/watchdog`, `/rounds`, `/errors`, `/update`, `/logs`, and `/dashboard` (also `/start` and `/menu`). The persistent one-tap reply keyboard is included in each command reply, with **📊 All** and **🔄 Refresh** mapped to `/all`, plus **📦 Update App** mapped to `/update` and **📥 Download Logs** mapped to `/logs`; send `/dashboard` to show it on demand. `/update` reads the same configured HTTPS feed and reports installed/available versions. For a newer release, it downloads the candidate into a separate private cache, validates SHA-256, package/version and the installed signing certificate, then sends the verified APK as a Telegram file in the authorized chat (maximum 49,000,000 bytes). This runs on a separate worker with one request at a time and a five-minute same-file success cooldown. If no feed is configured, the file is invalid/too large or upload fails, use the in-app updater. **Receiving an APK is not installing it:** open Telegram on the destination Android/Redfinger, download the attachment, stop Bot and Screen Capture and approve the Android install dialog. The source repo remains private, with no embedded GitHub token. `/screen` and `/all` share a Telegram-only RGBA→BGRA PNG encoder plus an original-file `sendDocument` upload (not compressed photo), and the same fresh normalized 1280×720 snapshot path and 15-second on-demand cooldown, and does not depend on the automatic debug-image setting; stale/unavailable frames return text instead. It is processed on the Telegram notification executor, not the capture/detector thread. `/errors` only returns up to five allowlisted local failure lines on demand; it never adds an automatic NO_MATCH/DETECT_STALL alert. Supported slash commands accept the current parser's `@BotUsername` suffix form. Only the configured Chat ID is authorized. There is no remote Start/Stop, gameplay control or remote APK installation. **The Telegram buttons exist in the installed APK, not on GitHub or in BotFather:** install a build containing the new Kotlin code and send `/dashboard` to refresh the persistent keyboard. BotFather's slash-command menu is a separate configuration. Never commit credentials or paste token-bearing URLs into logs/issues.
 
 ## Troubleshooting
 

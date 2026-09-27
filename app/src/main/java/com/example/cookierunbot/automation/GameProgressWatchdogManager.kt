@@ -2,9 +2,10 @@ package com.example.cookierunbot.automation
 
 import android.content.Context
 import android.os.SystemClock
-import android.util.Log
+import com.example.cookierunbot.diagnostics.RobotLog as Log
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.capture.LatestFrameProvider
+import com.example.cookierunbot.diagnostics.IncidentManager
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.notifications.TelegramDiagnosticImageGate
 import com.example.cookierunbot.notifications.TelegramNotifier
@@ -146,14 +147,27 @@ object GameProgressWatchdogManager {
     private fun check() {
         val now = SystemClock.elapsedRealtime()
         val recovery = watchdog.reserveRecoveryIfDue(now)
+        if (recovery != null && watchdog.isCurrentRecovery(recovery)) {
+            runCatching {
+                IncidentManager.begin(
+                    requireNotNull(synchronized(lock) { appContext }), recovery.generation,
+                    watchdog.status(now), BotRuntime.diagnostics(), LatestFrameProvider.diagnostics(),
+                )
+            }.onFailure { error ->
+                log("[INCIDENT] start_failed type=${error.javaClass.simpleName}")
+            }
+        }
         try {
             sendAlertIfDue(now)
         } finally {
             if (recovery != null && watchdog.isCurrentRecovery(recovery)) {
                 val requester = synchronized(lock) { recoveryRequester }
                 try {
-                    requester?.invoke(recovery)
+                    if (requester == null) {
+                        IncidentManager.finish(recovery.generation, "requester_unavailable")
+                    } else requester.invoke(recovery)
                 } catch (error: Exception) {
+                    IncidentManager.finish(recovery.generation, "request_failed_${error.javaClass.simpleName}")
                     log("[GAME_PROGRESS_RECOVERY] requestFailed=${error.javaClass.simpleName}")
                 }
             }

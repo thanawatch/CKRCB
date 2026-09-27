@@ -1,6 +1,6 @@
 package com.example.cookierunbot.automation
 
-import android.util.Log
+import com.example.cookierunbot.diagnostics.RobotLog as Log
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.capture.LatestFrameProvider
 import com.example.cookierunbot.detection.StateDetector
