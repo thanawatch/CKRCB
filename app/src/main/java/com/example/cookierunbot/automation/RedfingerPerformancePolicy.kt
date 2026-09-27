@@ -5,6 +5,67 @@ internal object RedfingerPerformancePolicy {
         profile == PerformanceProfile.REDFINGER_OPTIMIZED
 }
 
+/** Serializes complete Start/Stop transitions, including process-global service side effects. */
+internal class BotLifecycleTransition {
+    private val lock = Any()
+
+    fun <T> run(block: () -> T): T = synchronized(lock) { block() }
+}
+
+/** Generation ownership for process-global services shared across controller runs. */
+internal class RunGenerationSession {
+    private var activeGeneration: Long? = null
+
+    @Synchronized
+    fun activate(generation: Long) {
+        activeGeneration = generation
+    }
+
+    @Synchronized
+    fun deactivateIfCurrent(generation: Long): Boolean {
+        if (activeGeneration != generation) return false
+        activeGeneration = null
+        return true
+    }
+}
+
+/** Durable state for an uncalibrated popup which only a user can safely dismiss. */
+internal class CalibrationBlockState {
+    @Volatile
+    var action: String? = null
+        private set
+
+    @Synchronized
+    fun block(action: String): Boolean {
+        if (this.action == action) return false
+        this.action = action
+        return true
+    }
+
+    @Synchronized
+    fun clearIfDifferent(detectedStage: String): String? {
+        val blocked = action ?: return null
+        if (blocked == detectedStage) return null
+        action = null
+        return blocked
+    }
+
+    fun authoritativeState(requestedState: String): String =
+        if (action != null) WAITING_FOR_REDFINGER_CALIBRATION else requestedState
+
+    @Synchronized
+    fun clear() {
+        action = null
+    }
+
+    companion object {
+        const val WAITING_FOR_REDFINGER_CALIBRATION = "WAITING_FOR_REDFINGER_CALIBRATION"
+    }
+}
+
+internal fun redfingerCalibrationStatusText(action: String): String =
+    "Waiting: Redfinger calibration ($action) — clear popup manually"
+
 internal data class FastStartAttemptSummary(
     val count: Long,
     val totalDurationNanos: Long,

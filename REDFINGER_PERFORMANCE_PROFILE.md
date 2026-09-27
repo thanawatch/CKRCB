@@ -21,8 +21,9 @@ The Redfinger profile currently makes three deliberately narrow changes:
    the special action. `TIME_DEAL` and `PARTY_RUN_SEASON_REWARDS` explicitly publish
    `WAITING_FOR_REDFINGER_CALIBRATION` and remain blocked while the popup is onscreen; the operator
    must manually clear the popup, after which detection safely resumes when a different state is
-   observed. The post-relay sequence remains incomplete and reports the same blocked status while
-   `GAME_RELAY` remains detected. No proportional or replacement Redfinger coordinate is inferred.
+   observed. The optional post-relay sequence is instead recorded as `SKIPPED_UNPERFORMED` and play
+   continues in `IN_GAME`; it is not a popup and does not request manual clearance. No proportional
+   or replacement Redfinger coordinate is inferred.
    These actions require separate device calibration. Legacy retains its original fire-once flag and
    all three original raw dispatch attempts, including their acceptance-independent sequencing.
 
@@ -74,7 +75,8 @@ NO_MATCH report becomes due; neither latency nor CPU improvement has been measur
 * In Redfinger mode, trigger `TIME_DEAL` and `PARTY_RUN_SEASON_REWARDS`; confirm status changes to
   `WAITING_FOR_REDFINGER_CALIBRATION`, no gesture is dispatched, and automation resumes only after
   the operator manually clears the popup and the detector observes another state. Trigger relay and
-  confirm the unperformed post-relay sequence remains reported as blocked rather than completed.
+  confirm the unperformed post-relay sequence is logged as skipped, never completed, and does not
+  leave a calibration-blocked popup status during gameplay.
 * Compare GAME_RELAY detection latency and skipped generations before and after the priority window,
   including rounds where synchronous detailed NO_MATCH scoring becomes due. This follow-up does not
   change NO_MATCH matching semantics; device evidence is required before considering another change.

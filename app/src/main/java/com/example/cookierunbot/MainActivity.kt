@@ -26,6 +26,7 @@ import com.example.cookierunbot.automation.BotController
 import com.example.cookierunbot.automation.BotAccessibilityService
 import com.example.cookierunbot.automation.BotStage
 import com.example.cookierunbot.automation.BotRuntime
+import com.example.cookierunbot.automation.CalibrationBlockState
 import com.example.cookierunbot.capture.LatestFrameProvider
 import com.example.cookierunbot.capture.ScreenCaptureService
 import com.example.cookierunbot.detection.DetectionResult
@@ -360,6 +361,7 @@ class MainActivity : ComponentActivity() {
 
     private fun renderDiagnostics() {
         val snapshot = LatestFrameProvider.diagnostics()
+        val botDiagnostics = BotRuntime.diagnostics()
         accessibilityPermissionStatus.text = "Accessibility permission: " +
             if (BotAccessibilityService.isEnabled(this)) "Enabled" else "Disabled"
         accessibilityServiceStatus.text = "Accessibility service: " +
@@ -397,7 +399,12 @@ class MainActivity : ComponentActivity() {
             "Match position: ${it.x},${it.y}  template=${it.width}x${it.height}"
         } ?: "Match position: —"
         botStatus.text = "Bot: ${if (botRunningValue) "Running" else "Stopped"}"
-        botState.text = "Current State: $botStateValue"
+        botState.text = "Current State: " + if (botDiagnostics.calibrationBlockedAction != null) {
+            "${CalibrationBlockState.WAITING_FOR_REDFINGER_CALIBRATION} " +
+                "(${botDiagnostics.calibrationBlockedAction}; clear popup manually)"
+        } else {
+            botStateValue
+        }
         botDetectionGroup.text = "Detection Group: $botDetectionGroupValue"
         botLastTemplate.text = "Last Detected Template: $botLastTemplateValue"
         botLastScore.text = "Last Score: $botLastScoreValue"

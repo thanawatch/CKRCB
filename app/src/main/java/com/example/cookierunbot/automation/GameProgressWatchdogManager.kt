@@ -24,6 +24,7 @@ enum class WatchdogRecoveryTestRequest {
 
 object GameProgressWatchdogManager {
     private val lock = Any()
+    private val runSession = RunGenerationSession()
     private val watchdog = GameProgressWatchdog()
     private var scheduler: ScheduledExecutorService? = null
     private var appContext: Context? = null
@@ -34,7 +35,12 @@ object GameProgressWatchdogManager {
     private var manualRecoveryReservation: GameProgressRecoveryReservation? = null
     private var manualRecoveryEpisodeGeneration: Long? = null
 
-    fun start(context: Context, requestRecovery: (GameProgressRecoveryReservation) -> Unit) = synchronized(lock) {
+    fun start(
+        context: Context,
+        runGeneration: Long,
+        requestRecovery: (GameProgressRecoveryReservation) -> Unit,
+    ) = synchronized(lock) {
+        runSession.activate(runGeneration)
         appContext = context.applicationContext
         notifier = notifier ?: TelegramNotifier(context.applicationContext)
         encoder = encoder ?: NoMatchDebugFrameSaver(context.applicationContext)
@@ -51,7 +57,11 @@ object GameProgressWatchdogManager {
         log("[GAME_PROGRESS_WATCHDOG] started=true timeoutMs=$GAME_PROGRESS_TIMEOUT_MS")
     }
 
-    fun stop() = synchronized(lock) {
+    fun stop(runGeneration: Long) = synchronized(lock) {
+        if (!runSession.deactivateIfCurrent(runGeneration)) {
+            log("[GAME_PROGRESS_WATCHDOG] stopped=false reason=stale_run generation=$runGeneration")
+            return@synchronized
+        }
         watchdog.stop()
         scheduler?.shutdownNow()
         scheduler = null

@@ -50,6 +50,8 @@ class BotController(
     }
 
     private val lock = Any()
+    private val lifecycleTransition = BotLifecycleTransition()
+    private val calibrationBlockState = CalibrationBlockState()
     private val progressRecoveryGate = ProgressRecoveryGate()
     private val actionExecutor = ActionExecutor(context.applicationContext)
     private val autoTapper = GameAutoTapper(actionExecutor)
@@ -150,6 +152,7 @@ class BotController(
                 pendingPreviousResultsGesture?.isCompleted == false -> "PREVIOUS_RESULTS"
                 else -> pendingPopupAction
             },
+            calibrationBlockedAction = calibrationBlockState.action,
             friendLifeWorkflowActive = friendLifeWorkflowActive,
             friendLifeLastProgressAgeMs = friendLifeLastProgressAt.takeIf { it > 0L }?.let {
                 (SystemClock.elapsedRealtime() - it).coerceAtLeast(0L)
@@ -158,7 +161,11 @@ class BotController(
         )
     }
 
-    fun start(options: BotOptions = BotOptions()) {
+    fun start(options: BotOptions = BotOptions()) = lifecycleTransition.run {
+        startWithinLifecycle(options)
+    }
+
+    private fun startWithinLifecycle(options: BotOptions) {
         synchronized(lock) {
             if (running) return
             this.options = options
@@ -199,6 +206,7 @@ class BotController(
             freshFrameGateWaitStartedAt = 0L
             currentHandler = "IDLE"
             pendingPopupAction = "NONE"
+            calibrationBlockState.clear()
             friendLifeWorkflowActive = false
             friendLifeLastProgressAt = 0L
             pendingDailyNewTapGeneration = -1L
@@ -212,7 +220,7 @@ class BotController(
             pendingPreviousResultsRedetectBaseline = -1L
             resetNoMatchEpisode("bot_started")
             val runGeneration = botRunGeneration
-            GameProgressWatchdogManager.start(context) { reservation ->
+            GameProgressWatchdogManager.start(context, runGeneration) { reservation ->
                 requestProgressRecovery(runGeneration, reservation)
             }
             executor = Executors.newSingleThreadExecutor { runnable ->
@@ -230,7 +238,7 @@ class BotController(
     }
 
     fun stop() {
-        stopIfCurrentRun(null)
+        lifecycleTransition.run { stopIfCurrentRun(null) }
     }
 
     private fun stopIfCurrentRun(expectedGeneration: Long?) {
@@ -238,7 +246,7 @@ class BotController(
         val stoppedTimeDealGesture: GestureCancellation?
         val stoppedPreviousResultsGesture: GestureCancellation?
         val stoppedRecoveryGesture: GestureCancellation?
-        val worker = synchronized(lock) {
+        val stoppedRun = synchronized(lock) {
             if (expectedGeneration != null && botRunGeneration != expectedGeneration) return
             if (!running && executor == null) return
             val stoppedGeneration = botRunGeneration
@@ -259,7 +267,8 @@ class BotController(
             pendingPreviousResultsGesture = null
             stoppedRecoveryGesture = pendingProgressRecoveryGesture
             pendingProgressRecoveryGesture = null
-            currentExecutor
+            calibrationBlockState.clear()
+            StoppedRun(currentExecutor, stoppedGeneration)
         }
         stoppedPartyGesture?.cancel()
         stoppedTimeDealGesture?.cancel()
@@ -267,11 +276,11 @@ class BotController(
         stoppedRecoveryGesture?.cancel()
         autoTapper.stop("BOT_EXIT")
         friendLifeScheduler.stop()
-        GameProgressWatchdogManager.stop()
+        GameProgressWatchdogManager.stop(stoppedRun.generation)
         friendLifeWorkflowActive = false
         friendLifeLastProgressAt = 0L
         resetNoMatchEpisode("bot_stopped")
-        worker?.shutdownNow()
+        stoppedRun.worker?.shutdownNow()
         Log.i(CookieRunBotApplication.TAG, "[BOT] Stopped")
         DebugLogStore.log("[BOT] Stopped")
         PersistentTrace.log("[BOT] stopped")
@@ -325,7 +334,7 @@ class BotController(
             }
             if (unexpectedExit) {
                 logDiagnostic("[BOT] Worker exited while running; stopping bot")
-                stopIfCurrentRun(runGeneration)
+                lifecycleTransition.run { stopIfCurrentRun(runGeneration) }
             }
             workerRunGeneration.remove()
         }
@@ -1011,7 +1020,7 @@ class BotController(
                     )
                     lastTraceHeartbeatAt = now
                 }
-                listener.onStateChanged("WAITING_FOR_${group.name}")
+                publishRuntimeState("WAITING_FOR_${group.name}")
                 if (group == DetectionGroup.IN_GAME && gameStartDetectedForRound) {
                     synchronized(lock) { if (!progressRecoveryGate.isActive()) autoTapper.start() }
                 }
@@ -1903,7 +1912,7 @@ class BotController(
                     postRelaySequenceDone = true
                     postRelaySequence(sourceWidth, sourceHeight)
                 } else {
-                    blockForUncalibratedPhysicalTarget(
+                    logSkippedUncalibratedPhysicalTarget(
                         "POST_RELAY_SEQUENCE", sourceWidth, sourceHeight,
                     )
                 }
@@ -3426,29 +3435,34 @@ class BotController(
     }
 
     private fun blockForUncalibratedPhysicalTarget(action: String, sourceWidth: Int, sourceHeight: Int) {
-        val blockedStatus = "WAITING_FOR_REDFINGER_CALIBRATION:$action"
-        if (pendingPopupAction == blockedStatus) return
-        pendingPopupAction = blockedStatus
+        if (!calibrationBlockState.block(action)) return
+        pendingPopupAction = CalibrationBlockState.WAITING_FOR_REDFINGER_CALIBRATION
         logDiagnostic(
             "[UNCALIBRATED_PHYSICAL_TARGET] action=$action profile=${options.performanceProfile} " +
                 "source=${sourceWidth}x$sourceHeight " +
                 "behavior=WAITING_FOR_REDFINGER_CALIBRATION_MANUAL_CLEAR_REQUIRED",
         )
-        listener.onStateChanged("WAITING_FOR_REDFINGER_CALIBRATION")
+        publishRuntimeState(CalibrationBlockState.WAITING_FOR_REDFINGER_CALIBRATION)
     }
 
     private fun clearCalibrationBlockIfPopupChanged(detectedStage: BotStage) {
-        val blockedStatus = pendingPopupAction
-        if (!blockedStatus.startsWith("WAITING_FOR_REDFINGER_CALIBRATION:")) return
-        val blockedAction = blockedStatus.substringAfter(':')
-        if (blockedAction == detectedStage.name ||
-            (blockedAction == "POST_RELAY_SEQUENCE" && detectedStage == BotStage.GAME_RELAY)
-        ) return
+        val blockedAction = calibrationBlockState.clearIfDifferent(detectedStage.name) ?: return
         pendingPopupAction = "NONE"
         logDiagnostic(
             "[REDFINGER_CALIBRATION_BLOCK_CLEARED] action=$blockedAction " +
                 "resumeDetectedState=${detectedStage.name}",
         )
+    }
+
+    private fun logSkippedUncalibratedPhysicalTarget(action: String, sourceWidth: Int, sourceHeight: Int) {
+        logDiagnostic(
+            "[UNCALIBRATED_PHYSICAL_TARGET] action=$action profile=${options.performanceProfile} " +
+                "source=${sourceWidth}x$sourceHeight behavior=SKIPPED_UNPERFORMED_CONTINUE_IN_GAME",
+        )
+    }
+
+    private fun publishRuntimeState(state: String) {
+        listener.onStateChanged(calibrationBlockState.authoritativeState(state))
     }
 
     private fun recoveryInterval(group: DetectionGroup): Long = when (group) {
@@ -3735,6 +3749,7 @@ data class BotControllerDiagnostics(
     val minimumFreshFrameGeneration: Long,
     val gestureBusy: Boolean,
     val pendingPopupAction: String,
+    val calibrationBlockedAction: String?,
     val friendLifeWorkflowActive: Boolean,
     val friendLifeLastProgressAgeMs: Long?,
     val roundNumber: Int,
@@ -3754,6 +3769,11 @@ private data class FastPathTiming(
     val latestFramePublishedAtNanos: Long,
     val detectionStartedAtNanos: Long,
     val detectionMatchedAtNanos: Long,
+)
+
+private data class StoppedRun(
+    val worker: ExecutorService?,
+    val generation: Long,
 )
 
 private data class ProgressRecoveryFreshFrame(
