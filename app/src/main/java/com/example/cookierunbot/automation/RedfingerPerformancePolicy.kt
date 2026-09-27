@@ -4,14 +4,16 @@ internal object RedfingerPerformancePolicy {
     fun profilingEnabled(profile: PerformanceProfile): Boolean =
         profile == PerformanceProfile.REDFINGER_OPTIMIZED
 
-    /** Restrict only optimized GAME_START matching to the native template size. */
+    /** Restrict optimized GAME_START and GAME_RELAY matching to the native template size. */
     fun matchScales(
         profile: PerformanceProfile,
         stage: BotStage,
         configuredScales: List<Double>,
     ): List<Double> =
-        if (profile == PerformanceProfile.REDFINGER_OPTIMIZED && stage == BotStage.GAME_START) {
-            require(1.0 in configuredScales) { "GAME_START requires a 1.0 template scale" }
+        if (profile == PerformanceProfile.REDFINGER_OPTIMIZED &&
+            (stage == BotStage.GAME_START || stage == BotStage.GAME_RELAY)
+        ) {
+            require(1.0 in configuredScales) { "${stage.name} requires a 1.0 template scale" }
             listOf(1.0)
         } else {
             configuredScales

@@ -19,12 +19,12 @@ The Redfinger profile makes four scoped changes:
 2. It replaces `INTER_AREA` resize with `Mat.copyTo` only when the source and content rectangle are
    exactly `(0,0,1280,720)`. A copy is pixel-equivalent for this 1:1 geometry and retains independent
    destination ownership. Every crop, inset, offset, or other resolution uses the original path.
-3. GAME_START in Redfinger uses only its 1.0 template scale, including during the existing
-   eight-second priority window. After GAME_START has been handled in the current round, IN_GAME
-   polling omits GAME_START entirely. GAME_RELAY remains the first candidate and keeps all seven
-   scales; GAME_COMPLETE and connection states remain candidates. Legacy retains all seven
-   GAME_START scales and its existing stage ordering. Templates, thresholds and ROIs remain
-   unchanged.
+3. GAME_START and GAME_RELAY in Redfinger both use only their 1.0 template scales, including
+   during the existing eight-second GAME_START priority window. After GAME_START has been handled
+   in the current round, IN_GAME polling omits GAME_START entirely. GAME_RELAY remains the first
+   candidate; GAME_COMPLETE and connection states remain candidates. Legacy retains all seven
+   scales for GAME_START and GAME_RELAY and its existing stage ordering. Templates, thresholds and
+   ROIs remain unchanged.
 4. It refuses to dispatch the uncalibrated raw-physical `POST_RELAY_1/2/3`, `TIME_DEAL`, and
    `PARTY_RUN_SEASON_REWARDS` targets. It logs `UNCALIBRATED_PHYSICAL_TARGET` and safely skips
    the special action. `TIME_DEAL` and `PARTY_RUN_SEASON_REWARDS` explicitly publish
@@ -36,8 +36,8 @@ The Redfinger profile makes four scoped changes:
    These actions require separate device calibration. Legacy retains its original fire-once flag and
    all three original raw dispatch attempts, including their acceptance-independent sequencing.
 
-For Redfinger, only the native-size GAME_START template is loaded and checked. GAME_RELAY and
-Legacy GAME_START retain all seven scales. Each candidate set converts to grayscale once and
+For Redfinger, only the native-size GAME_START and GAME_RELAY templates are loaded and checked.
+Legacy retains all seven scales for both stages. Each candidate set converts to grayscale once and
 loads its configured templates once. Matching does not exit early among a stage's evaluated scales.
 
 ## Benchmark measurements
@@ -48,8 +48,7 @@ claimed. The implementation records the measurements needed for an A/B run:
 * `[CAPTURE PERF]`: plane copy, RGBA Mat population, normalization, publication, end-to-end capture
   preparation, actual rolling FPS, and whether the exact-size path qualified.
 * `[MATCH PERF]`: per-scale and total matching time for GAME_START and GAME_RELAY, sampled only in
-  the optimized profile at most once per stage per five seconds. GAME_START reports only 1.0 while
-  GAME_RELAY retains seven scales. Actual evaluated scales are retained
+  the optimized profile at most once per stage per five seconds. GAME_START and GAME_RELAY each report only 1.0. Actual evaluated scales are retained
   with each sample; Logcat and the in-app exported debug log receive them from a separate executor.
 * `[GAME_START_ATTEMPT_SUMMARY]`: an asynchronous aggregate at the first applicable lifecycle
   boundary (window end, GAME_START completion, round end, new round, or Stop) with attempt count,

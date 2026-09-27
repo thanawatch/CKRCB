@@ -43,7 +43,7 @@ class RedfingerPerformancePolicyTest {
     }
 
     @Test
-    fun onlyRedfingerGameStartUsesNativeTemplateScale() {
+    fun onlyRedfingerGameStartAndGameRelayUseNativeTemplateScale() {
         val configured = listOf(0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3)
         assertEquals(
             listOf(1.0),
@@ -52,7 +52,7 @@ class RedfingerPerformancePolicyTest {
             ),
         )
         assertEquals(
-            configured,
+            listOf(1.0),
             RedfingerPerformancePolicy.matchScales(
                 PerformanceProfile.REDFINGER_OPTIMIZED, BotStage.GAME_RELAY, configured,
             ),
@@ -61,6 +61,18 @@ class RedfingerPerformancePolicyTest {
             configured,
             RedfingerPerformancePolicy.matchScales(
                 PerformanceProfile.LEGACY, BotStage.GAME_START, configured,
+            ),
+        )
+        assertEquals(
+            configured,
+            RedfingerPerformancePolicy.matchScales(
+                PerformanceProfile.LEGACY, BotStage.GAME_RELAY, configured,
+            ),
+        )
+        assertEquals(
+            configured,
+            RedfingerPerformancePolicy.matchScales(
+                PerformanceProfile.REDFINGER_OPTIMIZED, BotStage.GAME_COMPLETE, configured,
             ),
         )
     }
