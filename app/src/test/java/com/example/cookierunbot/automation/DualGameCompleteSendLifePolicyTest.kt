@@ -55,7 +55,14 @@ class DualGameCompleteSendLifePolicyTest {
 
     @Test fun delayAndRetryBudgetAreIndependentFromLegacyGameComplete() {
         assertEquals(1_600L, DualGameCompleteSendLifePolicy.BEFORE_TAP_DELAY_MS)
-        assertEquals(0.8, DualGameCompleteSendLifePolicy.MATCH_THRESHOLD, 0.0)
+        assertEquals(0.8, DualGameCompleteSendLifePolicy.GAME_COMPLETE_MATCH_THRESHOLD, 0.0)
+        assertEquals(0.78, DualGameCompleteSendLifePolicy.CONFIRM_MATCH_THRESHOLD, 0.0)
+        assertTrue(com.example.cookierunbot.detection.templateScoreMatches(
+            0.794015, DualGameCompleteSendLifePolicy.CONFIRM_MATCH_THRESHOLD,
+        ))
+        assertFalse(com.example.cookierunbot.detection.templateScoreMatches(
+            0.794015, DualGameCompleteSendLifePolicy.GAME_COMPLETE_MATCH_THRESHOLD,
+        ))
         assertEquals(3, DualGameCompleteSendLifePolicy.MAX_VISIBLE_ATTEMPTS)
     }
 }
