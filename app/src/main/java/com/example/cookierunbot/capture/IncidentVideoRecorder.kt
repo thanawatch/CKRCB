@@ -40,6 +40,7 @@ object IncidentVideoRecorder {
         val frames: File,
         var stopAtNanos: Long,
         var savedBytes: Long = 0L,
+        var sizeCapped: Boolean = false,
         var imageCount: Int = 0,
         var lastGeneration: Long = -1L,
         var degradedTicks: Int = 0,
@@ -215,7 +216,7 @@ object IncidentVideoRecorder {
 
             val stopReason = when {
                 recording.imageCount >= MAX_IMAGES -> "image_limit"
-                recording.savedBytes >= MAX_EVENT_BYTES -> "size_cap"
+                recording.sizeCapped || recording.savedBytes >= MAX_EVENT_BYTES -> "size_cap"
                 IncidentVideoLoadPolicy.shouldStopSampling(recording.degradedTicks) -> "sustained_resource_pressure"
                 else -> null
             }
@@ -290,8 +291,11 @@ object IncidentVideoRecorder {
     }
 
     private fun saveImage(recording: Recording, bytes: ByteArray, atNanos: Long, generation: Long): Boolean {
-        if (recording.imageCount >= MAX_IMAGES ||
-            recording.savedBytes + bytes.size > MAX_EVENT_BYTES) return false
+        if (recording.imageCount >= MAX_IMAGES) return false
+        if (recording.savedBytes + bytes.size > MAX_EVENT_BYTES) {
+            recording.sizeCapped = true
+            return false
+        }
         val name = "%06d.jpg".format(Locale.US, recording.imageCount + 1)
         val image = File(recording.frames, name)
         val temp = File(recording.frames, "$name.part")
