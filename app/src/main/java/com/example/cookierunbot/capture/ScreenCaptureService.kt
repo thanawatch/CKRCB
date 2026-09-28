@@ -106,7 +106,7 @@ class ScreenCaptureService : Service() {
             runCatching { IncidentVideoRecorder.start(applicationContext) }
                 .onFailure { error ->
                     Log.w(CookieRunBotApplication.TAG,
-                        "[INCIDENT_VIDEO] unavailable type=${error.javaClass.simpleName}")
+                        "[INCIDENT_IMAGES] unavailable type=${error.javaClass.simpleName}")
                 }
             RuntimeDiagnosticsLogger.log(applicationContext, "MediaProjection created")
             botControlOverlay = BotControlOverlay(applicationContext).also { overlay ->
