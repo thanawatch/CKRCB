@@ -20,7 +20,8 @@ internal object DualGameCompleteSendLifePolicy {
         previousProbeMs: Long,
         oldGameCompleteMatched: Boolean,
         fastStartPriority: Boolean,
-    ): Boolean = oldGameCompleteMatched || (!fastStartPriority &&
+        immediateGameplayActionMatched: Boolean,
+    ): Boolean = oldGameCompleteMatched || (!fastStartPriority && !immediateGameplayActionMatched &&
         (previousProbeMs <= 0L || nowMs - previousProbeMs >= PROBE_INTERVAL_MS))
 
     fun center(x: Int, y: Int, width: Int, height: Int): LogicalPoint? =
