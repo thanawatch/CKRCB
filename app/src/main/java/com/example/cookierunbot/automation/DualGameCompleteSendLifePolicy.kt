@@ -9,7 +9,8 @@ internal object DualGameCompleteSendLifePolicy {
     const val BEFORE_TAP_DELAY_MS = 1_600L
     const val CALLBACK_TIMEOUT_MS = 3_000L
     const val MAX_VISIBLE_ATTEMPTS = 3
-    const val MATCH_THRESHOLD = 0.8
+    const val GAME_COMPLETE_MATCH_THRESHOLD = 0.8
+    const val CONFIRM_MATCH_THRESHOLD = 0.78
 
     fun matched(gameCompleteMatched: Boolean, confirmMatched: Boolean): Boolean =
         gameCompleteMatched && confirmMatched
