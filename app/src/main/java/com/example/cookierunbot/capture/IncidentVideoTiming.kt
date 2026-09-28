@@ -1,6 +1,6 @@
 package com.example.cookierunbot.capture
 
-/** Event-triggered recording: Recovery + 10s, with a hard 3-minute cap FROM trigger (no pre-roll). */
+/** Legacy internal name. Optional JPEG sequence: Recovery + 10s, hard 3-minute cap FROM trigger. */
 internal object IncidentVideoTiming {
     const val TAIL_NANOS = 10_000_000_000L
     const val MAX_VIDEO_NANOS = 180_000_000_000L
