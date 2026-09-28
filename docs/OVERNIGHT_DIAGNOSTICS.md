@@ -106,7 +106,7 @@ The separate `GAME_COMPLETE_SEND_LIFE_POPUP` auxiliary probe looks for
 To limit gameplay overhead it first probes CONFIRM_SEND_LIFE; only when that matches
 does it scan GAME_COMPLETE. The probe runs before routing a legacy GAME_COMPLETE
 match, and is otherwise throttled to every 1.5 seconds outside Fast Start's priority
-window. Thus the ordinary GAME_COMPLETE action/watchdog progress is never invoked on
+window, and skipped on immediate GAME_START/GAME_RELAY matches to avoid slowing their taps. Thus the ordinary GAME_COMPLETE action/watchdog progress is never invoked on
 a frame where the auxiliary pair matches. Neither the original stage
 `GAME_COMPLETE` ROI/threshold/transitions nor Quick Lives' existing
 `CONFIRM_SEND_LIFE_1.png` ROI is changed.
