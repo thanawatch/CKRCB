@@ -16,13 +16,14 @@ internal object IncidentVideoLoadPolicy {
             processCpuDeltaMs > wallDeltaMs
 
     /** Unknown/invalid capture rate is not proof of spare capacity; optional image sampling yields. */
-    fun captureTooSlow(captureFps: Double, targetVideoFps: Int): Boolean =
-        targetVideoFps <= 0 || !captureFps.isFinite() || captureFps < targetVideoFps * 2.0
+    fun captureTooSlow(captureFps: Double, targetFps: Int): Boolean =
+        targetFps <= 0 || !captureFps.isFinite() || captureFps < targetFps * 2.0
 
     fun sampleTooExpensive(wallMs: Long, threadCpuNanos: Long): Boolean =
         wallMs > MAX_SAMPLE_WALL_MS ||
             (threadCpuNanos >= 0L && threadCpuNanos > MAX_SAMPLE_THREAD_CPU_NANOS)
 
-    /** Do not terminate after merely two costly images. Each costly sample yields a full tick;\n     * stop only when degraded sampling persists for ten ticks (~20s nominal). */
+    /** Do not terminate after merely two costly images. Each costly sample yields a full tick;
+     * stop only when degraded sampling persists for ten ticks (~20s nominal). */
     fun shouldStopSampling(degradedTicks: Int): Boolean = degradedTicks >= 10
 }
