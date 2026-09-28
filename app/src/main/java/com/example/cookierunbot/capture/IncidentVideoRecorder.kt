@@ -163,10 +163,12 @@ object IncidentVideoRecorder {
 
     private fun tick(session: Long) {
         if (!running || sessionId != session) return
+        var startingTrigger: Trigger? = null
         try {
             val trigger = synchronized(lock) {
                 pendingTrigger?.takeIf { it.session == session }?.also { pendingTrigger = null }
             }
+            startingTrigger = trigger
             if (trigger != null) startRecording(trigger)
             val recording = active?.takeIf { it.trigger.session == session }
                 ?: run { disarmIfIdle(session); return }
@@ -226,9 +228,14 @@ object IncidentVideoRecorder {
                 disarmIfIdle(session)
             }
         } catch (error: Exception) {
-            active?.takeIf { it.trigger.session == session }?.let {
-                finishRecording(it, "sampling_error_${error.javaClass.simpleName}")
+            val affected = active?.takeIf { it.trigger.session == session }
+            if (affected != null) {
+                finishRecording(affected, "sampling_error_${error.javaClass.simpleName}")
                 active = null
+            } else {
+                startingTrigger?.let {
+                    writeStatus(it.directory, "Images skipped: start failed (${error.javaClass.simpleName}).")
+                }
             }
             disarmIfIdle(session)
             OvernightLogArchive.log("[INCIDENT_IMAGES] sampling_failed type=${error.javaClass.simpleName}")
