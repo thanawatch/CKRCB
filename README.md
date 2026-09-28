@@ -79,7 +79,7 @@ Scheduled Friend Life first becomes due the user-selected number of whole minute
 
 Quick Receive/Send Lives is a separate after-round mailbox workflow with its own templates, callback/fresh-frame rules, interrupts, and timeout.
 
-The game-progress watchdog checks independently every 30 seconds. If no bot-start, confirmed GAME_COMPLETE, or Friend Send event occurs for 15 minutes, it may run a gated confirmation/close recovery and send one successfully delivered Telegram warning for that overdue episode. The current CLOSE_BUTTON fallback uses ordinary grayscale `TM_CCOEFF_NORMED` matching at threshold 0.8 in the top-right quarter, not alpha-masked SQDIFF matching. It stops on a no-match and permits at most three matched taps. Each tap must complete successfully; continuing attempts wait 2 seconds before establishing a generation baseline and acquiring a newer frame, while the final tap omits the retry delay but still requires a newer frame. Recovery then checks that frame and successive fresh frames for MAINMENU for up to 120 seconds and routes a match to PRE_GAME. Failed alerts can retry after five minutes. Local no-match/DETECT_STALL diagnostics do not send their own alerts.
+Watchdog's separate full-frame `CONFIRM_SEND_LIFE_1.png` recovery match uses **0.78** (Quick Lives retains its own original Confirm ROI and default 0.80 threshold). The game-progress watchdog checks independently every 30 seconds. If no bot-start, confirmed GAME_COMPLETE, or Friend Send event occurs for 15 minutes, it may run a gated confirmation/close recovery and send one successfully delivered Telegram warning for that overdue episode. The current CLOSE_BUTTON fallback uses ordinary grayscale `TM_CCOEFF_NORMED` matching at threshold 0.8 in the top-right quarter, not alpha-masked SQDIFF matching. It stops on a no-match and permits at most three matched taps. Each tap must complete successfully; continuing attempts wait 2 seconds before establishing a generation baseline and acquiring a newer frame, while the final tap omits the retry delay but still requires a newer frame. Recovery then checks that frame and successive fresh frames for MAINMENU for up to 120 seconds and routes a match to PRE_GAME. Failed alerts can retry after five minutes. Local no-match/DETECT_STALL diagnostics do not send their own alerts.
 
 ## Statistics, images, and logs
 
@@ -97,7 +97,7 @@ Captured images may contain personal information and can be visible to gallery/f
 
 RobotRun has an independent **PRE_GAME / POST_GAME only** auxiliary popup path (never IN_GAME) that requires BOTH
 `GAME_COMPLETE_1.png` and `CONFIRM_SEND_LIFE_1.png` to match on the same normalized
-1280×720 image, each against a separate full-frame ROI at 0.80. The confirm
+1280×720 image, each against a separate full-frame ROI. The new popup uses **0.78 for Confirm** and retains **0.80 for GAME_COMPLETE**. The confirm
 template is checked first to avoid needless second full-frame work. On a double
 match, wait **1.6 seconds** then tap the **exact center** of the matched confirm
 button through the existing logical-to-physical mapper. Require a fresh frame
