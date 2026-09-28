@@ -76,14 +76,14 @@ class DebugLogActivity : ComponentActivity() {
         buttons.addView(actionButton("Clear Log", ::clearLog))
         buttons.addView(actionButton("Save Log", ::saveLog))
         buttons.addView(actionButton("Save 10h ZIP", ::save10Hours))
-        val videoButton = actionButton(if (IncidentVideoRecorder.isEnabled(this)) "Images ON" else "Images OFF") {}
-        videoButton.setOnClickListener {
+        val imageButton = actionButton(if (IncidentVideoRecorder.isEnabled(this)) "Images ON" else "Images OFF") {}
+        imageButton.setOnClickListener {
             val newValue = !IncidentVideoRecorder.isEnabled(this)
             IncidentVideoRecorder.setEnabled(this, newValue)
-            videoButton.text = if (newValue) "Video ON" else "Video OFF"
+            imageButton.text = if (newValue) "Images ON" else "Images OFF"
             Toast.makeText(this, "Incident images ${if (newValue) "enabled" else "disabled"}", Toast.LENGTH_SHORT).show()
         }
-        buttons.addView(videoButton)
+        buttons.addView(imageButton)
         buttons.addView(actionButton("Close") { finish() })
         root.addView(HorizontalScrollView(this).apply { addView(buttons) }, matchWidth())
 
