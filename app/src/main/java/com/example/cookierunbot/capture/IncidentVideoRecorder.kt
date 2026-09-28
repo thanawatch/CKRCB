@@ -211,6 +211,7 @@ object IncidentVideoRecorder {
             val health = LatestFrameProvider.diagnostics()
             if (!health.captureRunning || health.frameAgeMs == null ||
                 health.frameAgeMs > MAX_FRAME_AGE_MS ||
+                IncidentVideoLoadPolicy.captureTooSlow(health.captureFps, FPS) ||
                 health.frameSequence <= recording.lastGeneration || recording.cpuWindow.isBusy()
             ) {
                 recording.skippedSamples++
@@ -383,7 +384,8 @@ object IncidentVideoRecorder {
     private fun captureUnderPressure(): Boolean {
         val health = LatestFrameProvider.diagnostics()
         return health.captureRunning &&
-            (health.frameAgeMs == null || health.frameAgeMs > MAX_FRAME_AGE_MS)
+            (health.frameAgeMs == null || health.frameAgeMs > MAX_FRAME_AGE_MS ||
+                IncidentVideoLoadPolicy.captureTooSlow(health.captureFps, FPS))
     }
 
     private fun encodeMp4(frames: File, destination: File, shouldSkip: () -> Boolean) {

@@ -48,13 +48,13 @@ object IncidentManager {
         context: Context, generation: Long, status: GameProgressStatus,
         bot: BotControllerDiagnostics, capture: Diagnostics,
         manualTest: Boolean = false,
-    ) {
-        if (generation < 0L && !manualTest) return // Only the explicit test entry can create a test incident.
+    ): Boolean {
+        if (generation < 0L && !manualTest) return false // Only the explicit test entry can create a test incident.
         val at = System.currentTimeMillis()
         val id = "incident_${at}_${generation}"
         val directory = File(context.filesDir, "diagnostics/incidents/$id")
         val incident = synchronized(lock) {
-            if (active != null) return
+            if (active != null) return false
             Incident(generation, id, directory, at).also { active = it }
         }
         // Trigger only queues work to a separate recorder. Never wait for an encoder here.
@@ -97,6 +97,7 @@ object IncidentManager {
             still?.mat?.release()
         }
         OvernightLogArchive.log("[INCIDENT] created=$id")
+        return true
     }
 
     /** Helps the explicit manual-test guard avoid reporting a test without its own incident. */

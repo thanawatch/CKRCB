@@ -1,4 +1,4 @@
-# RobotRun Overnight Diagnostics — source baseline v1.1.8 / versionCode 10
+# RobotRun Overnight Diagnostics — source baseline v1.1.9 / versionCode 11
 
 This feature is independent of gameplay automation. It never changes template/ROI/threshold, the
 15-minute watchdog timeout, the only two watchdog progress-reset events (GAME_COMPLETE and
@@ -64,8 +64,8 @@ Recording stops at the earliest of:
 - **Resource pressure or per-Incident size cap**: stale/unavailable/latest repeated
   frames are skipped; after 10 consecutive degraded ticks (~5s nominal), or when
   frame save exceeds 20 MiB, stop. A sample taking over 250ms wall time OR 80ms
-  thread CPU is degraded. Sustained RobotRun process CPU above 1.5 single-core equivalents
-  in a two-second window also suppresses optional sampling.
+  thread CPU is degraded. Sustained RobotRun process CPU above one single-core equivalent
+  in a two-second window also suppresses optional sampling. Capture below twice the target video rate (<4 FPS for 2 FPS video) also suppresses optional video.
 
 Sampling and MP4 encoding each use separate lowest-priority worker threads; no
 video operation is synchronously awaited by the detector, tap, scheduler or Recovery.

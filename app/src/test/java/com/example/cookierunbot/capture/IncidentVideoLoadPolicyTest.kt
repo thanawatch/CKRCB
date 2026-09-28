@@ -7,9 +7,15 @@ import org.junit.Test
 class IncidentVideoLoadPolicyTest {
     @Test fun processCpuBudgetUsesSustainedTwoSecondWindow() {
         assertFalse(IncidentVideoLoadPolicy.processCpuTooBusy(4_000L, 1_999L))
-        assertFalse(IncidentVideoLoadPolicy.processCpuTooBusy(3_000L, 2_000L))
-        assertTrue(IncidentVideoLoadPolicy.processCpuTooBusy(3_001L, 2_000L))
+        assertFalse(IncidentVideoLoadPolicy.processCpuTooBusy(2_000L, 2_000L))
+        assertTrue(IncidentVideoLoadPolicy.processCpuTooBusy(2_001L, 2_000L))
         assertFalse(IncidentVideoLoadPolicy.processCpuTooBusy(-1L, 2_000L))
+    }
+
+    @Test fun captureRateMustLeaveHeadroomForGameplay() {
+        assertFalse(IncidentVideoLoadPolicy.captureTooSlow(0.0, 2))
+        assertFalse(IncidentVideoLoadPolicy.captureTooSlow(4.0, 2))
+        assertTrue(IncidentVideoLoadPolicy.captureTooSlow(3.99, 2))
     }
 
     @Test fun sampleWallAndThreadCpuBudgetsAreIndependent() {

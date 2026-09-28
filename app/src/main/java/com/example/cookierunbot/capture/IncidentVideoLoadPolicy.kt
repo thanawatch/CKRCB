@@ -10,10 +10,14 @@ internal object IncidentVideoLoadPolicy {
     private const val MAX_SAMPLE_WALL_MS = 250L
     private const val MAX_SAMPLE_THREAD_CPU_NANOS = 80_000_000L
 
-    /** More than 1.5 single-core equivalents sustained by this app during a 2s window. */
+    /** More than one single-core equivalent sustained by this app during a 2s window. */
     fun processCpuTooBusy(processCpuDeltaMs: Long, wallDeltaMs: Long): Boolean =
         wallDeltaMs >= CPU_WINDOW_MS && processCpuDeltaMs >= 0L &&
-            processCpuDeltaMs > wallDeltaMs * 3L / 2L
+            processCpuDeltaMs > wallDeltaMs
+
+    /** If capture itself cannot sustain twice the requested video FPS, optional video yields. */
+    fun captureTooSlow(captureFps: Double, targetVideoFps: Int): Boolean =
+        captureFps > 0.0 && targetVideoFps > 0 && captureFps < targetVideoFps * 2.0
 
     fun sampleTooExpensive(wallMs: Long, threadCpuNanos: Long): Boolean =
         wallMs > MAX_SAMPLE_WALL_MS ||

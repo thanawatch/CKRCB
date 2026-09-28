@@ -5,7 +5,7 @@
 ## Project identity and current release baseline
 
 - Repository: `thanawatch/BotAndroid`, branch `master`; native Android Kotlin app **RobotRun** for Cookie Run Classic. No Python-runtime dependency in the Android app.
-- Package/application ID: `com.example.cookierunbot`. Version baseline in `app/build.gradle.kts`: **v1.1.8 / versionCode 10** as of this handoff. Increment the integer version code on every subsequent installable release; the human-readable name can follow `major.minor.patch`. Verify values in source before claiming them.
+- Package/application ID: `com.example.cookierunbot`. Version baseline in `app/build.gradle.kts`: **v1.1.9 / versionCode 11** as of this handoff. Increment the integer version code on every subsequent installable release; the human-readable name can follow `major.minor.patch`. Verify values in source before claiming them.
 - Target: actual Android devices and Redfinger; capture via MediaProjection, OpenCV matching, gestures via AccessibilityService. Runtime controller is process-owned, not Activity-owned.
 - Standard frame/action system: cutout-safe dynamic `contentRect`, normalized **1280×720** `Mat` and matching logical coordinates. Never hard-code an inferred physical offset or bypass `CoordinateMapper` except for the explicitly documented legacy fixed-device exceptions. The Redfinger profile has separately calibrated logical post-relay targets.
 - [PORTING_STATUS.md](PORTING_STATUS.md) is the concise capability inventory; [PORTING_AUDIT.md](PORTING_AUDIT.md) explains current call paths; [REDFINGER_PERFORMANCE_PROFILE.md](REDFINGER_PERFORMANCE_PROFILE.md) defines the experimental opt-in profile; [ANDROID_TEST_CHECKLIST.md](ANDROID_TEST_CHECKLIST.md) is the unverified device checklist.

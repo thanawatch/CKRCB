@@ -121,14 +121,25 @@ object GameProgressWatchdogManager {
             )
             // Manual test receives its own labeled Incident and optional low-priority video.
             // Never reserve/reset the actual Watchdog clock or suppress normal overdue checks.
-            runCatching {
+            val incidentStarted = try {
                 IncidentManager.begin(
                     requireNotNull(synchronized(lock) { appContext }), reservation.generation,
                     watchdog.status(SystemClock.elapsedRealtime()), BotRuntime.diagnostics(),
                     LatestFrameProvider.diagnostics(), manualTest = true,
                 )
-            }.onFailure { error ->
+            } catch (error: Exception) {
                 log("[INCIDENT] manual_test_start_failed type=${error.javaClass.simpleName}")
+                false
+            }
+            if (!incidentStarted) {
+                synchronized(lock) {
+                    if (manualRecoveryReservation == reservation) {
+                        manualRecoveryReservation = null
+                        manualRecoveryEpisodeGeneration = null
+                    }
+                }
+                log("[GAME_PROGRESS_WATCHDOG_TEST] requested=false reason=incident_busy")
+                return WatchdogRecoveryTestRequest.ALREADY_RUNNING
             }
             requester.invoke(reservation)
             WatchdogRecoveryTestRequest.STARTED
@@ -165,6 +176,8 @@ object GameProgressWatchdogManager {
                     requireNotNull(synchronized(lock) { appContext }), recovery.generation,
                     watchdog.status(now), BotRuntime.diagnostics(), LatestFrameProvider.diagnostics(),
                 )
+            }.onSuccess { started ->
+                if (!started) log("[INCIDENT] start_skipped reason=another_incident_active")
             }.onFailure { error ->
                 log("[INCIDENT] start_failed type=${error.javaClass.simpleName}")
             }

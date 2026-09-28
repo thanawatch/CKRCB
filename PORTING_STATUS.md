@@ -1,6 +1,6 @@
 # Current implementation status
 
-> Despite this file's legacy name, this is a **current-code capability map**, not a migration history or roadmap. Source at HEAD remains authoritative. Start with [AGENTS.md](AGENTS.md) and the dated [DEVELOPMENT_HANDOFF.md](DEVELOPMENT_HANDOFF.md); use [PORTING_AUDIT.md](PORTING_AUDIT.md) for call flows. Current package baseline: **RobotRun v1.1.8 / versionCode 10** in `app/build.gradle.kts` (recheck source before citing later versions).
+> Despite this file's legacy name, this is a **current-code capability map**, not a migration history or roadmap. Source at HEAD remains authoritative. Start with [AGENTS.md](AGENTS.md) and the dated [DEVELOPMENT_HANDOFF.md](DEVELOPMENT_HANDOFF.md); use [PORTING_AUDIT.md](PORTING_AUDIT.md) for call flows. Current package baseline: **RobotRun v1.1.9 / versionCode 11** in `app/build.gradle.kts` (recheck source before citing later versions).
 
 ## Implemented runtime
 
