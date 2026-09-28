@@ -6,6 +6,7 @@ import com.example.cookierunbot.diagnostics.RobotLog as Log
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.automation.BotStage
+import com.example.cookierunbot.automation.DualGameCompleteSendLifePolicy
 import com.example.cookierunbot.automation.PerformanceProfile
 import com.example.cookierunbot.automation.RedfingerPerformancePolicy
 import android.os.SystemClock
@@ -115,11 +116,11 @@ class StateDetector(
         val full = Rect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT)
         val confirm = detectTemplate(
             normalizedRgba, "CONFIRM_SEND_LIFE_1.png", full,
-            com.example.cookierunbot.automation.DualGameCompleteSendLifePolicy.MATCH_THRESHOLD,
+            DualGameCompleteSendLifePolicy.MATCH_THRESHOLD,
         )
         val gameComplete = if (confirm.matched) detectTemplate(
             normalizedRgba, "GAME_COMPLETE_1.png", full,
-            com.example.cookierunbot.automation.DualGameCompleteSendLifePolicy.MATCH_THRESHOLD,
+            DualGameCompleteSendLifePolicy.MATCH_THRESHOLD,
         ) else null
         return GameCompleteSendLifePopupMatch(gameComplete, confirm)
     }
@@ -636,5 +637,5 @@ data class GameCompleteSendLifePopupMatch(
     val gameComplete: TemplateMatch?,
     val confirm: TemplateMatch,
 ) {
-    val matched: Boolean get() = gameComplete?.matched == true && confirm.matched
+    val matched: Boolean get() = DualGameCompleteSendLifePolicy.matched(gameComplete?.matched == true, confirm.matched)
 }
