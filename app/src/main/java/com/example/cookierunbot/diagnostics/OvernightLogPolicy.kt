@@ -9,6 +9,11 @@ internal object OvernightLogPolicy {
     const val BEFORE_INCIDENT_MS = 30L * 60L * 1000L
     const val TELEGRAM_MAX_BYTES = 49_000_000L
 
+    /** ZIP-facing names only: preserve legacy on-device .log files without renaming them. */
+    fun exportedFileName(sourceName: String): String =
+        if (sourceName.endsWith(".log", ignoreCase = true)) sourceName.dropLast(4) + ".txt"
+        else sourceName
+
     fun shouldKeep(eventMs: Long, nowMs: Long): Boolean =
         eventMs <= nowMs && eventMs >= nowMs - RETENTION_MS
 
