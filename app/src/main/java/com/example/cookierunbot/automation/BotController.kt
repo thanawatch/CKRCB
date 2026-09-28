@@ -13,6 +13,7 @@ import com.example.cookierunbot.capture.FrameSnapshot
 import com.example.cookierunbot.detection.DetectionResult
 import com.example.cookierunbot.detection.StateDetector
 import com.example.cookierunbot.detection.TemplateMatch
+import com.example.cookierunbot.detection.GameCompleteSendLifePopupMatch
 import com.example.cookierunbot.diagnostics.IncidentManager
 import com.example.cookierunbot.diagnostics.PersistentTrace
 import com.example.cookierunbot.diagnostics.DebugLogStore
@@ -113,6 +114,10 @@ class BotController(
     private var pendingTimeDealGesture: GestureCancellation? = null
     private var timeDealCallbackFailures = 0
     private var pendingPreviousResultsGesture: GestureCancellation? = null
+    // Dedicated two-template popup probe. Never changes normal GAME_COMPLETE or Quick Lives ROI.
+    private var lastDualSendLifeProbeAt = 0L
+    private var dualSendLifeVisibleAttempts = 0
+    private var pendingDualSendLifeGesture: GestureCancellation? = null
     private var pendingProgressRecoveryGesture: GestureCancellation? = null
     @Volatile private var previousResultsSettleUntilElapsedRealtime = 0L
     @Volatile private var pendingPreviousResultsRedetectBaseline = -1L
@@ -174,6 +179,7 @@ class BotController(
                 pendingPartyRunSeasonRewardsGesture?.isCompleted == false -> "PARTY_RUN_SEASON_REWARDS"
                 pendingTimeDealGesture?.isCompleted == false -> "TIME_DEAL"
                 pendingPreviousResultsGesture?.isCompleted == false -> "PREVIOUS_RESULTS"
+                pendingDualSendLifeGesture?.isCompleted == false -> "GAME_COMPLETE_SEND_LIFE_POPUP"
                 else -> pendingPopupAction
             },
             calibrationBlockedAction = calibrationBlockState.action,
@@ -246,6 +252,9 @@ class BotController(
             pendingTimeDealGesture = null
             timeDealCallbackFailures = 0
             pendingPreviousResultsGesture = null
+            lastDualSendLifeProbeAt = 0L
+            dualSendLifeVisibleAttempts = 0
+            pendingDualSendLifeGesture = null
             previousResultsSettleUntilElapsedRealtime = 0L
             pendingPreviousResultsRedetectBaseline = -1L
             resetNoMatchEpisode("bot_started")
@@ -275,6 +284,7 @@ class BotController(
         val stoppedPartyGesture: GestureCancellation?
         val stoppedTimeDealGesture: GestureCancellation?
         val stoppedPreviousResultsGesture: GestureCancellation?
+        val stoppedDualSendLifeGesture: GestureCancellation?
         val stoppedRecoveryGesture: GestureCancellation?
         val stoppedRun = synchronized(lock) {
             if (expectedGeneration != null && botRunGeneration != expectedGeneration) return
@@ -295,6 +305,8 @@ class BotController(
             pendingTimeDealGesture = null
             stoppedPreviousResultsGesture = pendingPreviousResultsGesture
             pendingPreviousResultsGesture = null
+            stoppedDualSendLifeGesture = pendingDualSendLifeGesture
+            pendingDualSendLifeGesture = null
             stoppedRecoveryGesture = pendingProgressRecoveryGesture
             pendingProgressRecoveryGesture = null
             calibrationBlockState.clear()
@@ -303,6 +315,7 @@ class BotController(
         stoppedPartyGesture?.cancel()
         stoppedTimeDealGesture?.cancel()
         stoppedPreviousResultsGesture?.cancel()
+        stoppedDualSendLifeGesture?.cancel()
         stoppedRecoveryGesture?.cancel()
         autoTapper.stop("BOT_EXIT")
         friendLifeScheduler.stop()
@@ -917,6 +930,13 @@ class BotController(
             frame.mat.release()
             return
         }
+        // Do not let the ordinary GAME_COMPLETE route run while this independent confirm
+        // gesture is still awaiting its callback.
+        if (synchronized(lock) { pendingDualSendLifeGesture?.isCompleted == false }) {
+            listener.onStateChanged("WAITING_FOR_GAME_COMPLETE_SEND_LIFE_GESTURE")
+            frame.mat.release()
+            return
+        }
         val previousResultsSettleUntil = previousResultsSettleUntilElapsedRealtime
         if (previousResultsSettleUntil > 0L) {
             val now = SystemClock.elapsedRealtime()
@@ -1039,6 +1059,38 @@ class BotController(
                 detectionMatchedAtNanos = SystemClock.elapsedRealtimeNanos()
                 lastDetectionAt = now
                 Log.i(CookieRunBotApplication.TAG, "[RECOVERY] Full stage scan group=$group")
+            }
+            // Independent full-frame AND-probe BEFORE an old GAME_COMPLETE result is recorded.
+            // Time-gated auxiliary probe preserves fast GAME_START / GAME_RELAY detection.
+            val dualProbeNow = SystemClock.elapsedRealtime()
+            val oldGameCompleteMatched = result?.state == BotStage.GAME_COMPLETE
+            if (DualGameCompleteSendLifePolicy.shouldProbe(
+                    dualProbeNow, lastDualSendLifeProbeAt, oldGameCompleteMatched,
+                    isFastStartPriorityWindow(detectionStartedAtNanos),
+                )
+            ) {
+                lastDualSendLifeProbeAt = dualProbeNow
+                val pair = detector.detectGameCompleteSendLifePopup(frame.mat)
+                if (pair.matched) {
+                    logDiagnostic(
+                        "[GAME_COMPLETE_SEND_LIFE] matched=true frameGeneration=${frame.generation} " +
+                            "gameCompleteScore=${format(requireNotNull(pair.gameComplete).score)} " +
+                            "confirmScore=${format(pair.confirm.score)} " +
+                            "confirmMatch=(${pair.confirm.x},${pair.confirm.y},${pair.confirm.width},${pair.confirm.height}) " +
+                            "roi=FULL_FRAME delayMs=${DualGameCompleteSendLifePolicy.BEFORE_TAP_DELAY_MS}",
+                    )
+                    handleDualGameCompleteSendLifePopup(pair, frame)
+                    return // Never dispatch the legacy GAME_COMPLETE on a frame with both matches.
+                }
+                dualSendLifeVisibleAttempts = 0
+                if (oldGameCompleteMatched || pair.confirm.matched) {
+                    logDiagnostic(
+                        "[GAME_COMPLETE_SEND_LIFE] matched=false " +
+                            "gameCompleteScore=${pair.gameComplete?.score?.let(::format) ?: "not_scanned"} " +
+                            "confirmScore=${format(pair.confirm.score)} " +
+                            "fallback=${if (oldGameCompleteMatched) "LEGACY_GAME_COMPLETE" else "NORMAL_DETECTION"}",
+                    )
+                }
             }
             logDailyNewPostTapResult(detector, frame, result)
             logPartyRunSeasonRewardsPostTapResult(detector, frame, result)
