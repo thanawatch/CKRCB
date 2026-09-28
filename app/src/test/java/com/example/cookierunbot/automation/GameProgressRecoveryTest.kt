@@ -9,6 +9,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GameProgressRecoveryTest {
+    @Test fun confirmMatchThresholdIsIndependentAndAcceptsSampleScore() {
+        assertEquals(0.78, GameProgressRecovery.MATCH_THRESHOLD, 0.0)
+        assertTrue(com.example.cookierunbot.detection.templateScoreMatches(
+            0.794015, GameProgressRecovery.MATCH_THRESHOLD,
+        ))
+        assertTrue(GameProgressRecovery.MATCH_THRESHOLD < 0.8)
+    }
+
     @Test fun actualTemplateMatchDeterminesTapCenter() {
         assertEquals(
             LogicalPoint(740, 452),
