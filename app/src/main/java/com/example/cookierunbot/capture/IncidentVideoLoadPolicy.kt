@@ -23,7 +23,6 @@ internal object IncidentVideoLoadPolicy {
         wallMs > MAX_SAMPLE_WALL_MS ||
             (threadCpuNanos >= 0L && threadCpuNanos > MAX_SAMPLE_THREAD_CPU_NANOS)
 
-    /** Two costly samples abort sooner than ten missing/repeated samples. */
-    fun shouldStopSampling(degradedTicks: Int, expensiveSamplesInARow: Int): Boolean =
-        degradedTicks >= 10 || expensiveSamplesInARow >= 2
+    /** Do not terminate after merely two costly images. Each costly sample yields a full tick;\n     * stop only when degraded sampling persists for ten ticks (~20s nominal). */
+    fun shouldStopSampling(degradedTicks: Int): Boolean = degradedTicks >= 10
 }
