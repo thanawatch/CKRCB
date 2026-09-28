@@ -93,38 +93,42 @@ A new Start Bot creates a new statistics session. Result OCR/classification runs
 
 Captured images may contain personal information and can be visible to gallery/file applications. Do not share them or logs without inspection.
 
-## Overnight Diagnostics and event-triggered Eco incident video
+## Overnight Diagnostics and event-triggered incident screenshot sequence
 
-The in-app Debug Log still shows its latest 500 RAM lines; a separate owned-app rolling text
-archive now records up to the previous **10 hours** (nominal 200 MiB size cap, loss markers) in
-private files across ordinary Process restarts. The **Save 10h ZIP** button exports a local ZIP.
-It does not include system/other-app Logcat or an unlimited per-frame screenshot archive.
+The in-app Debug Log shows its latest 500 RAM lines; a private rolling app-specific text
+archive retains up to **10 hours** (nominal 200 MiB cap, loss markers) across ordinary
+process restarts. **Save 10h ZIP** exports the logs locally. The archive does not contain
+system/other-app Logcat or continuous gameplay screenshots.
 
-When a genuine 15-minute Watchdog or explicit in-app manual Watchdog test requests Recovery, a labeled Incident freezes the previous
-**30 minutes of logs**, current Bot/Capture state and normalized PNG; the full `[GAME_PROGRESS_*]`
-action timeline (template, score, logical/physical target, dispatch, completion, fresh frame,
-MAINMENU result) and final recovery result are appended. Independent retention: 72h/200 MiB.
+A genuine 15-minute Watchdog or explicit Manual Test Recovery creates a labeled Incident:
+previous **30 minutes of text logs**, current Bot/Capture status, essential **1280×720 PNG**,
+`[GAME_PROGRESS_*]` action timeline and final recovery outcome. Retention is 72h/200 MiB,
+separate from rolling text logs. Manual Test does not reset the real watchdog timer.
 
-Video is armed but does **no recurring JPEG sampling during normal gameplay**. On a real or
-manual Watchdog Incident only, the existing capture is sampled at target **2 FPS / 640×360**
-(JPEG quality 40; H.264 250 kbps); there is **no pre-roll**. It ends at the earliest of
-Recovery +10 seconds, **3 minutes from trigger**, capture stop or resource-pressure/20MiB
-frame limit. The essential screenshot and Incident archive are queued before optional video.
-Workers run at lowest priority and can skip/abort video when capture is unhealthy,
-its FPS is unknown or below 4, sampling stays degraded for ten ticks, two adjacent samples
-exceed the 250ms wall/80ms thread-CPU budget, or RobotRun itself sustains more than one CPU core. A finished MP4 is optional; preserved JPEGs and a status explain failures/skips.
-Manual tests include a labeled status, PNG, action timeline and outcome, and are retrievable via
-/logs or local Save 10h ZIP. The manual test does not reset the real 15-minute timer. Use Debug Log's **Video ON / Video OFF** toggle (enabled by default in this
-source version). No second MediaProjection, no new game gestures, and no watchdog rule changes.
+Optional JPEG sampling is **event-triggered only**, with zero recurring sampling during normal
+gameplay. Once Incident begins, the existing normalized frame provider is sampled at **480×270,
+JPEG quality 35, once per 2 seconds**; at most **90 images** and **20 MiB per incident**.
+The sampler stops at Recovery finish + **10 seconds**, **3 minutes from trigger**, capture stop,
+image/size cap or sustained resource pressure (whichever is first). It skips stale/duplicate
+frames, capture FPS below 2 and process CPU pressure. A costly sample (over 250ms wall or 80ms
+sampler-thread CPU) causes a two-second backoff; two costly samples do not immediately abort,
+but ten consecutive degraded ticks end sampling. The sampler runs at lowest priority and
+is never awaited by detection, Watchdog, tap or Recovery. There is **no second MediaProjection,
+no preroll, no H.264 encoder and no MP4** for new Incidents.
 
-Use authorized Telegram **/logs** or **📥 Download Logs** to request the 10h diagnostic ZIP
-(`sendDocument`, separate worker, 49 MB public Bot API transfer limit). It can include the
-five most recent incidents and MP4/JPEG fallback within a 35 MiB video budget; the manifest
-lists omissions. It never auto-uploads logs. If Telegram file size/network prevents delivery,
-use **Debug Log → Save 10h ZIP** on-device. If the entire Process was killed, launch RobotRun
-again before requesting /logs; already written private logs are recoverable unless app data
-was cleared/uninstalled. See [docs/OVERNIGHT_DIAGNOSTICS.md](docs/OVERNIGHT_DIAGNOSTICS.md).
-MediaCodec MP4 quality and performance on Redfinger require an actual APK/device test.
+Exported JPEGs appear under `screenshots/000001.jpg` etc., with elapsedRealtimeNanos in
+`images_timing.txt` for alignment to `watchdog_action_timeline.txt`. The
+`incident_image_status.txt` reports skipped/expensive/image totals; the original essential
+PNG and logs remain useful when optional images are skipped. Use Debug Log's **Images ON /
+Images OFF** setting (migrates the prior video toggle value).
+
+Authorized Telegram **/logs** or **📥 Download Logs** requests a private 10h ZIP
+(`sendDocument`, separate worker, 49 MB API size cap), including up to five recent Incidents.
+Optional JPEG sequences and legacy video evidence share a **35 MiB** export budget; the
+manifest lists omissions. Existing old MP4/JPEG incidents remain exportable. No automatic
+log upload. If Telegram delivery fails, use **Debug Log → Save 10h ZIP** locally. If the
+process was killed, open RobotRun again before requesting /logs. See
+[docs/OVERNIGHT_DIAGNOSTICS.md](docs/OVERNIGHT_DIAGNOSTICS.md).
 
 ## Calibration panel across orientation changes
 
