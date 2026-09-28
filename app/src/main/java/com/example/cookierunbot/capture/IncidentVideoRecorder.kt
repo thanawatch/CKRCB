@@ -346,7 +346,7 @@ object IncidentVideoRecorder {
                     "First frame elapsedRealtimeNanos: ${firstAt ?: "none"}\n" +
                     "Last frame elapsedRealtimeNanos: ${lastAt ?: "none"}\n" +
                     "Original JPEG filename is the sample's elapsedRealtimeNanos. " +
-                    "MP4 PTS starts at the first JPEG. Compare watchdog_action_timeline.log elapsedNanos " +
+                    "MP4 PTS starts at the first JPEG. In exported ZIP compare watchdog_action_timeline.txt elapsedNanos " +
                     "to this file to align each action with the video.\n",
             )
         }
