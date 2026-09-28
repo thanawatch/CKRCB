@@ -26,7 +26,7 @@ successful FRIEND_SEND_LIFE_TAP), Accessibility gestures, Friend Life, or detect
 
 The archive contains only RobotRun-generated events, NOT all system/other-app Logcat records,
 and does not retain every image frame as a text log. Token/password-looking strings and Telegram
-bot URLs are redacted in exported text. Raw screen/video can contain visible account/game
+bot URLs are redacted in exported text. Raw screenshots and legacy video can contain visible account/game
 information; download only from the authorized Chat ID and keep archives private.
 
 ## Watchdog Incident and manual test
@@ -42,52 +42,45 @@ overdue/busy or any Incident is still active, the manual test is rejected rather
 2. Append `[GAME_PROGRESS_*]` Recovery messages to
    `watchdog_action_timeline.txt`, including template/score/attempt, logical and
    mapped physical target, dispatchAccepted, callback completion, newer frame and MAINMENU routing.
-3. On any Recovery exit, write the outcome and signal the optional video worker to finish.
-   Screenshot/text/timeline/outcome remain independently useful when video is missing.
+3. On any Recovery exit, write the outcome and signal the optional image sampler to finish.
+   Screenshot/text/timeline/outcome remain independently useful when optional images are missing.
 
-## Incident video: event-triggered, lowest priority
+## Incident screenshot sequence: event-triggered, lowest priority
 
-Video is enabled by default, and can be disabled/enabled in Debug Log via
-**Video ON / Video OFF**. Screen Capture start only **arms** the recorder: there is
-**no recurring video sampler, pre-roll RAM ring, JPEG resizing/compression, or MP4
-encoding during normal gameplay**. The video work starts only when a real or explicit
-manual Watchdog Incident triggers, before the Recovery worker is requested. The essential
-screenshot is cloned and the Incident archive work is queued **before** optional video
-sampling can start. Recovery never waits for a video frame or MP4.
-No second MediaProjection/VirtualDisplay. It clones from the existing
-`LatestFrameProvider`, with target **640x360 / 2 FPS**, JPEG quality **40**, and
-H.264 bitrate **250 kbps** (no audio).
+Images are enabled by default and can be disabled/enabled in Debug Log via
+**Images ON / Images OFF**. The prior `incident_video_enabled` preference is deliberately
+reused, preserving existing user settings. Screen Capture start only arms the sampler:
+**no recurring image sampling, resizing, JPEG compression or MP4 encoding during
+normal gameplay**. Only a real overdue Watchdog or explicit Manual Test Incident triggers
+sampling, after the essential status/1280×720 PNG/30-minute text snapshot is queued.
+Recovery never waits for optional images. The recorder uses the existing
+`LatestFrameProvider` (no second MediaProjection or VirtualDisplay).
 
-Recording stops at the earliest of:
+- Sample normalized frames at **480×270 JPEG quality 35** nominally **once every 2 seconds**
+  (up to **90 images**; maximum **20 MiB** per Incident).
+- Stop at Recovery finished + **10 seconds**, or **3 minutes from trigger** (whichever is
+  earlier), or on capture stop, image/size limit, persistent resource pressure, or error.
+  No pre-roll, no H.264 codec, no muxing and no MP4 for newly created Incidents.
+- Stale/invalid/duplicate capture frames, capture FPS under 2, or sustained app-process CPU
+  pressure skip individual samples *before cloning*. Samples exceeding **250ms wall time**
+  or **80ms sampler-thread CPU** cause the next two-second tick to be skipped instead of
+  immediately terminating after two costly images. **Ten consecutive degraded ticks**
+  (~20s nominal) stop the sampler; previously completed JPEGs are retained. Process CPU
+  is only RobotRun's CPU, not Redfinger's total cloud-host CPU.
+- Separate, lowest-priority sampler thread; no synchronous waiting from capture,
+  detection, gestures, Watchdog or Recovery. JPEG files are written as `.part` and
+  renamed to numbered `screenshots/000001.jpg` etc. only after completion.
+  `images_timing.txt` maps each filename to elapsedRealtimeNanos and frame generation;
+  `incident_image_status.txt` reports outcome, saved/skipped/expensive counts.
+  `[INCIDENT_IMAGES]` archive lines report sample wall time and thread CPU cost,
+  permitting diagnosis of expensive sampling without falsely asserting total VM load.
+- The trigger's essential `watchdog_screenshot.png` retains the original 1280×720
+  resolution independently of optional screenshot sampling.
 
-- **Recovery finished + 10 seconds**, regardless of outcome;
-- **3 minutes after the Watchdog/manual-test trigger**, with **no pre-roll**;
-- **Screen Capture / recorder stops**, preserving available frames;
-- **Resource pressure or per-Incident size cap**: stale/unavailable/repeated frames
-  are skipped. The recorder declines to start when capture is unhealthy or the measured
-  capture FPS is unknown/invalid or below 4 FPS. During sampling, 10 consecutive degraded
-  ticks (~5s nominal), **two consecutive expensive samples**, or 20 MiB saved JPEGs
-  stop video early. A sample taking over 250ms wall time OR 80ms thread CPU is expensive.
-  Sustained RobotRun process CPU above one single-core equivalent in a two-second window
-  also suppresses optional sampling. Skipping video does not skip the Incident text,
-  snapshot, Recovery action timeline or final outcome.
-
-Sampling and MP4 encoding each use separate lowest-priority worker threads; no
-video operation is synchronously awaited by the detector, tap, scheduler or Recovery.
-The encoder starts only **after** sampling stops, yields 50ms between decoded frames,
-and skips/aborts on stale capture, process CPU pressure or a changed capture session.
-A quick stop/restart cannot let an old sampler/stop task finalize a newer recording.
-Retain any already persisted JPEG files and `incident_video_status.txt`. In a normal completion, successful MP4 replaces the
-temporary JPEGs; if codec fails, keep JPEG fallback. Resource pressure is inferred from capture freshness, per-frame thread CPU/wall time
-and RobotRun's own process CPU, **not the Redfinger VM's total CPU**. Video cannot
-be guaranteed and even low-priority work may still contend for CPU; gameplay wins.
-A video is never guaranteed; gameplay and diagnostic text come first.
-
-Manual Test produces the same status/screenshot/timeline/outcome package and requests
-video under the same optional/pressure rules. After the test Recovery completes and
-the tail/optional encode finishes, **/logs** or local **Save 10h ZIP** returns the
-Incident among the five most recent. A skipped video is visible via
-`incident_video_status.txt`. The app does not auto-send the ZIP.
+Manual Test follows the identical optional sampler policy, then `/logs` or local
+**Save 10h ZIP** includes the sequence with the newest five retained Incidents (subject to
+ZIP/media caps). New images are never automatically sent. Legacy Incident MP4/JPEG files
+remain exportable; only newly triggered Incidents use the image sequence.
 
 ## Retrieve files
 
@@ -95,9 +88,9 @@ Send **/logs** or press **📥 Download Logs** in the persistent Telegram Dashbo
 configured authorized token + Chat ID may request or receive the ZIP. One export/upload at a time
 on \`telegram-log-delivery\` worker; successful file content is sent as original \`sendDocument\`.
 No automatic log upload. The ZIP includes \`robotrun_10h.txt\`, an export manifest and at most the
-five most recent retained Incident folders. Stored legacy `.log` Incident entries are named `.txt` in the exported ZIP only; the on-device source files and their contents are unchanged. Incident videos share a 35 MiB uncompressed video
-budget; the manifest notes omissions. A finished MP4 is preferred; if absent, original JPEG
-frames are included within that budget. Telegram's public Bot API caps this upload at
+five most recent retained Incident folders. Stored legacy `.log` Incident entries are named `.txt` in the exported ZIP only; the on-device source files and their contents are unchanged. Optional screenshot sequences and legacy incident videos share a 35 MiB uncompressed media
+budget; the manifest notes omissions. Legacy MP4 is preferred over legacy JPEG fallback,
+but new `screenshots/*.jpg` is always eligible within that budget. Telegram's public Bot API caps this upload at
 49,000,000 bytes. On failure or oversize, open RobotRun **Debug Log → Save 10h ZIP** to export
 locally under Downloads/RobotRun (Android 10+; legacy app Documents path otherwise).
 
