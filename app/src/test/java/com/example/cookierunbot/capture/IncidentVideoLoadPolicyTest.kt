@@ -22,11 +22,11 @@ class IncidentVideoLoadPolicyTest {
         assertTrue(IncidentVideoLoadPolicy.captureTooSlow(3.99, 2))
     }
 
-    @Test fun expensiveSamplesAbortBeforeTenGenericDegradedTicks() {
-        assertFalse(IncidentVideoLoadPolicy.shouldStopSampling(9, 1))
-        assertTrue(IncidentVideoLoadPolicy.shouldStopSampling(10, 0))
-        assertTrue(IncidentVideoLoadPolicy.shouldStopSampling(2, 2))
-        assertFalse(IncidentVideoLoadPolicy.shouldStopSampling(0, 0))
+    @Test fun degradedSamplingRequiresTenTicksRatherThanTwoCostlyImages() {
+        assertFalse(IncidentVideoLoadPolicy.shouldStopSampling(0))
+        assertFalse(IncidentVideoLoadPolicy.shouldStopSampling(2))
+        assertFalse(IncidentVideoLoadPolicy.shouldStopSampling(9))
+        assertTrue(IncidentVideoLoadPolicy.shouldStopSampling(10))
     }
 
     @Test fun sampleWallAndThreadCpuBudgetsAreIndependent() {
