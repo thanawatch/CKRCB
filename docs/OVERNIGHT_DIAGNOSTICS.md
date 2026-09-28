@@ -102,7 +102,7 @@ Clear Data removes private files. A source commit alone does not update an insta
 
 The separate `GAME_COMPLETE_SEND_LIFE_POPUP` auxiliary probe runs only in **PRE_GAME and POST_GAME**; it never probes in **IN_GAME**, including when its regular full-stage recovery scan finds a legacy GAME_COMPLETE result. It looks for
 `CONFIRM_SEND_LIFE_1.png` AND `GAME_COMPLETE_1.png` on the **same normalized
-1280×720 frame**, with each using its own **full-frame ROI** and threshold **0.80**.
+1280×720 frame**, with independent **full-frame ROIs**: `CONFIRM_SEND_LIFE_1.png` uses **0.78**, while `GAME_COMPLETE_1.png` remains **0.80**.
 To limit gameplay overhead it first probes CONFIRM_SEND_LIFE; only when that matches
 does it scan GAME_COMPLETE. Within PRE_GAME / POST_GAME, the probe runs before routing a legacy GAME_COMPLETE
 match and is otherwise throttled to every 1.5 seconds. It is excluded from IN_GAME,
@@ -120,3 +120,5 @@ current detection group or recording GAME_COMPLETE watchdog progress. Limit the
 same continuously visible dual popup to three attempts; rearm after a probe
 actually sees the pair disappear. If only one template matches, the existing
 stage/detector path continues unmodified. Logs use `[GAME_COMPLETE_SEND_LIFE]`.
+
+Watchdog Confirm recovery independently uses a full-frame `CONFIRM_SEND_LIFE_1.png` match threshold of **0.78**. Its Close Button threshold remains **0.80**, and Quick Lives retains the default **0.80** plus its original Confirm ROI. The lowered thresholds are local to the two Confirm paths; the detector's global threshold and normal GAME_COMPLETE threshold are unchanged.
