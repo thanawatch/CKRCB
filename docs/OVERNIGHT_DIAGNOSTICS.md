@@ -100,13 +100,13 @@ Clear Data removes private files. A source commit alone does not update an insta
 
 ## Independent two-template GAME_COMPLETE / CONFIRM_SEND_LIFE popup
 
-The separate `GAME_COMPLETE_SEND_LIFE_POPUP` auxiliary probe looks for
+The separate `GAME_COMPLETE_SEND_LIFE_POPUP` auxiliary probe runs only in **PRE_GAME and POST_GAME**; it never probes in **IN_GAME**, including when its regular full-stage recovery scan finds a legacy GAME_COMPLETE result. It looks for
 `CONFIRM_SEND_LIFE_1.png` AND `GAME_COMPLETE_1.png` on the **same normalized
 1280×720 frame**, with each using its own **full-frame ROI** and threshold **0.80**.
 To limit gameplay overhead it first probes CONFIRM_SEND_LIFE; only when that matches
-does it scan GAME_COMPLETE. The probe runs before routing a legacy GAME_COMPLETE
-match, and is otherwise throttled to every 1.5 seconds outside Fast Start's priority
-window, and skipped on immediate GAME_START/GAME_RELAY matches to avoid slowing their taps. Thus the ordinary GAME_COMPLETE action/watchdog progress is never invoked on
+does it scan GAME_COMPLETE. Within PRE_GAME / POST_GAME, the probe runs before routing a legacy GAME_COMPLETE
+match and is otherwise throttled to every 1.5 seconds. It is excluded from IN_GAME,
+so normal GAME_START / GAME_RELAY / GAME_COMPLETE logic and performance remain unchanged. Thus the ordinary GAME_COMPLETE action/watchdog progress is never invoked on
 a frame where the auxiliary pair matches. Neither the original stage
 `GAME_COMPLETE` ROI/threshold/transitions nor Quick Lives' existing
 `CONFIRM_SEND_LIFE_1.png` ROI is changed.
