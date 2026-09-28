@@ -40,7 +40,7 @@ overdue/busy or any Incident is still active, the manual test is rejected rather
 1. Freeze the previous **30 minutes of text logs**, current Bot/Capture/Watchdog status
    and a still normalized **1280x720 PNG**. The status records REAL_OVERDUE or MANUAL_TEST.
 2. Append `[GAME_PROGRESS_*]` Recovery messages to
-   `watchdog_action_timeline.log`, including template/score/attempt, logical and
+   `watchdog_action_timeline.txt`, including template/score/attempt, logical and
    mapped physical target, dispatchAccepted, callback completion, newer frame and MAINMENU routing.
 3. On any Recovery exit, write the outcome and signal the optional video worker to finish.
    Screenshot/text/timeline/outcome remain independently useful when video is missing.
@@ -94,8 +94,8 @@ Incident among the five most recent. A skipped video is visible via
 Send **/logs** or press **📥 Download Logs** in the persistent Telegram Dashboard. Only the
 configured authorized token + Chat ID may request or receive the ZIP. One export/upload at a time
 on \`telegram-log-delivery\` worker; successful file content is sent as original \`sendDocument\`.
-No automatic log upload. The ZIP includes \`robotrun_10h.log\`, an export manifest and at most the
-five most recent retained Incident folders. Incident videos share a 35 MiB uncompressed video
+No automatic log upload. The ZIP includes \`robotrun_10h.txt\`, an export manifest and at most the
+five most recent retained Incident folders. Stored legacy `.log` Incident entries are named `.txt` in the exported ZIP only; the on-device source files and their contents are unchanged. Incident videos share a 35 MiB uncompressed video
 budget; the manifest notes omissions. A finished MP4 is preferred; if absent, original JPEG
 frames are included within that budget. Telegram's public Bot API caps this upload at
 49,000,000 bytes. On failure or oversize, open RobotRun **Debug Log → Save 10h ZIP** to export
