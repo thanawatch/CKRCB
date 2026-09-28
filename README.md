@@ -95,7 +95,7 @@ Captured images may contain personal information and can be visible to gallery/f
 
 ## Separate full-frame GAME_COMPLETE + send-life popup
 
-RobotRun has an independent auxiliary popup path that requires BOTH
+RobotRun has an independent **PRE_GAME / POST_GAME only** auxiliary popup path (never IN_GAME) that requires BOTH
 `GAME_COMPLETE_1.png` and `CONFIRM_SEND_LIFE_1.png` to match on the same normalized
 1280×720 image, each against a separate full-frame ROI at 0.80. The confirm
 template is checked first to avoid needless second full-frame work. On a double
@@ -106,8 +106,7 @@ at three. A double match is handled BEFORE the old GAME_COMPLETE route, without
 recording GAME_COMPLETE Watchdog progress. On a single match, the existing stage
 path remains unchanged. Ordinary GAME_COMPLETE ROI/threshold/transitions and
 Quick Lives' separate pre-existing CONFIRM_SEND_LIFE ROI remain untouched.
-The auxiliary probe is time-gated and yields to immediate GAME_START/GAME_RELAY
-actions. See [docs/OVERNIGHT_DIAGNOSTICS.md](docs/OVERNIGHT_DIAGNOSTICS.md).
+The auxiliary probe is time-gated and excluded from IN_GAME, including its full-stage recovery scan; GAME_START/GAME_RELAY/GAME_COMPLETE gameplay paths are unchanged. See [docs/OVERNIGHT_DIAGNOSTICS.md](docs/OVERNIGHT_DIAGNOSTICS.md).
 
 ## Overnight Diagnostics and event-triggered incident screenshot sequence
 
