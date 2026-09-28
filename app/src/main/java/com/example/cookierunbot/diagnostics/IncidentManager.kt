@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * One incident per real or explicitly requested manual Watchdog Recovery. The 30-minute text
- * history is frozen before Recovery; later action events and optional video are best-effort.
+ * history is frozen before Recovery; later action events and optional JPEG sequence are best-effort.
  * No incident I/O is performed on the watchdog scheduler or the gameplay worker.
  */
 object IncidentManager {
@@ -57,7 +57,7 @@ object IncidentManager {
             if (active != null) return false
             Incident(generation, id, directory, at).also { active = it }
         }
-        // Reserve the incident snapshot first. Optional video must not get a head start
+        // Reserve the incident snapshot first. Optional JPEG sampling must not get a head start
         // over diagnostic screenshot/logs on a saturated cloud phone.
         val triggerElapsedNanos = SystemClock.elapsedRealtimeNanos()
         val still = LatestFrameProvider.snapshot()
@@ -71,7 +71,7 @@ object IncidentManager {
             appendLine("Overdue: ${status.overdue}")
             appendLine("Bot diagnostics: $bot")
             appendLine("Capture diagnostics: $capture")
-            appendLine("Video: optional event-triggered 640x360/2fps; recovery + 10s, hard cap 3min from trigger. May skip frames or MP4 under resource pressure.")
+            appendLine("Images: optional event-triggered 480x270 JPEG quality 35, one every 2s; recovery + 10s, hard cap 3min from trigger, up to 90. May skip samples under pressure. No MP4.")
             appendLine("Physical coordinates in recovery logs refer to the contemporaneous transform.")
         }
         executor.execute {
@@ -92,7 +92,7 @@ object IncidentManager {
                 OvernightLogArchive.copyWindow(
                     at - OvernightLogPolicy.BEFORE_INCIDENT_MS,
                     at,
-                    File(directory, "before_30_minutes.log"),
+                    File(directory, "before_30_minutes.txt"),
                 )
                 cleanup(context, at)
             }.onFailure { error ->
@@ -101,18 +101,18 @@ object IncidentManager {
             still?.mat?.release()
         }
         OvernightLogArchive.log("[INCIDENT] created=$id")
-        // Last-priority work: only queue video after the essential archive work is queued.
-        // Never wait for a video sample or MP4 on the Watchdog/Recovery path.
+        // Last-priority work: only queue JPEG sampling after the essential archive work is queued.
+        // Never wait for optional images on the Watchdog/Recovery path.
         runCatching {
-            IncidentVideoRecorder.trigger(id, File(directory, "incident_video.mp4"), triggerElapsedNanos)
+            IncidentVideoRecorder.trigger(id, directory, triggerElapsedNanos)
         }.onFailure { error ->
-            OvernightLogArchive.log("[INCIDENT_VIDEO] trigger_failed id=$id type=${error.javaClass.simpleName}")
-            // Optional video must never turn a valid Watchdog/Manual Test Incident into failure.
+            OvernightLogArchive.log("[INCIDENT_IMAGES] trigger_failed id=$id type=${error.javaClass.simpleName}")
+            // Optional images must never turn a valid Watchdog/Manual Test Incident into failure.
             runCatching {
                 executor.execute {
                     runCatching {
-                        File(directory, "incident_video_status.txt").writeText(
-                            "Video skipped: trigger failed (${error.javaClass.simpleName}). Essential Incident evidence is unaffected.\n",
+                        File(directory, "incident_image_status.txt").writeText(
+                            "Images skipped: trigger failed (${error.javaClass.simpleName}). Essential Incident evidence is unaffected.\n",
                         )
                     }
                 }
@@ -133,7 +133,7 @@ object IncidentManager {
         executor.execute {
             runCatching {
                 incident.directory.mkdirs()
-                File(incident.directory, "watchdog_action_timeline.log").appendText(
+                File(incident.directory, "watchdog_action_timeline.txt").appendText(
                     "[$at][elapsedNanos=$elapsedNanos] ${OvernightLogPolicy.sanitized(message)}\n",
                 )
             }
