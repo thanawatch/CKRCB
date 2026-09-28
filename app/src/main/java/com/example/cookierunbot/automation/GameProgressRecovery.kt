@@ -13,6 +13,7 @@ internal enum class ConfirmRecoveryDecision { STOP_NO_MATCH, TAP_AND_CONTINUE, T
 
 internal object GameProgressRecovery {
     const val TEMPLATE = "CONFIRM_SEND_LIFE_1.png"
+    const val MATCH_THRESHOLD = 0.78
     const val RADIUS_LOGICAL = 5.0
 
     const val MAX_ATTEMPTS = 3
