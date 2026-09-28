@@ -1509,6 +1509,111 @@ class BotController(
         )
     }
 
+    /**
+     * Separate popup: both full-frame auxiliary templates matched on ONE frame. It is not
+     * BotStage.GAME_COMPLETE and must NEVER record GAME_COMPLETE watchdog progress, change
+     * its stage ROI/threshold, or call the old Quick Lives confirm matcher/ROI.
+     */
+    private fun handleDualGameCompleteSendLifePopup(
+        pair: GameCompleteSendLifePopupMatch,
+        frame: FrameSnapshot,
+    ) {
+        if (!pair.matched || !isRunning() ||
+            synchronized(lock) { progressRecoveryGate.isActive() }) return
+        if (dualSendLifeVisibleAttempts >= DualGameCompleteSendLifePolicy.MAX_VISIBLE_ATTEMPTS) {
+            logDiagnostic(
+                "[GAME_COMPLETE_SEND_LIFE] action=WAIT_FOR_POPUP_CHANGE " +
+                    "reason=max_visible_attempts attempts=${dualSendLifeVisibleAttempts}",
+            )
+            listener.onStateChanged("WAITING_FOR_GAME_COMPLETE_SEND_LIFE_POPUP_CHANGE")
+            return
+        }
+        val confirm = pair.confirm
+        val center = DualGameCompleteSendLifePolicy.center(
+            confirm.x, confirm.y, confirm.width, confirm.height,
+        ) ?: return
+        dualSendLifeVisibleAttempts++
+        logDiagnostic(
+            "[GAME_COMPLETE_SEND_LIFE] action=WAIT_BEFORE_TAP " +
+                "attempt=${dualSendLifeVisibleAttempts} " +
+                "logicalCenter=(${center.x},${center.y}) waitMs=${DualGameCompleteSendLifePolicy.BEFORE_TAP_DELAY_MS}",
+        )
+        listener.onStateChanged("WAITING_FOR_GAME_COMPLETE_SEND_LIFE_CONFIRM")
+        delayOrStop(DualGameCompleteSendLifePolicy.BEFORE_TAP_DELAY_MS)
+
+        // The position comes from the same matched normalized frame. Refuse a stale,
+        // stopped or differently oriented capture instead of tapping stale phone pixels.
+        val latest = LatestFrameProvider.diagnostics()
+        if (!latest.captureRunning || latest.frameAgeMs == null ||
+            latest.frameAgeMs > AutomationConfig.MAX_FRAME_AGE_MS ||
+            latest.sourceWidth != frame.sourceWidth || latest.sourceHeight != frame.sourceHeight
+        ) {
+            logDiagnostic("[GAME_COMPLETE_SEND_LIFE] action=SKIP reason=capture_changed_or_stale")
+            minimumFreshFrameGeneration = LatestFrameProvider.currentGeneration()
+            freshFrameGateWaitStartedAt = 0L
+            lastStage = null
+            return
+        }
+        val runGeneration = synchronized(lock) { botRunGeneration }
+        pendingPopupAction = "GAME_COMPLETE_SEND_LIFE_POPUP"
+        val action = synchronized(lock) {
+            if (!isCurrentWorkerRunLocked() || progressRecoveryGate.isActive() ||
+                PopupFreshFramePolicy.blocks(frame.generation, minimumFreshFrameGeneration)
+            ) {
+                ActionResult("GAME_COMPLETE_SEND_LIFE_POPUP", false, center.x, center.y, null)
+            } else {
+                actionExecutor.tapDetectedPhysicalCircle(
+                    actionName = "GAME_COMPLETE_SEND_LIFE_POPUP",
+                    detectorPoint = center,
+                    physicalRadius = 0.0,
+                    sourceWidth = frame.sourceWidth,
+                    sourceHeight = frame.sourceHeight,
+                    callbackTimeoutMs = DualGameCompleteSendLifePolicy.CALLBACK_TIMEOUT_MS,
+                    onGestureCompleted = { success, timedOut ->
+                        handleDualGameCompleteSendLifeCallback(runGeneration, success, timedOut)
+                    },
+                )
+            }
+        }
+        reportActionResult(action)
+        logDiagnostic(
+            "[GAME_COMPLETE_SEND_LIFE] action=TAP_CONFIRM " +
+                "logical=(${center.x},${center.y}) physical=${action.physical} " +
+                "dispatchAccepted=${action.accepted}",
+        )
+        if (!action.accepted) {
+            pendingPopupAction = "NONE"
+            minimumFreshFrameGeneration = LatestFrameProvider.currentGeneration()
+            freshFrameGateWaitStartedAt = 0L
+            lastStage = null
+            return
+        }
+        synchronized(lock) {
+            if (running && botRunGeneration == runGeneration &&
+                action.pendingGesture?.isCompleted == false
+            ) pendingDualSendLifeGesture = action.pendingGesture
+        }
+    }
+
+    private fun handleDualGameCompleteSendLifeCallback(
+        runGeneration: Long,
+        success: Boolean,
+        timedOut: Boolean,
+    ) = synchronized(lock) {
+        if (!running || botRunGeneration != runGeneration) return@synchronized
+        pendingDualSendLifeGesture = null
+        pendingPopupAction = "NONE"
+        val postCallbackBaseline = LatestFrameProvider.currentGeneration()
+        minimumFreshFrameGeneration = postCallbackBaseline
+        freshFrameGateWaitStartedAt = 0L
+        lastStage = null
+        logDiagnostic(
+            "[GAME_COMPLETE_SEND_LIFE] gestureSuccess=$success timedOut=$timedOut " +
+                "postCallbackBaseline=$postCallbackBaseline action=REDETECT_FRESH_FRAME",
+        )
+        // Do not modify group and do not record watchdog GAME_COMPLETE progress.
+    }
+
     private fun handlePreviousResults(
         result: DetectionResult,
         sourceWidth: Int,
