@@ -79,9 +79,13 @@ object IncidentManager {
                 directory.mkdirs()
                 File(directory, "incident_status.txt").writeText(info)
                 if (still != null) {
-                    try {
+                    runCatching {
                         File(directory, "watchdog_screenshot.png").writeBytes(
                             TelegramScreenshotEncoder.encodeNormalizedPng(still.mat),
+                        )
+                    }.onFailure { error ->
+                        OvernightLogArchive.log(
+                            "[INCIDENT] screenshot_failed type=${error.javaClass.simpleName}",
                         )
                     }
                 }
