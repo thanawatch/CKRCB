@@ -16,11 +16,13 @@ class DualGameCompleteSendLifePolicyTest {
 
     @Test fun oldGameCompleteAlwaysTriggersDualProbeBeforeLegacyHandler() {
         val now = 5_000L
-        assertTrue(DualGameCompleteSendLifePolicy.shouldProbe(now, now - 1L, true, true))
-        assertFalse(DualGameCompleteSendLifePolicy.shouldProbe(now, now - 1L, false, true))
-        assertFalse(DualGameCompleteSendLifePolicy.shouldProbe(now, now - 1L, false, false))
-        assertTrue(DualGameCompleteSendLifePolicy.shouldProbe(now, now - 1_500L, false, false))
-        assertTrue(DualGameCompleteSendLifePolicy.shouldProbe(now, 0L, false, false))
+        assertTrue(DualGameCompleteSendLifePolicy.shouldProbe(now, now - 1L, true, true, false))
+        assertFalse(DualGameCompleteSendLifePolicy.shouldProbe(now, now - 1L, false, true, false))
+        assertFalse(DualGameCompleteSendLifePolicy.shouldProbe(now, now - 1L, false, false, false))
+        assertTrue(DualGameCompleteSendLifePolicy.shouldProbe(now, now - 1_500L, false, false, false))
+        assertTrue(DualGameCompleteSendLifePolicy.shouldProbe(now, 0L, false, false, false))
+        assertFalse(DualGameCompleteSendLifePolicy.shouldProbe(now, 0L, false, false, true))
+        assertTrue(DualGameCompleteSendLifePolicy.shouldProbe(now, now - 1L, true, true, true))
     }
 
     @Test fun confirmCenterIsExactAndNoRandomJitterIsAdded() {
