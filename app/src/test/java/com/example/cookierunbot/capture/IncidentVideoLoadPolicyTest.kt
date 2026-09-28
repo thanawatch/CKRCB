@@ -20,6 +20,9 @@ class IncidentVideoLoadPolicyTest {
         assertTrue(IncidentVideoLoadPolicy.captureTooSlow(4.0, 0))
         assertFalse(IncidentVideoLoadPolicy.captureTooSlow(4.0, 2))
         assertTrue(IncidentVideoLoadPolicy.captureTooSlow(3.99, 2))
+        // New 0.5-FPS JPEG sampler asks for a minimum 2 capture FPS (4x headroom).
+        assertFalse(IncidentVideoLoadPolicy.captureTooSlow(2.0, 1))
+        assertTrue(IncidentVideoLoadPolicy.captureTooSlow(1.99, 1))
     }
 
     @Test fun degradedSamplingRequiresTenTicksRatherThanTwoCostlyImages() {
