@@ -106,6 +106,25 @@ class StateDetector(
     }
 
     /**
+     * Separate dual-popup probe on the SAME normalized 1280x720 frame. Both searches use
+     * independent full-frame rectangles, not GAME_COMPLETE's stage ROI or Quick Lives' old
+     * CONFIRM_SEND_LIFE ROI. Probe confirm first to avoid needless full-frame second match.
+     */
+    fun detectGameCompleteSendLifePopup(normalizedRgba: Mat): GameCompleteSendLifePopupMatch {
+        validateFrame(normalizedRgba)
+        val full = Rect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT)
+        val confirm = detectTemplate(
+            normalizedRgba, "CONFIRM_SEND_LIFE_1.png", full,
+            com.example.cookierunbot.automation.DualGameCompleteSendLifePolicy.MATCH_THRESHOLD,
+        )
+        val gameComplete = if (confirm.matched) detectTemplate(
+            normalizedRgba, "GAME_COMPLETE_1.png", full,
+            com.example.cookierunbot.automation.DualGameCompleteSendLifePolicy.MATCH_THRESHOLD,
+        ) else null
+        return GameCompleteSendLifePopupMatch(gameComplete, confirm)
+    }
+
+    /**
      * CLOSE_BUTTON-specific masked matching.
      * TM_SQDIFF_NORMED is lower-is-better, so a match passes only when score <= threshold.
      * Transparent PNG pixels are ignored through the alpha mask.
@@ -611,3 +630,11 @@ data class TemplateMatch(
 )
 
 internal fun templateScoreMatches(score: Double, threshold: Double): Boolean = score >= threshold
+
+/** The null game-complete match means the confirm button did not match (cheap early exit). */
+data class GameCompleteSendLifePopupMatch(
+    val gameComplete: TemplateMatch?,
+    val confirm: TemplateMatch,
+) {
+    val matched: Boolean get() = gameComplete?.matched == true && confirm.matched
+}
