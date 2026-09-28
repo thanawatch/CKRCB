@@ -154,7 +154,7 @@ object IncidentManager {
                 File(incident.directory, "recovery_result.txt").writeText(
                     "Incident ID: ${incident.id}\nRecovery finished (epoch millis): $at\n" +
                         "Outcome: ${OvernightLogPolicy.sanitized(outcome)}\n" +
-                        "Video closes 10 seconds after this, or at the 3-minute hard limit.\n",
+                        "Image sampling closes 10 seconds after this, or at the 3-minute hard limit.\n",
                 )
             }
         }
