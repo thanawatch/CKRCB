@@ -450,13 +450,14 @@ class BotController(
                         frame.mat,
                         GameProgressRecovery.TEMPLATE,
                         Rect(0, 0, frame.mat.cols(), frame.mat.rows()),
+                        GameProgressRecovery.MATCH_THRESHOLD,
                     )
                     val decision = GameProgressRecovery.decision(attempt, match.matched)
                     logDiagnostic(
                         "[GAME_PROGRESS_CONFIRM] attempt=$attempt scan=FULL_FRAME " +
                             "frameSequence=${frame.generation} frameSize=${frame.mat.cols()}x${frame.mat.rows()} " +
                             "matched=${match.matched} score=${format(match.score)} " +
-                            "decision=$decision",
+                            "threshold=${format(GameProgressRecovery.MATCH_THRESHOLD)} decision=$decision",
                     )
                     if (decision == ConfirmRecoveryDecision.STOP_NO_MATCH) break
                     val center = requireNotNull(GameProgressRecovery.centerIfMatched(match))
