@@ -57,9 +57,9 @@ object IncidentManager {
             if (active != null) return false
             Incident(generation, id, directory, at).also { active = it }
         }
-        // Trigger only queues work to a separate recorder. Never wait for an encoder here.
+        // Reserve the incident snapshot first. Optional video must not get a head start
+        // over diagnostic screenshot/logs on a saturated cloud phone.
         val triggerElapsedNanos = SystemClock.elapsedRealtimeNanos()
-        IncidentVideoRecorder.trigger(id, File(directory, "incident_video.mp4"), triggerElapsedNanos)
         val still = LatestFrameProvider.snapshot()
         val info = buildString {
             appendLine("Incident ID: $id")
@@ -97,6 +97,23 @@ object IncidentManager {
             still?.mat?.release()
         }
         OvernightLogArchive.log("[INCIDENT] created=$id")
+        // Last-priority work: only queue video after the essential archive work is queued.
+        // Never wait for a video sample or MP4 on the Watchdog/Recovery path.
+        runCatching {
+            IncidentVideoRecorder.trigger(id, File(directory, "incident_video.mp4"), triggerElapsedNanos)
+        }.onFailure { error ->
+            OvernightLogArchive.log("[INCIDENT_VIDEO] trigger_failed id=$id type=${error.javaClass.simpleName}")
+            // Optional video must never turn a valid Watchdog/Manual Test Incident into failure.
+            runCatching {
+                executor.execute {
+                    runCatching {
+                        File(directory, "incident_video_status.txt").writeText(
+                            "Video skipped: trigger failed (${error.javaClass.simpleName}). Essential Incident evidence is unaffected.\n",
+                        )
+                    }
+                }
+            }
+        }
         return true
     }
 

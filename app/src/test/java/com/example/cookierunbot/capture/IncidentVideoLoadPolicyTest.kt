@@ -13,9 +13,20 @@ class IncidentVideoLoadPolicyTest {
     }
 
     @Test fun captureRateMustLeaveHeadroomForGameplay() {
-        assertFalse(IncidentVideoLoadPolicy.captureTooSlow(0.0, 2))
+        assertTrue(IncidentVideoLoadPolicy.captureTooSlow(0.0, 2))
+        assertTrue(IncidentVideoLoadPolicy.captureTooSlow(Double.NaN, 2))
+        assertTrue(IncidentVideoLoadPolicy.captureTooSlow(Double.POSITIVE_INFINITY, 2))
+        assertTrue(IncidentVideoLoadPolicy.captureTooSlow(-1.0, 2))
+        assertTrue(IncidentVideoLoadPolicy.captureTooSlow(4.0, 0))
         assertFalse(IncidentVideoLoadPolicy.captureTooSlow(4.0, 2))
         assertTrue(IncidentVideoLoadPolicy.captureTooSlow(3.99, 2))
+    }
+
+    @Test fun expensiveSamplesAbortBeforeTenGenericDegradedTicks() {
+        assertFalse(IncidentVideoLoadPolicy.shouldStopSampling(9, 1))
+        assertTrue(IncidentVideoLoadPolicy.shouldStopSampling(10, 0))
+        assertTrue(IncidentVideoLoadPolicy.shouldStopSampling(2, 2))
+        assertFalse(IncidentVideoLoadPolicy.shouldStopSampling(0, 0))
     }
 
     @Test fun sampleWallAndThreadCpuBudgetsAreIndependent() {

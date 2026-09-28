@@ -1,4 +1,4 @@
-# RobotRun Overnight Diagnostics — source baseline v1.1.9 / versionCode 11
+# RobotRun Overnight Diagnostics — source baseline v1.1.10 / versionCode 12
 
 This feature is independent of gameplay automation. It never changes template/ROI/threshold, the
 15-minute watchdog timeout, the only two watchdog progress-reset events (GAME_COMPLETE and
@@ -51,7 +51,9 @@ Video is enabled by default, and can be disabled/enabled in Debug Log via
 **Video ON / Video OFF**. Screen Capture start only **arms** the recorder: there is
 **no recurring video sampler, pre-roll RAM ring, JPEG resizing/compression, or MP4
 encoding during normal gameplay**. The video work starts only when a real or explicit
-manual Watchdog Incident triggers, before the Recovery worker is requested.
+manual Watchdog Incident triggers, before the Recovery worker is requested. The essential
+screenshot is cloned and the Incident archive work is queued **before** optional video
+sampling can start. Recovery never waits for a video frame or MP4.
 No second MediaProjection/VirtualDisplay. It clones from the existing
 `LatestFrameProvider`, with target **640x360 / 2 FPS**, JPEG quality **40**, and
 H.264 bitrate **250 kbps** (no audio).
@@ -61,11 +63,14 @@ Recording stops at the earliest of:
 - **Recovery finished + 10 seconds**, regardless of outcome;
 - **3 minutes after the Watchdog/manual-test trigger**, with **no pre-roll**;
 - **Screen Capture / recorder stops**, preserving available frames;
-- **Resource pressure or per-Incident size cap**: stale/unavailable/latest repeated
-  frames are skipped; after 10 consecutive degraded ticks (~5s nominal), or when
-  frame save exceeds 20 MiB, stop. A sample taking over 250ms wall time OR 80ms
-  thread CPU is degraded. Sustained RobotRun process CPU above one single-core equivalent
-  in a two-second window also suppresses optional sampling. Capture below twice the target video rate (<4 FPS for 2 FPS video) also suppresses optional video.
+- **Resource pressure or per-Incident size cap**: stale/unavailable/repeated frames
+  are skipped. The recorder declines to start when capture is unhealthy or the measured
+  capture FPS is unknown/invalid or below 4 FPS. During sampling, 10 consecutive degraded
+  ticks (~5s nominal), **two consecutive expensive samples**, or 20 MiB saved JPEGs
+  stop video early. A sample taking over 250ms wall time OR 80ms thread CPU is expensive.
+  Sustained RobotRun process CPU above one single-core equivalent in a two-second window
+  also suppresses optional sampling. Skipping video does not skip the Incident text,
+  snapshot, Recovery action timeline or final outcome.
 
 Sampling and MP4 encoding each use separate lowest-priority worker threads; no
 video operation is synchronously awaited by the detector, tap, scheduler or Recovery.
@@ -75,7 +80,8 @@ A quick stop/restart cannot let an old sampler/stop task finalize a newer record
 Retain any already persisted JPEG files and `incident_video_status.txt`. In a normal completion, successful MP4 replaces the
 temporary JPEGs; if codec fails, keep JPEG fallback. Resource pressure is inferred from capture freshness, per-frame thread CPU/wall time
 and RobotRun's own process CPU, **not the Redfinger VM's total CPU**. Video cannot
-be guaranteed and even low-priority work may still contend for CPU; gameplay wins. A video is never guaranteed; gameplay and diagnostic text come first.
+be guaranteed and even low-priority work may still contend for CPU; gameplay wins.
+A video is never guaranteed; gameplay and diagnostic text come first.
 
 Manual Test produces the same status/screenshot/timeline/outcome package and requests
 video under the same optional/pressure rules. After the test Recovery completes and

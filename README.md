@@ -109,8 +109,10 @@ Video is armed but does **no recurring JPEG sampling during normal gameplay**. O
 manual Watchdog Incident only, the existing capture is sampled at target **2 FPS / 640×360**
 (JPEG quality 40; H.264 250 kbps); there is **no pre-roll**. It ends at the earliest of
 Recovery +10 seconds, **3 minutes from trigger**, capture stop or resource-pressure/20MiB
-frame limit. Workers run at lowest priority and can skip frames or abort MP4 when capture
-falls behind, capture drops below 4 FPS, or RobotRun itself sustains more than one CPU core. A finished MP4 is optional; preserved JPEGs and a status explain failures/skips.
+frame limit. The essential screenshot and Incident archive are queued before optional video.
+Workers run at lowest priority and can skip/abort video when capture is unhealthy,
+its FPS is unknown or below 4, sampling stays degraded for ten ticks, two adjacent samples
+exceed the 250ms wall/80ms thread-CPU budget, or RobotRun itself sustains more than one CPU core. A finished MP4 is optional; preserved JPEGs and a status explain failures/skips.
 Manual tests include a labeled status, PNG, action timeline and outcome, and are retrievable via
 /logs or local Save 10h ZIP. The manual test does not reset the real 15-minute timer. Use Debug Log's **Video ON / Video OFF** toggle (enabled by default in this
 source version). No second MediaProjection, no new game gestures, and no watchdog rule changes.
@@ -132,9 +134,9 @@ On an older installed build with an off-screen Close button, rotate back to land
 
 ## In-app updates (independent of Telegram)
 
-The main screen includes **Update App**, implemented in `UpdateActivity`. The source baseline is **v1.1.9 (versionCode 11)**; an installed APK can still be older until rebuilt and installed. The owner must configure a trusted anonymous HTTPS `update.json` URL in that screen for **online** update checks; a private GitHub Actions artifact is not a permanent anonymous download link, and no public feed is provided by committing this code. See [the example feed](docs/update-feed.example.json). This updater does not embed GitHub tokens, signing keys, or credentials.
+The main screen includes **Update App**, implemented in `UpdateActivity`. The source baseline is **v1.1.10 (versionCode 12)**; an installed APK can still be older until rebuilt and installed. The owner must configure a trusted anonymous HTTPS `update.json` URL in that screen for **online** update checks; a private GitHub Actions artifact is not a permanent anonymous download link, and no public feed is provided by committing this code. See [the example feed](docs/update-feed.example.json). This updater does not embed GitHub tokens, signing keys, or credentials.
 
-To publish a future build, increment both `versionCode` and `versionName` (e.g. `12` / `1.2.0`), build a **single signed APK with the same signing certificate as the currently installed application**, host that APK on HTTPS, calculate its SHA-256 (`Get-FileHash -Algorithm SHA256` on PowerShell or `sha256sum` on Linux), and publish the feed with its actual URL, package name, code, name, checksum, and notes. Only publish signed binaries and feed data to the distribution host; the source repository may remain private. Do not publish the sample placeholder checksum as a real feed.
+To publish a future build, increment both `versionCode` and `versionName` (e.g. `13` / `1.1.11`), build a **single signed APK with the same signing certificate as the currently installed application**, host that APK on HTTPS, calculate its SHA-256 (`Get-FileHash -Algorithm SHA256` on PowerShell or `sha256sum` on Linux), and publish the feed with its actual URL, package name, code, name, checksum, and notes. Only publish signed binaries and feed data to the distribution host; the source repository may remain private. Do not publish the sample placeholder checksum as a real feed.
 
 Alternatively, without any hosted feed, tap **Choose downloaded APK (offline)** and select a local APK through Android's document picker. It still must be a strictly newer RobotRun APK signed with the installed signing certificate; no network checksum is available for this deliberate local-file path.
 

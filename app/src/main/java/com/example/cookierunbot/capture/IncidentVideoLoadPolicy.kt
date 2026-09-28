@@ -15,11 +15,15 @@ internal object IncidentVideoLoadPolicy {
         wallDeltaMs >= CPU_WINDOW_MS && processCpuDeltaMs >= 0L &&
             processCpuDeltaMs > wallDeltaMs
 
-    /** If capture itself cannot sustain twice the requested video FPS, optional video yields. */
+    /** Unknown/invalid capture rate is not proof of spare capacity; optional video yields. */
     fun captureTooSlow(captureFps: Double, targetVideoFps: Int): Boolean =
-        captureFps > 0.0 && targetVideoFps > 0 && captureFps < targetVideoFps * 2.0
+        targetVideoFps <= 0 || !captureFps.isFinite() || captureFps < targetVideoFps * 2.0
 
     fun sampleTooExpensive(wallMs: Long, threadCpuNanos: Long): Boolean =
         wallMs > MAX_SAMPLE_WALL_MS ||
             (threadCpuNanos >= 0L && threadCpuNanos > MAX_SAMPLE_THREAD_CPU_NANOS)
+
+    /** Two costly samples abort sooner than ten missing/repeated samples. */
+    fun shouldStopSampling(degradedTicks: Int, expensiveSamplesInARow: Int): Boolean =
+        degradedTicks >= 10 || expensiveSamplesInARow >= 2
 }

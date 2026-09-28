@@ -22,8 +22,8 @@ android {
         applicationId = "com.example.cookierunbot"
         minSdk = 26
         targetSdk = 36
-        versionCode = 11
-        versionName = "1.1.9"
+        versionCode = 12
+        versionName = "1.1.10"
     }
 
     signingConfigs {

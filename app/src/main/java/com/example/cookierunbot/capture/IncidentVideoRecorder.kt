@@ -39,7 +39,6 @@ object IncidentVideoRecorder {
     private const val MAX_EVENT_BYTES = 20L * 1024L * 1024L
     private const val MAX_FRAME_AGE_MS = 1_500.0
     private const val ENCODER_YIELD_MS = 50L
-    private const val MAX_CONSECUTIVE_DEGRADED = 10
     private const val MIME = MediaFormat.MIMETYPE_VIDEO_AVC
 
     private data class Frame(val atNanos: Long, val jpeg: ByteArray)
@@ -56,6 +55,7 @@ object IncidentVideoRecorder {
         var consecutiveDegraded: Int = 0,
         var skippedSamples: Int = 0,
         var expensiveSamples: Int = 0,
+        var consecutiveExpensive: Int = 0,
         val cpuWindow: CpuWindow = CpuWindow(),
     )
 
@@ -216,6 +216,7 @@ object IncidentVideoRecorder {
             ) {
                 recording.skippedSamples++
                 recording.consecutiveDegraded++
+                recording.consecutiveExpensive = 0
             } else {
                 val startedMs = SystemClock.elapsedRealtime()
                 val startedCpuNanos = Debug.threadCpuTimeNanos()
@@ -223,6 +224,7 @@ object IncidentVideoRecorder {
                 if (snapshot == null) {
                     recording.skippedSamples++
                     recording.consecutiveDegraded++
+                    recording.consecutiveExpensive = 0
                 } else {
                     var produced = false
                     try {
@@ -257,13 +259,17 @@ object IncidentVideoRecorder {
                     } else -1L
                     val expensive = IncidentVideoLoadPolicy.sampleTooExpensive(elapsedMs, cpuUsed)
                     if (expensive) recording.expensiveSamples++
+                    recording.consecutiveExpensive = if (expensive) recording.consecutiveExpensive + 1 else 0
                     if (!produced) recording.skippedSamples++
                     recording.consecutiveDegraded = if (!produced || expensive) {
                         recording.consecutiveDegraded + 1
                     } else 0
                 }
             }
-            if (recording.truncated || recording.consecutiveDegraded >= MAX_CONSECUTIVE_DEGRADED) {
+            if (recording.truncated || IncidentVideoLoadPolicy.shouldStopSampling(
+                    recording.consecutiveDegraded, recording.consecutiveExpensive,
+                )
+            ) {
                 finalizeRecording(recording, if (recording.truncated) "size_cap" else "resource_pressure")
                 active = null
                 disarmSamplerIfIdle(session)
@@ -293,6 +299,15 @@ object IncidentVideoRecorder {
         }
         if (active != null) {
             writeStatus(trigger.output, "Recording skipped: previous incident is still active.")
+            return
+        }
+        val health = LatestFrameProvider.diagnostics()
+        if (!health.captureRunning || health.frameAgeMs == null ||
+            health.frameAgeMs > MAX_FRAME_AGE_MS ||
+            IncidentVideoLoadPolicy.captureTooSlow(health.captureFps, FPS)
+        ) {
+            writeStatus(trigger.output, "Video skipped: capture unhealthy or FPS unknown at trigger.")
+            OvernightLogArchive.log("[INCIDENT_VIDEO] skipped id=${trigger.id} reason=capture_unhealthy_at_trigger")
             return
         }
         val recording = Recording(
