@@ -1067,6 +1067,7 @@ class BotController(
             if (DualGameCompleteSendLifePolicy.shouldProbe(
                     dualProbeNow, lastDualSendLifeProbeAt, oldGameCompleteMatched,
                     isFastStartPriorityWindow(detectionStartedAtNanos),
+                    result?.state == BotStage.GAME_START || result?.state == BotStage.GAME_RELAY,
                 )
             ) {
                 lastDualSendLifeProbeAt = dualProbeNow
