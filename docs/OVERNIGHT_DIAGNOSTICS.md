@@ -97,3 +97,26 @@ locally under Downloads/RobotRun (Android 10+; legacy app Documents path otherwi
 When the entire Android process is stopped Telegram cannot answer until RobotRun is opened again.
 Already written private log/incident files survive an ordinary process restart; app uninstall or
 Clear Data removes private files. A source commit alone does not update an installed APK.
+
+## Independent two-template GAME_COMPLETE / CONFIRM_SEND_LIFE popup
+
+The separate `GAME_COMPLETE_SEND_LIFE_POPUP` auxiliary probe looks for
+`CONFIRM_SEND_LIFE_1.png` AND `GAME_COMPLETE_1.png` on the **same normalized
+1280×720 frame**, with each using its own **full-frame ROI** and threshold **0.80**.
+To limit gameplay overhead it first probes CONFIRM_SEND_LIFE; only when that matches
+does it scan GAME_COMPLETE. The probe runs before routing a legacy GAME_COMPLETE
+match, and is otherwise throttled to every 1.5 seconds outside Fast Start's priority
+window. Thus the ordinary GAME_COMPLETE action/watchdog progress is never invoked on
+a frame where the auxiliary pair matches. Neither the original stage
+`GAME_COMPLETE` ROI/threshold/transitions nor Quick Lives' existing
+`CONFIRM_SEND_LIFE_1.png` ROI is changed.
+
+When both match, wait **1,600ms**, verify the capture is still fresh and display
+geometry unchanged, then tap the exact logical center of the matched confirm
+rectangle through the current CoordinateMapper (zero jitter). A callback timeout
+is 3 seconds. Do not dispatch another detector action while that callback is
+pending; on completion, require a newer frame to redetect without changing the
+current detection group or recording GAME_COMPLETE watchdog progress. Limit the
+same continuously visible dual popup to three attempts; rearm after a probe
+actually sees the pair disappear. If only one template matches, the existing
+stage/detector path continues unmodified. Logs use `[GAME_COMPLETE_SEND_LIFE]`.
