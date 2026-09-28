@@ -1060,12 +1060,12 @@ class BotController(
                 lastDetectionAt = now
                 Log.i(CookieRunBotApplication.TAG, "[RECOVERY] Full stage scan group=$group")
             }
-            // Independent full-frame AND-probe BEFORE an old GAME_COMPLETE result is recorded.
-            // Time-gated auxiliary probe preserves fast GAME_START / GAME_RELAY detection.
+            // PRE_GAME / POST_GAME only: auxiliary full-frame AND-probe before a legacy
+            // GAME_COMPLETE result is recorded. Never scan the auxiliary pair in IN_GAME.
             val dualProbeNow = SystemClock.elapsedRealtime()
             val oldGameCompleteMatched = result?.state == BotStage.GAME_COMPLETE
             if (DualGameCompleteSendLifePolicy.shouldProbe(
-                    dualProbeNow, lastDualSendLifeProbeAt, oldGameCompleteMatched,
+                    group, dualProbeNow, lastDualSendLifeProbeAt, oldGameCompleteMatched,
                     isFastStartPriorityWindow(detectionStartedAtNanos),
                     result?.state == BotStage.GAME_START || result?.state == BotStage.GAME_RELAY,
                 )
