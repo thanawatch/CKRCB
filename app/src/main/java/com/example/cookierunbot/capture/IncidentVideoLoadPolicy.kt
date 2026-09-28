@@ -1,7 +1,7 @@
 package com.example.cookierunbot.capture
 
 /**
- * Conservative optional-video budgets. The process CPU window measures RobotRun's own
+ * Conservative optional-image-sampling budgets. The process CPU window measures RobotRun's own
  * CPU time, not the cloud host/Redfinger total CPU load. Capture freshness and wall-clock
  * sample latency remain independent signals; if uncertain, preserving gameplay wins.
  */
@@ -15,7 +15,7 @@ internal object IncidentVideoLoadPolicy {
         wallDeltaMs >= CPU_WINDOW_MS && processCpuDeltaMs >= 0L &&
             processCpuDeltaMs > wallDeltaMs
 
-    /** Unknown/invalid capture rate is not proof of spare capacity; optional video yields. */
+    /** Unknown/invalid capture rate is not proof of spare capacity; optional image sampling yields. */
     fun captureTooSlow(captureFps: Double, targetVideoFps: Int): Boolean =
         targetVideoFps <= 0 || !captureFps.isFinite() || captureFps < targetVideoFps * 2.0
 
