@@ -93,6 +93,22 @@ A new Start Bot creates a new statistics session. Result OCR/classification runs
 
 Captured images may contain personal information and can be visible to gallery/file applications. Do not share them or logs without inspection.
 
+## Separate full-frame GAME_COMPLETE + send-life popup
+
+RobotRun has an independent auxiliary popup path that requires BOTH
+`GAME_COMPLETE_1.png` and `CONFIRM_SEND_LIFE_1.png` to match on the same normalized
+1280×720 image, each against a separate full-frame ROI at 0.80. The confirm
+template is checked first to avoid needless second full-frame work. On a double
+match, wait **1.6 seconds** then tap the **exact center** of the matched confirm
+button through the existing logical-to-physical mapper. Require a fresh frame
+after the gesture callback and cap repeated attempts on the same visible popup
+at three. A double match is handled BEFORE the old GAME_COMPLETE route, without
+recording GAME_COMPLETE Watchdog progress. On a single match, the existing stage
+path remains unchanged. Ordinary GAME_COMPLETE ROI/threshold/transitions and
+Quick Lives' separate pre-existing CONFIRM_SEND_LIFE ROI remain untouched.
+The auxiliary probe is time-gated and yields to immediate GAME_START/GAME_RELAY
+actions. See [docs/OVERNIGHT_DIAGNOSTICS.md](docs/OVERNIGHT_DIAGNOSTICS.md).
+
 ## Overnight Diagnostics and event-triggered incident screenshot sequence
 
 The in-app Debug Log shows its latest 500 RAM lines; a private rolling app-specific text
