@@ -14,15 +14,21 @@ internal object DualGameCompleteSendLifePolicy {
     fun matched(gameCompleteMatched: Boolean, confirmMatched: Boolean): Boolean =
         gameCompleteMatched && confirmMatched
 
-    /** An old-ROI GAME_COMPLETE result must always be checked for the special pair first. */
+    /** Auxiliary popup is eligible only where ordinary popup handlers run. */
+    fun eligibleGroup(group: DetectionGroup): Boolean =
+        group == DetectionGroup.PRE_GAME || group == DetectionGroup.POST_GAME
+
+    /** Within eligible groups, check the special pair before a legacy GAME_COMPLETE match. */
     fun shouldProbe(
+        group: DetectionGroup,
         nowMs: Long,
         previousProbeMs: Long,
         oldGameCompleteMatched: Boolean,
         fastStartPriority: Boolean,
         immediateGameplayActionMatched: Boolean,
-    ): Boolean = oldGameCompleteMatched || (!fastStartPriority && !immediateGameplayActionMatched &&
-        (previousProbeMs <= 0L || nowMs - previousProbeMs >= PROBE_INTERVAL_MS))
+    ): Boolean = eligibleGroup(group) && (oldGameCompleteMatched ||
+        (!fastStartPriority && !immediateGameplayActionMatched &&
+            (previousProbeMs <= 0L || nowMs - previousProbeMs >= PROBE_INTERVAL_MS)))
 
     fun center(x: Int, y: Int, width: Int, height: Int): LogicalPoint? =
         if (x < 0 || y < 0 || width <= 0 || height <= 0) null
