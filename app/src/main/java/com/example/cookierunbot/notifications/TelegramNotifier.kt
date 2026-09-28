@@ -330,8 +330,8 @@ class TelegramNotifier(context: Context) {
                     }
                     if (target.matches(TelegramConfigStore.load(appContext))) {
                         sendCommandReply(
-                            if (result.success) "📥 The 24-hour diagnostic ZIP was sent above."
-                            else "📥 Log upload failed. Use RobotRun → Debug Log → Save 24h ZIP.",
+                            if (result.success) "📥 The 10-hour diagnostic ZIP was sent above."
+                            else "📥 Log upload failed. Use RobotRun → Debug Log → Save 10h ZIP.",
                             target,
                         )
                     }
@@ -340,7 +340,7 @@ class TelegramNotifier(context: Context) {
                     if (target.matches(TelegramConfigStore.load(appContext))) {
                         sendCommandReply(
                             "📥 Log export is unavailable or exceeds Telegram's 49 MB limit. " +
-                                "Use RobotRun → Debug Log → Save 24h ZIP.", target,
+                                "Use RobotRun → Debug Log → Save 10h ZIP.", target,
                         )
                     }
                 } finally {

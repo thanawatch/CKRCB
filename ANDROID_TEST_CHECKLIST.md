@@ -43,18 +43,18 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 - [ ] Confirm a state-changing action waits for a generation established after callback completion; a frame captured during the gesture must not satisfy the gate.
 - [ ] Verify the Legacy fixed-device exceptions separately from logical mapping: three post-relay absolute points on the calibrated 2400×1080 path, TIME_DEAL at `(2000,70)`, and PARTY_RUN_SEASON_REWARDS at `(1260,980)`. In Redfinger, verify optional calibrated post-relay logical `(1198,35)`, `(647,425)`, `(637,389)` map through current `contentRect`, and uncalibrated TIME_DEAL/PARTY_RUN_SEASON_REWARDS wait for manual popup clearance without guessed taps.
 
-## Overnight Diagnostics: 24h archive / 30-minute Incident / video / Telegram
+## Overnight Diagnostics: 10h archive / 30-minute Incident / video / Telegram
 
 - [ ] Run JVM tests: OvernightLogPolicy, IncidentVideoTiming, TelegramLogDelivery, TelegramDashboard; verify Gradle testDebugUnitTest, lint and assembleDebug before claiming APK success.
 - [ ] Long run on Redfinger, collecting app-owned Logcat: compare timeline to private rolling hourly text archive. Include Bot Start/Stop, State/Detection/Action, Fast Start, Friend Life, Telegram, Power/Capture/Detect Health and errors. Confirm 500-line Debug Log's Clear button does not clear archived data.
-- [ ] Confirm 24-hour exact timestamp window in exported ZIP across Process restart, hourly UTC rotation, age deletion, 200 MiB cap with explicit `[ARCHIVE_LOSS]` after pruning/queue overflow; no bot token/URL or password appears in exported text. No screenshot frame stream accidentally stored as text.
+- [ ] Confirm 10-hour exact timestamp window in exported ZIP across Process restart, hourly UTC rotation, age deletion, 200 MiB cap with explicit `[ARCHIVE_LOSS]` after pruning/queue overflow; no bot token/URL or password appears in exported text. No screenshot frame stream accidentally stored as text.
 - [ ] Simulate an overdue **real** watchdog incident. Verify one Incident per episode, no duplication at 30s check, 30 minutes of pre-trigger archive, screenshot, Bot/Capture status, ordered `[GAME_PROGRESS_*]` timeline showing template/score/attempt, logical and mapped physical point, dispatch accepted, completed callback and fresh-frame result, then outcome. Manual watchdog test must not be mislabeled as real overdue.
 - [ ] Confirm 15m watchdog timer, its only original two reset events, retry behavior, recovery gesture counts/template/ROI/threshold/state routing, Fast Start and detection worker latency are unchanged by logging/recorder threads.
 - [ ] Capture service running: wait 30s for pre-roll, trigger Incident and view MP4 playback with actual Redfinger Android encoder. Verify 960x540 target 3 FPS, color correctness, actual 30s-before image content, no second MediaProjection, and no added VirtualDisplay on rotation.
 - [ ] Verify video end time separately: successful Recovery +10s, failed/cancelled Recovery +10s, hard 2min30s after original trigger (3min total including pre-roll), early capture-stop. If recovery finishes before 30s pre-roll was available, include only available footage. Repeat rotation and app background during recording.
 - [ ] Force encoder unsupported/error and abrupt Process kill. Verify incident_video_status.txt and already written JPEG fallback are accessible in /logs after reopening RobotRun; no infinite recording/file growth/Java or native Mat/codec leak.
-- [ ] Authorized /logs and persistent 📥 Download Logs sends a ZIP as original sendDocument off watchdog executor. Verify exactly 24h text, up to five latest Incidents, video budget 35 MiB, manifest omissions and 49,000,000-byte cap; reject unauthorized chat/config change midway, second simultaneous /logs, and oversize ZIP. Confirm no auto log send and normal Watchdog Telegram alerts continue.
-- [ ] Debug Log → Save 24h ZIP exports locally even when Telegram transfer cap is exceeded. Confirm ZIP plays actual MP4, contains readable timeline/PNG, and temporary export files are cleaned.
+- [ ] Authorized /logs and persistent 📥 Download Logs sends a ZIP as original sendDocument off watchdog executor. Verify exactly 10h text, up to five latest Incidents, video budget 35 MiB, manifest omissions and 49,000,000-byte cap; reject unauthorized chat/config change midway, second simultaneous /logs, and oversize ZIP. Confirm no auto log send and normal Watchdog Telegram alerts continue.
+- [ ] Debug Log → Save 10h ZIP exports locally even when Telegram transfer cap is exceeded. Confirm ZIP plays actual MP4, contains readable timeline/PNG, and temporary export files are cleaned.
 - [ ] Real Android process killed → no Telegram response until RobotRun is relaunched, but previously flushed private archive and Incident data survives; uninstall or Clear Data is destructive. Check disk pressure 72h separate Incident retention and 200 MiB Incident cap.
 
 ## Calibration overlay and rotation recovery
@@ -104,7 +104,7 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 
 ## In-app updater (independent of Telegram)
 
-- [ ] On the main screen, open **Update App** with Telegram disabled. Confirm v1.1.5/code 7 is displayed and no check occurs before user action.
+- [ ] On the main screen, open **Update App** with Telegram disabled. Confirm v1.1.6/code 8 is displayed and no check occurs before user action.
 - [ ] Configure a trusted HTTPS feed containing a genuinely signed newer universal APK, correct package/code/name and 64-hex SHA-256. Verify newer-version comparison and up-to-date cases.
 - [ ] With no feed configured, select a downloaded APK using Android's document picker. Verify that only a newer RobotRun APK signed with the existing certificate is accepted, and a wrong package/old APK/oversized file is rejected.
 - [ ] Reject HTTP, malformed URL, embedded credentials, non-HTTPS redirects, invalid/oversized feed, zero-length/oversized APK, wrong checksum, wrong package/version, different signing certificate, and older/equal APK.

@@ -23,7 +23,7 @@ internal fun writeTelegramLogMultipart(
     }
     if (!stillAuthorized()) throw IOException("Authorized Telegram destination changed.")
     field("chat_id", chatId)
-    field("caption", "RobotRun diagnostic archive (last 24 hours, up to five incidents). Keep private.")
+    field("caption", "RobotRun diagnostic archive (last 10 hours, up to five incidents). Keep private.")
     if (replyMarkup != null) field("reply_markup", replyMarkup)
     write("--$boundary\r\nContent-Disposition: form-data; name=\"document\"; filename=\"${archive.name}\"\r\n")
     write("Content-Type: application/zip\r\n\r\n")

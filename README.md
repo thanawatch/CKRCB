@@ -96,8 +96,8 @@ Captured images may contain personal information and can be visible to gallery/f
 ## Overnight Diagnostics and 30-second pre-incident video
 
 The in-app Debug Log still shows its latest 500 RAM lines; a separate owned-app rolling text
-archive now records up to the previous **24 hours** (nominal 200 MiB size cap, loss markers) in
-private files across ordinary Process restarts. The **Save 24h ZIP** button exports a local ZIP.
+archive now records up to the previous **10 hours** (nominal 200 MiB size cap, loss markers) in
+private files across ordinary Process restarts. The **Save 10h ZIP** button exports a local ZIP.
 It does not include system/other-app Logcat or an unlimited per-frame screenshot archive.
 
 When the genuine 15-minute Watchdog reserves a Recovery, one Incident freezes the previous
@@ -113,11 +113,11 @@ Watchdog alert arrives. If encoding fails or Process ends, saved JPEG frames and
 remain as fallback. Use Debug Log's **Video ON / Video OFF** toggle (enabled by default in this
 source version). No second MediaProjection, no new game gestures, and no watchdog rule changes.
 
-Use authorized Telegram **/logs** or **📥 Download Logs** to request the 24h diagnostic ZIP
+Use authorized Telegram **/logs** or **📥 Download Logs** to request the 10h diagnostic ZIP
 (`sendDocument`, separate worker, 49 MB public Bot API transfer limit). It can include the
 five most recent incidents and MP4/JPEG fallback within a 35 MiB video budget; the manifest
 lists omissions. It never auto-uploads logs. If Telegram file size/network prevents delivery,
-use **Debug Log → Save 24h ZIP** on-device. If the entire Process was killed, launch RobotRun
+use **Debug Log → Save 10h ZIP** on-device. If the entire Process was killed, launch RobotRun
 again before requesting /logs; already written private logs are recoverable unless app data
 was cleared/uninstalled. See [docs/OVERNIGHT_DIAGNOSTICS.md](docs/OVERNIGHT_DIAGNOSTICS.md).
 MediaCodec MP4 quality and performance on Redfinger require an actual APK/device test.
@@ -130,9 +130,9 @@ On an older installed build with an off-screen Close button, rotate back to land
 
 ## In-app updates (independent of Telegram)
 
-The main screen includes **Update App**, implemented in `UpdateActivity`. The source baseline is **v1.1.5 (versionCode 7)**; an installed APK can still be older until rebuilt and installed. The owner must configure a trusted anonymous HTTPS `update.json` URL in that screen for **online** update checks; a private GitHub Actions artifact is not a permanent anonymous download link, and no public feed is provided by committing this code. See [the example feed](docs/update-feed.example.json). This updater does not embed GitHub tokens, signing keys, or credentials.
+The main screen includes **Update App**, implemented in `UpdateActivity`. The source baseline is **v1.1.6 (versionCode 8)**; an installed APK can still be older until rebuilt and installed. The owner must configure a trusted anonymous HTTPS `update.json` URL in that screen for **online** update checks; a private GitHub Actions artifact is not a permanent anonymous download link, and no public feed is provided by committing this code. See [the example feed](docs/update-feed.example.json). This updater does not embed GitHub tokens, signing keys, or credentials.
 
-To publish a future build, increment both `versionCode` and `versionName` (e.g. `8` / `1.1.6`), build a **single signed APK with the same signing certificate as the currently installed application**, host that APK on HTTPS, calculate its SHA-256 (`Get-FileHash -Algorithm SHA256` on PowerShell or `sha256sum` on Linux), and publish the feed with its actual URL, package name, code, name, checksum, and notes. Only publish signed binaries and feed data to the distribution host; the source repository may remain private. Do not publish the sample placeholder checksum as a real feed.
+To publish a future build, increment both `versionCode` and `versionName` (e.g. `9` / `1.1.7`), build a **single signed APK with the same signing certificate as the currently installed application**, host that APK on HTTPS, calculate its SHA-256 (`Get-FileHash -Algorithm SHA256` on PowerShell or `sha256sum` on Linux), and publish the feed with its actual URL, package name, code, name, checksum, and notes. Only publish signed binaries and feed data to the distribution host; the source repository may remain private. Do not publish the sample placeholder checksum as a real feed.
 
 Alternatively, without any hosted feed, tap **Choose downloaded APK (offline)** and select a local APK through Android's document picker. It still must be a strictly newer RobotRun APK signed with the installed signing certificate; no network checksum is available for this deliberate local-file path.
 

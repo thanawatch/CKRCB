@@ -6,8 +6,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OvernightLogPolicyTest {
-    @Test fun rollingWindowKeepsOnlyPastDay() {
+    @Test fun rollingWindowKeepsOnlyLastTenHours() {
         val now = 200_000_000L
+        assertEquals(10L * 60L * 60L * 1000L, OvernightLogPolicy.RETENTION_MS)
         assertTrue(OvernightLogPolicy.shouldKeep(now - OvernightLogPolicy.RETENTION_MS, now))
         assertFalse(OvernightLogPolicy.shouldKeep(now - OvernightLogPolicy.RETENTION_MS - 1L, now))
         assertFalse(OvernightLogPolicy.shouldKeep(now + 1L, now))

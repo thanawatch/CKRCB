@@ -1,4 +1,4 @@
-# RobotRun Overnight Diagnostics — source baseline v1.1.5 / versionCode 7
+# RobotRun Overnight Diagnostics — source baseline v1.1.6 / versionCode 8
 
 This feature is independent of gameplay automation. It never changes template/ROI/threshold, the
 15-minute watchdog timeout, the only two watchdog progress-reset events (GAME_COMPLETE and
@@ -10,17 +10,17 @@ successful FRIEND_SEND_LIFE_TAP), Accessibility gestures, Friend Life, or detect
   text archive along with \`DebugLogStore\` and \`PersistentTrace\` events. The old on-screen
   Debug Log is still a **500-line RAM preview**; its Clear button only clears that preview.
 - \`files/diagnostics/rolling/log_<UTC epoch hour>.txt\` rotates hourly, indexes each line by
-  wall-clock epoch milliseconds, and exports only the last **24 hours**. Whole expired hourly
+  wall-clock epoch milliseconds, and exports only the last **10 hours**. Whole expired hourly
   files are pruned hourly; the oldest file may contain an extra partial hour on disk until
   its next rotation. Archive has an additional 200 MiB size safety bound. A bounded 8192-event
   queue avoids disk I/O on detector/capture threads; \`[ARCHIVE_LOSS]\` identifies dropped or
-  size-pruned records. A 24-hour timestamp window cannot promise full coverage after a size cap,
+  size-pruned records. A 10-hour timestamp window cannot promise full coverage after a size cap,
   storage/permission error, power loss or abrupt process termination.
 - Existing 5s \`[POWER]\`, \`[CAPTURE_HEALTH]\` and \`[DETECT_HEALTH]\` diagnostics continue
   while capture service is alive. A previous process can be identified by fresh
   \`[ARCHIVE] PROCESS_START\` markers. A missing clean shutdown alone is not proof of a crash.
 - Private Incident directories in \`files/diagnostics/incidents/\` have separate 72-hour retention
-  and 200 MiB size cap. This protects overnight evidence from routine 24-hour text rotation
+  and 200 MiB size cap. This protects overnight evidence from routine 10-hour text rotation
   subject to the total incident cap. A user-requested ZIP is exported to private cache and
   deleted after delivery/local copy.
 
@@ -67,11 +67,11 @@ on a real Android/Redfinger device.
 Send **/logs** or press **📥 Download Logs** in the persistent Telegram Dashboard. Only the
 configured authorized token + Chat ID may request or receive the ZIP. One export/upload at a time
 on \`telegram-log-delivery\` worker; successful file content is sent as original \`sendDocument\`.
-No automatic log upload. The ZIP includes \`robotrun_24h.log\`, an export manifest and at most the
+No automatic log upload. The ZIP includes \`robotrun_10h.log\`, an export manifest and at most the
 five most recent retained Incident folders. Incident videos share a 35 MiB uncompressed video
 budget; the manifest notes omissions. A finished MP4 is preferred; if absent, original JPEG
 frames are included within that budget. Telegram's public Bot API caps this upload at
-49,000,000 bytes. On failure or oversize, open RobotRun **Debug Log → Save 24h ZIP** to export
+49,000,000 bytes. On failure or oversize, open RobotRun **Debug Log → Save 10h ZIP** to export
 locally under Downloads/RobotRun (Android 10+; legacy app Documents path otherwise).
 
 When the entire Android process is stopped Telegram cannot answer until RobotRun is opened again.

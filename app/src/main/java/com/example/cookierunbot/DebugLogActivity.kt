@@ -75,7 +75,7 @@ class DebugLogActivity : ComponentActivity() {
         buttons.addView(actionButton("Copy Log", ::copyLog))
         buttons.addView(actionButton("Clear Log", ::clearLog))
         buttons.addView(actionButton("Save Log", ::saveLog))
-        buttons.addView(actionButton("Save 24h ZIP", ::save24Hours))
+        buttons.addView(actionButton("Save 10h ZIP", ::save10Hours))
         val videoButton = actionButton(if (IncidentVideoRecorder.isEnabled(this)) "Video ON" else "Video OFF") {}
         videoButton.setOnClickListener {
             val newValue = !IncidentVideoRecorder.isEnabled(this)
@@ -162,7 +162,7 @@ class DebugLogActivity : ComponentActivity() {
         }
     }
 
-    private fun save24Hours() {
+    private fun save10Hours() {
         Thread({
             var archive: File? = null
             try {
@@ -188,7 +188,7 @@ class DebugLogActivity : ComponentActivity() {
                 runOnUiThread { Toast.makeText(this, "Saved: $saved", Toast.LENGTH_LONG).show() }
             } catch (error: Exception) {
                 runOnUiThread {
-                    Toast.makeText(this, "24h export failed: ${error.javaClass.simpleName}",
+                    Toast.makeText(this, "10h export failed: ${error.javaClass.simpleName}",
                         Toast.LENGTH_LONG).show()
                 }
             } finally {

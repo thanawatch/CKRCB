@@ -2,7 +2,7 @@ package com.example.cookierunbot.diagnostics
 
 /** Pure policies: use wall-clock UTC hours for archive rotation and millisecond timestamps for windows. */
 internal object OvernightLogPolicy {
-    const val RETENTION_MS = 24L * 60L * 60L * 1000L
+    const val RETENTION_MS = 10L * 60L * 60L * 1000L
     const val MAX_ARCHIVE_BYTES = 200L * 1024L * 1024L
     const val MAX_INCIDENT_BYTES = 200L * 1024L * 1024L
     const val INCIDENT_RETENTION_MS = 72L * 60L * 60L * 1000L

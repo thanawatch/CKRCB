@@ -22,13 +22,13 @@ object LogPackageBuilder {
             "RobotRun-Logs-${SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date(now))}.zip",
         )
         try {
-            val log = File(staging, "robotrun_24h.log")
+            val log = File(staging, "robotrun_10h.log")
             OvernightLogArchive.copyWindow(now - OvernightLogPolicy.RETENTION_MS, now, log)
             val incidents = IncidentManager.recentIncidents(context).take(MAX_INCIDENTS)
             var videoBytes = 0L
             val omitted = mutableListOf<String>()
             ZipOutputStream(output.outputStream().buffered()).use { zip ->
-                add(zip, log, "robotrun_24h.log")
+                add(zip, log, "robotrun_10h.log")
                 for (incident in incidents) {
                     val prefix = "incidents/${incident.name}/"
                     val files = incident.listFiles()?.filter { it.isFile }?.sortedBy { it.name }
@@ -64,7 +64,7 @@ object LogPackageBuilder {
                 val manifest = buildString {
                     appendLine("RobotRun overnight diagnostic bundle")
                     appendLine("Window: epochMs ${now - OvernightLogPolicy.RETENTION_MS} .. $now")
-                    appendLine("Archive: up to 24 hours or 200 MiB (whichever is reached first)")
+                    appendLine("Archive: up to 10 hours or 200 MiB (whichever is reached first)")
                     appendLine("Incident retention: 72 hours, separate 200 MiB cap; newest $MAX_INCIDENTS included")
                     appendLine("Video: 30s pre-roll + recovery + 10s; at most 3min / incident")
                     appendLine("Screenshot/video may contain visible app/game information. Keep this ZIP private.")
@@ -85,8 +85,8 @@ object LogPackageBuilder {
             staging.deleteRecursively()
             throw error
         } finally {
-            // ZIP can be kept until uploaded; the uncompressed 24h text is no longer needed.
-            File(staging, "robotrun_24h.log").delete()
+            // ZIP can be kept until uploaded; the uncompressed 10h text is no longer needed.
+            File(staging, "robotrun_10h.log").delete()
         }
     }
 

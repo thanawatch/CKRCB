@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Bounded background-only text archive. Do not run disk I/O or redact strings on capture/detector
- * callers. Each line is epoch-millis-prefixed so exports can select an exact rolling 24h window.
+ * callers. Each line is epoch-millis-prefixed so exports can select an exact rolling 10h window.
  * Size caps are secondary safety bounds; if exceeded the archive reports a loss of completeness.
  */
 object OvernightLogArchive {
