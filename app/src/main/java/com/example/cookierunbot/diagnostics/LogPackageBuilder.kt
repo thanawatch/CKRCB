@@ -22,13 +22,13 @@ object LogPackageBuilder {
             "RobotRun-Logs-${SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date(now))}.zip",
         )
         try {
-            val log = File(staging, "robotrun_10h.log")
+            val log = File(staging, "robotrun_10h.txt")
             OvernightLogArchive.copyWindow(now - OvernightLogPolicy.RETENTION_MS, now, log)
             val incidents = IncidentManager.recentIncidents(context).take(MAX_INCIDENTS)
             var videoBytes = 0L
             val omitted = mutableListOf<String>()
             ZipOutputStream(output.outputStream().buffered()).use { zip ->
-                add(zip, log, "robotrun_10h.log")
+                add(zip, log, "robotrun_10h.txt")
                 for (incident in incidents) {
                     val prefix = "incidents/${incident.name}/"
                     val files = incident.listFiles()?.filter { it.isFile }?.sortedBy { it.name }
@@ -44,7 +44,7 @@ object LogPackageBuilder {
                             }
                             videoBytes += file.length()
                         }
-                        add(zip, file, prefix + file.name)
+                        add(zip, file, prefix + OvernightLogPolicy.exportedFileName(file.name))
                     }
                     // A process/encoder failure can leave original JPEG evidence instead of MP4.
                     if (!File(incident, "incident_video.mp4").isFile) {
@@ -68,6 +68,7 @@ object LogPackageBuilder {
                     appendLine("Incident retention: 72 hours, separate 200 MiB cap; newest $MAX_INCIDENTS included")
                     appendLine("Video: optional event-triggered 640x360/2fps, recovery + 10s, max 3min from trigger; may be skipped under load")
                     appendLine("Screenshot/video may contain visible app/game information. Keep this ZIP private.")
+                    appendLine("Exported text logs use .txt filenames, including previously stored .log incident files.")
                     if (omitted.isNotEmpty()) {
                         appendLine("Omitted files:")
                         omitted.forEach { appendLine(it) }
@@ -86,7 +87,7 @@ object LogPackageBuilder {
             throw error
         } finally {
             // ZIP can be kept until uploaded; the uncompressed 10h text is no longer needed.
-            File(staging, "robotrun_10h.log").delete()
+            File(staging, "robotrun_10h.txt").delete()
         }
     }
 
