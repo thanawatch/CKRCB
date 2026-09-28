@@ -116,11 +116,11 @@ class StateDetector(
         val full = Rect(0, 0, LOGICAL_WIDTH, LOGICAL_HEIGHT)
         val confirm = detectTemplate(
             normalizedRgba, "CONFIRM_SEND_LIFE_1.png", full,
-            DualGameCompleteSendLifePolicy.MATCH_THRESHOLD,
+            DualGameCompleteSendLifePolicy.CONFIRM_MATCH_THRESHOLD,
         )
         val gameComplete = if (confirm.matched) detectTemplate(
             normalizedRgba, "GAME_COMPLETE_1.png", full,
-            DualGameCompleteSendLifePolicy.MATCH_THRESHOLD,
+            DualGameCompleteSendLifePolicy.GAME_COMPLETE_MATCH_THRESHOLD,
         ) else null
         return GameCompleteSendLifePopupMatch(gameComplete, confirm)
     }
