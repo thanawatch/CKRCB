@@ -1,4 +1,4 @@
-# RobotRun Overnight Diagnostics — source baseline v1.1.7 / versionCode 9
+# RobotRun Overnight Diagnostics — source baseline v1.1.8 / versionCode 10
 
 This feature is independent of gameplay automation. It never changes template/ROI/threshold, the
 15-minute watchdog timeout, the only two watchdog progress-reset events (GAME_COMPLETE and
@@ -35,7 +35,7 @@ Each real overdue reservation creates one Incident. The explicit in-app **Test W
 Recovery** action also creates a separate labeled `MANUAL_TEST` Incident when Bot/Capture
 are running and there is no incident already active; it does **not** reset or reserve the
 real Watchdog timer, and does not impersonate a real 15-minute timeout. If already
-overdue/busy, the existing manual-test guard still applies. All evidence is best effort:
+overdue/busy or any Incident is still active, the manual test is rejected rather than claiming a new file was created. All evidence is best effort:
 
 1. Freeze the previous **30 minutes of text logs**, current Bot/Capture/Watchdog status
    and a still normalized **1280x720 PNG**. The status records REAL_OVERDUE or MANUAL_TEST.
@@ -63,16 +63,19 @@ Recording stops at the earliest of:
 - **Screen Capture / recorder stops**, preserving available frames;
 - **Resource pressure or per-Incident size cap**: stale/unavailable/latest repeated
   frames are skipped; after 10 consecutive degraded ticks (~5s nominal), or when
-  frame save exceeds 20 MiB, stop. A sample taking over 250ms is treated as degraded.
+  frame save exceeds 20 MiB, stop. A sample taking over 250ms wall time OR 80ms
+  thread CPU is degraded. Sustained RobotRun process CPU above 1.5 single-core equivalents
+  in a two-second window also suppresses optional sampling.
 
-Sampling and MP4 encoding each use separate lowest-priority worker threads.
-No video operation blocks the detector, tap, watchdog scheduler or Recovery worker.
-The encoder starts only **after** sampling stops. If capture is unhealthy before or
-during encoding, skip/abort MP4; retain any already persisted JPEG files and
-`incident_video_status.txt`. In a normal completion, successful MP4 replaces the
-temporary JPEGs; if codec fails, keep JPEG fallback. Resource pressure is inferred
-from capture freshness and recorder timing, **not a direct measurement of total
-Redfinger CPU**. A video is never guaranteed; gameplay and diagnostic text come first.
+Sampling and MP4 encoding each use separate lowest-priority worker threads; no
+video operation is synchronously awaited by the detector, tap, scheduler or Recovery.
+The encoder starts only **after** sampling stops, yields 50ms between decoded frames,
+and skips/aborts on stale capture, process CPU pressure or a changed capture session.
+A quick stop/restart cannot let an old sampler/stop task finalize a newer recording.
+Retain any already persisted JPEG files and `incident_video_status.txt`. In a normal completion, successful MP4 replaces the
+temporary JPEGs; if codec fails, keep JPEG fallback. Resource pressure is inferred from capture freshness, per-frame thread CPU/wall time
+and RobotRun's own process CPU, **not the Redfinger VM's total CPU**. Video cannot
+be guaranteed and even low-priority work may still contend for CPU; gameplay wins. A video is never guaranteed; gameplay and diagnostic text come first.
 
 Manual Test produces the same status/screenshot/timeline/outcome package and requests
 video under the same optional/pressure rules. After the test Recovery completes and

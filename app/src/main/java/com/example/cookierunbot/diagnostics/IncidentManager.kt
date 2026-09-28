@@ -99,6 +99,9 @@ object IncidentManager {
         OvernightLogArchive.log("[INCIDENT] created=$id")
     }
 
+    /** Helps the explicit manual-test guard avoid reporting a test without its own incident. */
+    fun hasActive(): Boolean = synchronized(lock) { active != null }
+
     /** Called only for recovery-tagged messages on the Recovery worker; event order is preserved. */
     fun recoveryLine(message: String) {
         if (!message.startsWith("[GAME_PROGRESS_")) return

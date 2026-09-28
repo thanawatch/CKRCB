@@ -102,7 +102,7 @@ object GameProgressWatchdogManager {
             if (!LatestFrameProvider.diagnostics().captureRunning) {
                 return WatchdogRecoveryTestRequest.CAPTURE_STOPPED
             }
-            if (manualRecoveryReservation != null) {
+            if (manualRecoveryReservation != null || IncidentManager.hasActive()) {
                 return WatchdogRecoveryTestRequest.ALREADY_RUNNING
             }
             val requester = recoveryRequester ?: return WatchdogRecoveryTestRequest.UNAVAILABLE
