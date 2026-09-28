@@ -119,9 +119,21 @@ object GameProgressWatchdogManager {
                 "[GAME_PROGRESS_WATCHDOG_TEST] requested=true timerUnaffected=true " +
                     "reservation=${reservation.generation}",
             )
+            // Manual test receives its own labeled Incident and optional low-priority video.
+            // Never reserve/reset the actual Watchdog clock or suppress normal overdue checks.
+            runCatching {
+                IncidentManager.begin(
+                    requireNotNull(synchronized(lock) { appContext }), reservation.generation,
+                    watchdog.status(SystemClock.elapsedRealtime()), BotRuntime.diagnostics(),
+                    LatestFrameProvider.diagnostics(), manualTest = true,
+                )
+            }.onFailure { error ->
+                log("[INCIDENT] manual_test_start_failed type=${error.javaClass.simpleName}")
+            }
             requester.invoke(reservation)
             WatchdogRecoveryTestRequest.STARTED
         } catch (error: Exception) {
+            IncidentManager.finish(reservation.generation, "manual_test_request_failed_${error.javaClass.simpleName}")
             finishRecovery(reservation)
             log("[GAME_PROGRESS_WATCHDOG_TEST] requested=false reason=${error.javaClass.simpleName}")
             WatchdogRecoveryTestRequest.UNAVAILABLE

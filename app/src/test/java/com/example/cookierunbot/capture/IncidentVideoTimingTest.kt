@@ -11,9 +11,21 @@ class IncidentVideoTimingTest {
             IncidentVideoTiming.finalStopAt(trigger, finished))
     }
 
-    @Test fun capsTotalIncludingThirtySecondPreludeAtThreeMinutes() {
+    @Test fun capsRecordingAtThreeMinutesFromWatchdogTrigger() {
         val trigger = 100_000_000_000L
-        assertEquals(trigger + IncidentVideoTiming.POST_TRIGGER_BUDGET_NANOS,
+        assertEquals(trigger + IncidentVideoTiming.MAX_VIDEO_NANOS,
             IncidentVideoTiming.finalStopAt(trigger, trigger + 200_000_000_000L))
+    }
+
+    @Test fun absentFinishUsesHardCap() {
+        val trigger = 100_000_000_000L
+        assertEquals(trigger + IncidentVideoTiming.MAX_VIDEO_NANOS,
+            IncidentVideoTiming.finalStopAt(trigger, Long.MAX_VALUE))
+    }
+
+    @Test fun earlyFinishStillGivesTenSecondTail() {
+        val trigger = 100_000_000_000L
+        assertEquals(trigger + IncidentVideoTiming.TAIL_NANOS,
+            IncidentVideoTiming.finalStopAt(trigger, trigger))
     }
 }

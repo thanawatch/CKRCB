@@ -93,24 +93,26 @@ A new Start Bot creates a new statistics session. Result OCR/classification runs
 
 Captured images may contain personal information and can be visible to gallery/file applications. Do not share them or logs without inspection.
 
-## Overnight Diagnostics and 30-second pre-incident video
+## Overnight Diagnostics and event-triggered Eco incident video
 
 The in-app Debug Log still shows its latest 500 RAM lines; a separate owned-app rolling text
 archive now records up to the previous **10 hours** (nominal 200 MiB size cap, loss markers) in
 private files across ordinary Process restarts. The **Save 10h ZIP** button exports a local ZIP.
 It does not include system/other-app Logcat or an unlimited per-frame screenshot archive.
 
-When the genuine 15-minute Watchdog reserves a Recovery, one Incident freezes the previous
+When a genuine 15-minute Watchdog or explicit in-app manual Watchdog test requests Recovery, a labeled Incident freezes the previous
 **30 minutes of logs**, current Bot/Capture state and normalized PNG; the full `[GAME_PROGRESS_*]`
 action timeline (template, score, logical/physical target, dispatch, completion, fresh frame,
 MAINMENU result) and final recovery result are appended. Independent retention: 72h/200 MiB.
 
-The optional incident-video sampler uses the EXISTING capture snapshots at target 3fps/960×540
-and a 30-second compressed pre-roll. It records until the earlier of **Recovery ends + 10 seconds**
-and **2 minutes 30 seconds after trigger** (3 minutes total including pre-roll), or earlier if Screen Capture stops. An MP4 is encoded
-asynchronously after recording finishes, so it may not be immediately available when the
-Watchdog alert arrives. If encoding fails or Process ends, saved JPEG frames and a status file
-remain as fallback. Use Debug Log's **Video ON / Video OFF** toggle (enabled by default in this
+Video is armed but does **no recurring JPEG sampling during normal gameplay**. On a real or
+manual Watchdog Incident only, the existing capture is sampled at target **2 FPS / 640×360**
+(JPEG quality 40; H.264 250 kbps); there is **no pre-roll**. It ends at the earliest of
+Recovery +10 seconds, **3 minutes from trigger**, capture stop or resource-pressure/20MiB
+frame limit. Workers run at lowest priority and can skip frames or abort MP4 when capture
+falls behind. A finished MP4 is optional; preserved JPEGs and a status explain failures/skips.
+Manual tests include a labeled status, PNG, action timeline and outcome, and are retrievable via
+/logs or local Save 10h ZIP. The manual test does not reset the real 15-minute timer. Use Debug Log's **Video ON / Video OFF** toggle (enabled by default in this
 source version). No second MediaProjection, no new game gestures, and no watchdog rule changes.
 
 Use authorized Telegram **/logs** or **📥 Download Logs** to request the 10h diagnostic ZIP
@@ -130,9 +132,9 @@ On an older installed build with an off-screen Close button, rotate back to land
 
 ## In-app updates (independent of Telegram)
 
-The main screen includes **Update App**, implemented in `UpdateActivity`. The source baseline is **v1.1.6 (versionCode 8)**; an installed APK can still be older until rebuilt and installed. The owner must configure a trusted anonymous HTTPS `update.json` URL in that screen for **online** update checks; a private GitHub Actions artifact is not a permanent anonymous download link, and no public feed is provided by committing this code. See [the example feed](docs/update-feed.example.json). This updater does not embed GitHub tokens, signing keys, or credentials.
+The main screen includes **Update App**, implemented in `UpdateActivity`. The source baseline is **v1.1.7 (versionCode 9)**; an installed APK can still be older until rebuilt and installed. The owner must configure a trusted anonymous HTTPS `update.json` URL in that screen for **online** update checks; a private GitHub Actions artifact is not a permanent anonymous download link, and no public feed is provided by committing this code. See [the example feed](docs/update-feed.example.json). This updater does not embed GitHub tokens, signing keys, or credentials.
 
-To publish a future build, increment both `versionCode` and `versionName` (e.g. `9` / `1.1.7`), build a **single signed APK with the same signing certificate as the currently installed application**, host that APK on HTTPS, calculate its SHA-256 (`Get-FileHash -Algorithm SHA256` on PowerShell or `sha256sum` on Linux), and publish the feed with its actual URL, package name, code, name, checksum, and notes. Only publish signed binaries and feed data to the distribution host; the source repository may remain private. Do not publish the sample placeholder checksum as a real feed.
+To publish a future build, increment both `versionCode` and `versionName` (e.g. `10` / `1.1.8`), build a **single signed APK with the same signing certificate as the currently installed application**, host that APK on HTTPS, calculate its SHA-256 (`Get-FileHash -Algorithm SHA256` on PowerShell or `sha256sum` on Linux), and publish the feed with its actual URL, package name, code, name, checksum, and notes. Only publish signed binaries and feed data to the distribution host; the source repository may remain private. Do not publish the sample placeholder checksum as a real feed.
 
 Alternatively, without any hosted feed, tap **Choose downloaded APK (offline)** and select a local APK through Android's document picker. It still must be a strictly newer RobotRun APK signed with the installed signing certificate; no network checksum is available for this deliberate local-file path.
 

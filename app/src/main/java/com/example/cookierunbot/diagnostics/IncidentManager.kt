@@ -18,8 +18,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * One incident per reserved genuine watchdog Recovery. The 30-minute prelude is frozen before
- * the Recovery worker is invoked; later action events and the video are separate, append-only.
+ * One incident per real or explicitly requested manual Watchdog Recovery. The 30-minute text
+ * history is frozen before Recovery; later action events and optional video are best-effort.
  * No incident I/O is performed on the watchdog scheduler or the gameplay worker.
  */
 object IncidentManager {
@@ -47,8 +47,9 @@ object IncidentManager {
     fun begin(
         context: Context, generation: Long, status: GameProgressStatus,
         bot: BotControllerDiagnostics, capture: Diagnostics,
+        manualTest: Boolean = false,
     ) {
-        if (generation < 0L) return // Manual test is not a real overdue episode.
+        if (generation < 0L && !manualTest) return // Only the explicit test entry can create a test incident.
         val at = System.currentTimeMillis()
         val id = "incident_${at}_${generation}"
         val directory = File(context.filesDir, "diagnostics/incidents/$id")
@@ -62,6 +63,7 @@ object IncidentManager {
         val still = LatestFrameProvider.snapshot()
         val info = buildString {
             appendLine("Incident ID: $id")
+            appendLine("Trigger type: ${if (manualTest) "MANUAL_TEST" else "REAL_OVERDUE"}")
             appendLine("Wall-clock start (epoch millis): $at")
             appendLine("Trigger elapsedRealtimeNanos: $triggerElapsedNanos")
             appendLine("Last progress reason: ${status.lastProgressReason}")
@@ -69,7 +71,7 @@ object IncidentManager {
             appendLine("Overdue: ${status.overdue}")
             appendLine("Bot diagnostics: $bot")
             appendLine("Capture diagnostics: $capture")
-            appendLine("Video: 30s prelude + recovery + 10s; hard cap 3 minutes; unavailable if capture/encoder stops.")
+            appendLine("Video: optional event-triggered 640x360/2fps; recovery + 10s, hard cap 3min from trigger. May skip frames or MP4 under resource pressure.")
             appendLine("Physical coordinates in recovery logs refer to the contemporaneous transform.")
         }
         executor.execute {

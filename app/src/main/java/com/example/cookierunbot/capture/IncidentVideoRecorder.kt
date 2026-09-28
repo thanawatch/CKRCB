@@ -5,6 +5,7 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaMuxer
+import android.os.Process
 import android.os.SystemClock
 import com.example.cookierunbot.diagnostics.OvernightLogArchive
 import org.opencv.core.Mat
@@ -20,19 +21,24 @@ import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
 /**
- * Opt-in independent 3 FPS normalized-frame sampler. Keeps the last 30s as compressed JPEGs
- * in a bounded ring; when a real watchdog incident starts, persists those frames and samples
- * through recovery + 10s (up to 3 minutes including the 30-second pre-roll). Only AFTER recording stops does a
- * separate worker encode MP4 (H.264 MediaCodec + MediaMuxer). No new MediaProjection or VD.
- * Nothing in this object taps, controls, waits for, or changes the detector/game/watchdog timer.
+ * Best-effort, event-triggered recorder. ARMED during normal capture, but does NO frame
+ * sampling, JPEG processing or encoding until a real/manual Watchdog Recovery begins.
+ * Captures up to 3 minutes from trigger at target 2 FPS / 640x360, then optionally encodes
+ * on a lowest-priority worker. Drops/skips video under capture/resource pressure; NEVER
+ * waits for or modifies detection, gameplay, gestures, watchdog timing or Recovery.
+ * Uses the existing LatestFrameProvider only (no second MediaProjection/VirtualDisplay).
  */
 object IncidentVideoRecorder {
-    private const val FPS = 3
-    private const val WIDTH = 960
-    private const val HEIGHT = 540
+    private const val FPS = 2
+    private const val WIDTH = 640
+    private const val HEIGHT = 360
+    private const val JPEG_QUALITY = 40
+    private const val BIT_RATE = 250_000
     private const val SAMPLE_INTERVAL_MS = 1_000L / FPS
-    private const val MAX_RING_BYTES = 12L * 1024L * 1024L
-    private const val MAX_EVENT_BYTES = 45L * 1024L * 1024L
+    private const val MAX_EVENT_BYTES = 20L * 1024L * 1024L
+    private const val MAX_FRAME_AGE_MS = 1_500.0
+    private const val SLOW_SAMPLE_MS = 250L
+    private const val MAX_CONSECUTIVE_DEGRADED = 10
     private const val MIME = MediaFormat.MIMETYPE_VIDEO_AVC
 
     private data class Frame(val atNanos: Long, val jpeg: ByteArray)
@@ -45,18 +51,25 @@ object IncidentVideoRecorder {
         var savedBytes: Long = 0L,
         var frameCount: Int = 0,
         var truncated: Boolean = false,
+        var lastGeneration: Long = -1L,
+        var consecutiveDegraded: Int = 0,
+        var skippedSamples: Int = 0,
     )
     private val lock = Any()
     private val sampler = Executors.newSingleThreadScheduledExecutor { work ->
-        Thread(work, "incident-video-sampler").apply { priority = Thread.MIN_PRIORITY }
+        Thread({
+            runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_LOWEST) }
+            work.run()
+        }, "incident-video-sampler").apply { priority = Thread.MIN_PRIORITY }
     }
     private val encoder = Executors.newSingleThreadExecutor { work ->
-        Thread(work, "incident-video-encoder").apply { priority = Thread.MIN_PRIORITY }
+        Thread({
+            runCatching { Process.setThreadPriority(Process.THREAD_PRIORITY_LOWEST) }
+            work.run()
+        }, "incident-video-encoder").apply { priority = Thread.MIN_PRIORITY }
     }
     private var future: ScheduledFuture<*>? = null
-    private var ring = ArrayDeque<Frame>()
-    private var ringBytes = 0L
-    private var active: Recording? = null // sampler thread only
+    @Volatile private var active: Recording? = null // written on sampler thread
     private var pendingTrigger: Trigger? = null
     private var pendingFinish: Finish? = null
     @Volatile private var running = false
@@ -71,8 +84,9 @@ object IncidentVideoRecorder {
                 OvernightLogArchive.log("[INCIDENT_VIDEO] enabled=false")
                 return
             }
+            // Arm only: zero recurring work during normal gameplay.
             running = true
-            future = sampler.scheduleWithFixedDelay(::tick, 0, SAMPLE_INTERVAL_MS, TimeUnit.MILLISECONDS)
+            OvernightLogArchive.log("[INCIDENT_VIDEO] armed=true mode=event_triggered")
         }
     }
 
@@ -90,11 +104,17 @@ object IncidentVideoRecorder {
 
     fun trigger(id: String, output: File, atNanos: Long) {
         synchronized(lock) {
-            if (!running || pendingTrigger != null) {
-                writeStatus(output, "Recording unavailable: capture/recorder stopped or another incident pending.")
+            if (!running || pendingTrigger != null || active != null) {
+                sampler.execute {
+                    writeStatus(output, "Recording skipped: disabled, capture stopped or another incident active.")
+                }
                 return
             }
             pendingTrigger = Trigger(id, output, atNanos)
+            // The ONLY place that starts periodic sampling, after Watchdog triggers.
+            if (future == null || future?.isCancelled == true) {
+                future = sampler.scheduleWithFixedDelay(::tick, 0, SAMPLE_INTERVAL_MS, TimeUnit.MILLISECONDS)
+            }
         }
     }
 
@@ -109,79 +129,107 @@ object IncidentVideoRecorder {
             future = null
         }
         sampler.execute {
-            pendingTrigger?.let { writeStatus(it.output, "Capture stopped before video trigger.") }
-            pendingTrigger = null
+            val pending = synchronized(lock) { pendingTrigger.also { pendingTrigger = null } }
+            pending?.let { writeStatus(it.output, "Capture stopped before video trigger.") }
             active?.let { finalizeRecording(it, "capture_stopped") }
             active = null
-            ring.clear()
-            ringBytes = 0L
         }
     }
 
     private fun tick() {
         if (!running) return
         try {
-            val snapshot = LatestFrameProvider.snapshot()
-            val frame = snapshot?.let { source ->
-                try {
-                    val downsampled = Mat()
-                    val bgr = Mat()
-                    val jpeg = MatOfByte()
-                    val options = MatOfInt(Imgcodecs.IMWRITE_JPEG_QUALITY, 55)
-                    try {
-                        Imgproc.resize(source.mat, downsampled, Size(WIDTH.toDouble(), HEIGHT.toDouble()),
-                            0.0, 0.0, Imgproc.INTER_AREA)
-                        Imgproc.cvtColor(downsampled, bgr, Imgproc.COLOR_RGBA2BGR)
-                        if (Imgcodecs.imencode(".jpg", bgr, jpeg, options)) {
-                            Frame(SystemClock.elapsedRealtimeNanos(), jpeg.toArray())
-                        } else null
-                    } finally {
-                        options.release(); jpeg.release(); bgr.release(); downsampled.release()
-                    }
-                } finally { source.mat.release() }
-            }
-            if (frame != null) {
-                ring.addLast(frame)
-                ringBytes += frame.jpeg.size
-                while (ring.isNotEmpty() &&
-                    (frame.atNanos - ring.first().atNanos > IncidentVideoTiming.PRELUDE_NANOS + 1_000_000_000L ||
-                        ringBytes > MAX_RING_BYTES)
-                ) ringBytes -= ring.removeFirst().jpeg.size
-            }
             val next = synchronized(lock) { pendingTrigger.also { pendingTrigger = null } }
             if (next != null) startRecording(next)
-            val recording = active
-            if (recording != null) {
-                val finish = synchronized(lock) {
-                    pendingFinish?.takeIf { it.id == recording.trigger.id }?.also { pendingFinish = null }
+            val recording = active ?: run { disarmSamplerIfIdle(); return }
+            val finish = synchronized(lock) {
+                pendingFinish?.takeIf { it.id == recording.trigger.id }?.also { pendingFinish = null }
+            }
+            if (finish != null) {
+                recording.stopAtNanos = IncidentVideoTiming.finalStopAt(
+                    recording.trigger.atNanos, finish.atNanos,
+                )
+            }
+            if (SystemClock.elapsedRealtimeNanos() >= recording.stopAtNanos) {
+                finalizeRecording(recording, "completed")
+                active = null
+                disarmSamplerIfIdle()
+                return
+            }
+
+            // Avoid cloning the latest frame if capture is already unhealthy.
+            val health = LatestFrameProvider.diagnostics()
+            if (!health.captureRunning || health.frameAgeMs == null ||
+                health.frameAgeMs > MAX_FRAME_AGE_MS ||
+                health.frameSequence <= recording.lastGeneration
+            ) {
+                recording.skippedSamples++
+                recording.consecutiveDegraded++
+            } else {
+                val startedMs = SystemClock.elapsedRealtime()
+                val snapshot = LatestFrameProvider.snapshot()
+                if (snapshot == null) {
+                    recording.skippedSamples++
+                    recording.consecutiveDegraded++
+                } else {
+                    try {
+                        if (snapshot.generation > recording.lastGeneration) {
+                            recording.lastGeneration = snapshot.generation
+                            val downsampled = Mat()
+                            val bgr = Mat()
+                            val jpeg = MatOfByte()
+                            val options = MatOfInt(Imgcodecs.IMWRITE_JPEG_QUALITY, JPEG_QUALITY)
+                            try {
+                                Imgproc.resize(snapshot.mat, downsampled,
+                                    Size(WIDTH.toDouble(), HEIGHT.toDouble()),
+                                    0.0, 0.0, Imgproc.INTER_AREA)
+                                Imgproc.cvtColor(downsampled, bgr, Imgproc.COLOR_RGBA2BGR)
+                                if (Imgcodecs.imencode(".jpg", bgr, jpeg, options)) {
+                                    val sampledAt = SystemClock.elapsedRealtimeNanos()
+                                    if (sampledAt <= recording.stopAtNanos) {
+                                        persistFrame(recording, Frame(sampledAt, jpeg.toArray()))
+                                    }
+                                } else recording.skippedSamples++
+                            } finally {
+                                options.release(); jpeg.release(); bgr.release(); downsampled.release()
+                            }
+                        }
+                    } finally { snapshot.mat.release() }
+                    val elapsedMs = SystemClock.elapsedRealtime() - startedMs
+                    if (elapsedMs > SLOW_SAMPLE_MS) {
+                        recording.skippedSamples++
+                        recording.consecutiveDegraded++
+                    } else {
+                        recording.consecutiveDegraded = 0
+                    }
                 }
-                if (finish != null) {
-                    recording.stopAtNanos = IncidentVideoTiming.finalStopAt(
-                        recording.trigger.atNanos, finish.atNanos,
-                    )
-                }
-                val now = SystemClock.elapsedRealtimeNanos()
-                if (frame != null && frame.atNanos > recording.trigger.atNanos &&
-                    frame.atNanos <= recording.stopAtNanos
-                ) persistFrame(recording, frame)
-                if (now >= recording.stopAtNanos || recording.truncated) {
-                    finalizeRecording(recording, if (recording.truncated) "size_cap" else "completed")
-                    active = null
-                }
+            }
+            if (recording.truncated || recording.consecutiveDegraded >= MAX_CONSECUTIVE_DEGRADED) {
+                finalizeRecording(recording, if (recording.truncated) "size_cap" else "resource_pressure")
+                active = null
+                disarmSamplerIfIdle()
             }
         } catch (error: Exception) {
-            active?.let {
-                writeStatus(it.trigger.output, "Video recording failed: ${error.javaClass.simpleName}")
-                // Keep captured frame files for a later diagnostic, but do not interrupt capture.
-            }
+            active?.let { writeStatus(it.trigger.output,
+                "Video skipped after sampling error: ${error.javaClass.simpleName}; available JPEGs retained.") }
             active = null
+            disarmSamplerIfIdle()
             OvernightLogArchive.log("[INCIDENT_VIDEO] sampling_failed type=${error.javaClass.simpleName}")
+        }
+    }
+
+    private fun disarmSamplerIfIdle() {
+        synchronized(lock) {
+            if (active == null && pendingTrigger == null) {
+                future?.cancel(false)
+                future = null
+            }
         }
     }
 
     private fun startRecording(trigger: Trigger) {
         if (active != null) {
-            writeStatus(trigger.output, "Recording unavailable: previous incident is still active.")
+            writeStatus(trigger.output, "Recording skipped: previous incident is still active.")
             return
         }
         val recording = Recording(
@@ -189,12 +237,9 @@ object IncidentVideoRecorder {
             File(trigger.output.parentFile, "video_frames").apply { mkdirs() },
             IncidentVideoTiming.finalStopAt(trigger.atNanos, Long.MAX_VALUE),
         )
-        writeStatus(trigger.output, "Recording in progress; 30s pre-roll + recovery + 10s; cap=3min total including pre-roll.")
-        ring.filter { it.atNanos >= trigger.atNanos - IncidentVideoTiming.PRELUDE_NANOS &&
-            it.atNanos <= trigger.atNanos
-        }.forEach { persistFrame(recording, it) }
+        writeStatus(trigger.output, "Recording in progress: event-triggered 640x360/2fps; recovery + 10s; cap=3min after trigger. Best effort, frames may be skipped.")
         active = recording
-        OvernightLogArchive.log("[INCIDENT_VIDEO] started id=${trigger.id} preRollFrames=${recording.frameCount}")
+        OvernightLogArchive.log("[INCIDENT_VIDEO] started id=${trigger.id} preRollFrames=0")
     }
 
     private fun persistFrame(recording: Recording, frame: Frame) {
@@ -210,7 +255,7 @@ object IncidentVideoRecorder {
 
     private fun finalizeRecording(recording: Recording, reason: String) {
         writeStatus(recording.trigger.output,
-            "Recording ended ($reason), frames=${recording.frameCount}; encoding MP4 in background.")
+            "Recording ended ($reason), frames=${recording.frameCount}, skipped=${recording.skippedSamples}.")
         runCatching {
             val files = recording.frames.listFiles()
                 ?.filter { it.isFile && it.extension == "jpg" }?.sortedBy { it.name }
@@ -227,9 +272,20 @@ object IncidentVideoRecorder {
                     "to this file to align each action with the video.\n",
             )
         }
+        if (reason == "resource_pressure" || recording.frameCount == 0) {
+            writeStatus(recording.trigger.output,
+                "Video skipped: $reason; frames=${recording.frameCount}, skipped=${recording.skippedSamples}; available JPEGs retained, MP4 encoding not started.")
+            OvernightLogArchive.log("[INCIDENT_VIDEO] skipped id=${recording.trigger.id} reason=$reason")
+            return
+        }
         encoder.execute {
             val target = recording.trigger.output
             try {
+                if (captureUnderPressure()) {
+                    writeStatus(target, "MP4 skipped: capture under pressure; original JPEGs retained.")
+                    OvernightLogArchive.log("[INCIDENT_VIDEO] encoding_skipped id=${recording.trigger.id} reason=capture_pressure")
+                    return@execute
+                }
                 encodeMp4(recording.frames, target)
                 writeStatus(target, "MP4 complete; frames=${recording.frameCount}; reason=$reason")
                 recording.frames.deleteRecursively()
@@ -250,6 +306,13 @@ object IncidentVideoRecorder {
         }
     }
 
+    /** Capture health is a conservative pressure signal, not a measurement of Redfinger's total CPU. */
+    private fun captureUnderPressure(): Boolean {
+        val health = LatestFrameProvider.diagnostics()
+        return health.captureRunning &&
+            (health.frameAgeMs == null || health.frameAgeMs > MAX_FRAME_AGE_MS)
+    }
+
     private fun encodeMp4(frames: File, destination: File) {
         val sources = frames.listFiles { file -> file.isFile && file.extension == "jpg" }
             ?.sortedBy { it.nameWithoutExtension.toLongOrNull() ?: 0L } ?: emptyList()
@@ -262,7 +325,7 @@ object IncidentVideoRecorder {
         var muxerStarted = false
         try {
             val format = MediaFormat.createVideoFormat(MIME, WIDTH, HEIGHT).apply {
-                setInteger(MediaFormat.KEY_BIT_RATE, 450_000)
+                setInteger(MediaFormat.KEY_BIT_RATE, BIT_RATE)
                 setInteger(MediaFormat.KEY_FRAME_RATE, FPS)
                 setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
                 setInteger(MediaFormat.KEY_COLOR_FORMAT,
@@ -280,6 +343,8 @@ object IncidentVideoRecorder {
             var lastPresentationUs = -1L
             val info = MediaCodec.BufferInfo()
             while (!outputEnded) {
+                // Encoding is expendable. Stop if it coincides with capture starvation.
+                check(!captureUnderPressure()) { "Capture under pressure; skip MP4." }
                 if (!sentEnd) {
                     val index = codec.dequeueInputBuffer(5_000L)
                     if (index >= 0) {

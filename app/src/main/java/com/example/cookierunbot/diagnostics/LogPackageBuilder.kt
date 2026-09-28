@@ -66,7 +66,7 @@ object LogPackageBuilder {
                     appendLine("Window: epochMs ${now - OvernightLogPolicy.RETENTION_MS} .. $now")
                     appendLine("Archive: up to 10 hours or 200 MiB (whichever is reached first)")
                     appendLine("Incident retention: 72 hours, separate 200 MiB cap; newest $MAX_INCIDENTS included")
-                    appendLine("Video: 30s pre-roll + recovery + 10s; at most 3min / incident")
+                    appendLine("Video: optional event-triggered 640x360/2fps, recovery + 10s, max 3min from trigger; may be skipped under load")
                     appendLine("Screenshot/video may contain visible app/game information. Keep this ZIP private.")
                     if (omitted.isNotEmpty()) {
                         appendLine("Omitted files:")

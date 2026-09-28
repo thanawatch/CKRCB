@@ -1,4 +1,4 @@
-# RobotRun Overnight Diagnostics — source baseline v1.1.6 / versionCode 8
+# RobotRun Overnight Diagnostics — source baseline v1.1.7 / versionCode 9
 
 This feature is independent of gameplay automation. It never changes template/ROI/threshold, the
 15-minute watchdog timeout, the only two watchdog progress-reset events (GAME_COMPLETE and
@@ -29,38 +29,56 @@ and does not retain every image frame as a text log. Token/password-looking stri
 bot URLs are redacted in exported text. Raw screen/video can contain visible account/game
 information; download only from the authorized Chat ID and keep archives private.
 
-## Watchdog Incident
+## Watchdog Incident and manual test
 
-Once per **real** watchdog overdue Recovery reservation (not every 30s check, not manual test):
-1. Freeze the previous **30 minutes of logs**, current bot/capture/watchdog state and one still PNG
-   from a cloned normalized 1280×720 frame.
-2. Append \`[GAME_PROGRESS_*]\` Recovery action events to \`watchdog_action_timeline.log\`. The
-   actions remain owned by the normal Recovery worker; the logger observes them and never taps.
-   This includes template/score/attempt, logical and mapped physical target, dispatchAccepted,
-   callback completion, newer frame and MAINMENU routing.
-3. On any Recovery exit, append an outcome file, notify the video recorder of the finish
-   timestamp, and retain the Incident separately.
+Each real overdue reservation creates one Incident. The explicit in-app **Test Watchdog
+Recovery** action also creates a separate labeled `MANUAL_TEST` Incident when Bot/Capture
+are running and there is no incident already active; it does **not** reset or reserve the
+real Watchdog timer, and does not impersonate a real 15-minute timeout. If already
+overdue/busy, the existing manual-test guard still applies. All evidence is best effort:
 
-## Incident video: EXACT end condition
+1. Freeze the previous **30 minutes of text logs**, current Bot/Capture/Watchdog status
+   and a still normalized **1280x720 PNG**. The status records REAL_OVERDUE or MANUAL_TEST.
+2. Append `[GAME_PROGRESS_*]` Recovery messages to
+   `watchdog_action_timeline.log`, including template/score/attempt, logical and
+   mapped physical target, dispatchAccepted, callback completion, newer frame and MAINMENU routing.
+3. On any Recovery exit, write the outcome and signal the optional video worker to finish.
+   Screenshot/text/timeline/outcome remain independently useful when video is missing.
 
-Video recording is enabled by default in this explicitly opted-in source version and can be
-disabled/enabled in Debug Log via **Video ON / Video OFF**. It uses the EXISTING
-\`LatestFrameProvider\` snapshot (no second MediaProjection/VirtualDisplay). A low-priority
-sampler prepares 960×540 JPEGs at a target of 3 FPS, keeps up to the previous 30 seconds in a
-bounded ~12 MiB RAM ring, and writes the relevant frames to the active Incident folder.
-Recording stops at the EARLIEST of:
+## Incident video: event-triggered, lowest priority
 
-- **Recovery finished + 10 seconds**, success, failure or cancellation;
-- **2 minutes 30 seconds after the Watchdog trigger**, giving at most **3 minutes total including the 30-second pre-roll**;
-- **Screen Capture / recorder stops**, preserving available frames.
+Video is enabled by default, and can be disabled/enabled in Debug Log via
+**Video ON / Video OFF**. Screen Capture start only **arms** the recorder: there is
+**no recurring video sampler, pre-roll RAM ring, JPEG resizing/compression, or MP4
+encoding during normal gameplay**. The video work starts only when a real or explicit
+manual Watchdog Incident triggers, before the Recovery worker is requested.
+No second MediaProjection/VirtualDisplay. It clones from the existing
+`LatestFrameProvider`, with target **640x360 / 2 FPS**, JPEG quality **40**, and
+H.264 bitrate **250 kbps** (no audio).
 
-Only after recording stops does a separate low-priority worker encode H.264 MP4 with
-\`MediaCodec\` / \`MediaMuxer\`. If the encoder is unsupported/fails or Android kills the process,
-\`incident_video_status.txt\` and any already persisted JPEG frames can still be examined as a
-fallback. A trigger less than 30s after recorder start has only the available pre-roll.
-Never assume the MP4 is ready immediately when the watchdog alert appears; retrieve /logs after
-Recovery and encoding completes. Source/static review is not evidence of successful MP4 playback
-on a real Android/Redfinger device.
+Recording stops at the earliest of:
+
+- **Recovery finished + 10 seconds**, regardless of outcome;
+- **3 minutes after the Watchdog/manual-test trigger**, with **no pre-roll**;
+- **Screen Capture / recorder stops**, preserving available frames;
+- **Resource pressure or per-Incident size cap**: stale/unavailable/latest repeated
+  frames are skipped; after 10 consecutive degraded ticks (~5s nominal), or when
+  frame save exceeds 20 MiB, stop. A sample taking over 250ms is treated as degraded.
+
+Sampling and MP4 encoding each use separate lowest-priority worker threads.
+No video operation blocks the detector, tap, watchdog scheduler or Recovery worker.
+The encoder starts only **after** sampling stops. If capture is unhealthy before or
+during encoding, skip/abort MP4; retain any already persisted JPEG files and
+`incident_video_status.txt`. In a normal completion, successful MP4 replaces the
+temporary JPEGs; if codec fails, keep JPEG fallback. Resource pressure is inferred
+from capture freshness and recorder timing, **not a direct measurement of total
+Redfinger CPU**. A video is never guaranteed; gameplay and diagnostic text come first.
+
+Manual Test produces the same status/screenshot/timeline/outcome package and requests
+video under the same optional/pressure rules. After the test Recovery completes and
+the tail/optional encode finishes, **/logs** or local **Save 10h ZIP** returns the
+Incident among the five most recent. A skipped video is visible via
+`incident_video_status.txt`. The app does not auto-send the ZIP.
 
 ## Retrieve files
 

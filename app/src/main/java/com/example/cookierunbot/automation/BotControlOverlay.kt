@@ -225,7 +225,7 @@ class BotControlOverlay(private val context: Context) {
                 handler.postDelayed({
                     val message = when (BotRuntime.requestWatchdogRecoveryTest()) {
                         WatchdogRecoveryTestRequest.STARTED ->
-                            "Watchdog recovery test started; 15-minute timer unchanged"
+                            "Watchdog test started; timer unchanged. Evidence: /logs or Save 10h ZIP after test ends; video is best effort."
                         WatchdogRecoveryTestRequest.BOT_STOPPED ->
                             "Start Bot first"
                         WatchdogRecoveryTestRequest.CAPTURE_STOPPED ->
