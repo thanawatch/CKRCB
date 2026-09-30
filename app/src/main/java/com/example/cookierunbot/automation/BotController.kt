@@ -1033,8 +1033,11 @@ class BotController(
             } else {
                 null
             }
+            // CLOSE_BUTTON behaves like a normal reward popup, but it is intentionally
+            // not part of IN_GAME candidates or ALL_STAGE_ORDER.
+            val closePopupResult = detectClosePopup(detector, frame.mat)
             var priorityScore: Double? = null
-            var result = if (priorityCandidate != null) {
+            var result = closePopupResult ?: if (priorityCandidate != null) {
                 detector.detectFirst(candidates, frame.mat) { evaluated ->
                     if (evaluated.state == priorityCandidate) priorityScore = evaluated.score
                 }
@@ -1219,6 +1222,33 @@ class BotController(
         }
     }
 
+    private fun detectClosePopup(detector: StateDetector, frame: Mat): DetectionResult? {
+        val currentGroup = group
+        if (!closePopupEnabledForGroup(currentGroup)) return null
+        val roi = GameProgressCloseRecovery.topRightRoi(frame.cols(), frame.rows())
+        val match = detector.detectTemplate(
+            frame,
+            GameProgressCloseRecovery.TEMPLATE,
+            roi,
+            GameProgressCloseRecovery.MATCH_THRESHOLD,
+        )
+        if (!match.matched) return null
+        logDiagnostic(
+            "[CLOSE_BUTTON_POPUP] matched=true group=${currentGroup.name} " +
+                "score=${format(match.score)} threshold=${format(GameProgressCloseRecovery.MATCH_THRESHOLD)} " +
+                "match=(${match.x},${match.y},${match.width},${match.height})",
+        )
+        return DetectionResult(
+            state = BotStage.CLOSE_BUTTON,
+            score = match.score,
+            matched = true,
+            x = match.x,
+            y = match.y,
+            width = match.width,
+            height = match.height,
+        )
+    }
+
     private fun handleStage(
         detector: StateDetector,
         result: DetectionResult,
@@ -1253,6 +1283,25 @@ class BotController(
                 )
             }
             BotStage.MYSTERY_BOX -> handleMysteryBox(sourceWidth, sourceHeight, frame)
+            BotStage.CLOSE_BUTTON -> {
+                val center = LogicalPoint(
+                    result.x + result.width / 2,
+                    result.y + result.height / 2,
+                )
+                logDiagnostic(
+                    "[CLOSE_BUTTON_POPUP] action=tap_center logical=(${center.x},${center.y}) " +
+                        "group=${group.name}",
+                )
+                rewardPopup(
+                    result.state,
+                    "CLOSE_BUTTON",
+                    center,
+                    sourceWidth,
+                    sourceHeight,
+                    frameGeneration,
+                    jitter = 0,
+                )
+            }
             BotStage.CONGRATULATIONS -> rewardPopup(result.state, "CONGRATULATIONS", AutomationConfig.CONGRATULATIONS_ACCEPT, sourceWidth, sourceHeight, frameGeneration)
             BotStage.LEVEL_UP -> rewardPopup(result.state, "LEVEL_UP", AutomationConfig.LEVEL_UP_ACCEPT, sourceWidth, sourceHeight, frameGeneration)
             BotStage.DAILY_CHECKIN -> rewardPopup(result.state, "DAILY_CHECKIN", AutomationConfig.DAILY_CHECKIN_ACCEPT, sourceWidth, sourceHeight, frameGeneration)
@@ -3939,6 +3988,7 @@ class BotController(
         private val ALWAYS = listOf(BotStage.CONNECTION_LOST, BotStage.INACTIVE)
         private val RELIC_STAGES = setOf(BotStage.RELIC_COMPLETE, BotStage.RELIC_CLAIM)
         private val REWARD_PRE_GAME_POPUPS = setOf(
+            BotStage.CLOSE_BUTTON,
             BotStage.CONGRATULATIONS,
             BotStage.LEVEL_UP,
             BotStage.DAILY_CHECKIN,

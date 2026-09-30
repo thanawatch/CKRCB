@@ -7,6 +7,7 @@ enum class BotStage {
     GAME_RELAY,
     GAME_COMPLETE,
     MYSTERY_BOX,
+    CLOSE_BUTTON,
     CONGRATULATIONS,
     LEVEL_UP,
     RELIC_COMPLETE,

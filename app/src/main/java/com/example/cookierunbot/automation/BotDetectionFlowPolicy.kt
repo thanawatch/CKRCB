@@ -33,6 +33,10 @@ internal inline fun runConfirmedGameComplete(
 internal fun rewardPopupResumeGroup(detectedGroup: DetectionGroup): DetectionGroup =
     if (detectedGroup == DetectionGroup.POST_GAME) DetectionGroup.POST_GAME else DetectionGroup.PRE_GAME
 
+/** CLOSE_BUTTON is a normal popup only outside gameplay. */
+internal fun closePopupEnabledForGroup(group: DetectionGroup): Boolean =
+    group == DetectionGroup.PRE_GAME || group == DetectionGroup.POST_GAME
+
 internal fun groupAfterRecoveryMainMenu(
     previousGroup: DetectionGroup,
     mainMenuMatched: Boolean,

@@ -57,6 +57,12 @@ class BotDetectionFlowPolicyTest {
         assertEquals(DetectionGroup.PRE_GAME, rewardPopupResumeGroup(DetectionGroup.IN_GAME))
     }
 
+    @Test fun closePopupIsEnabledOnlyOutsideInGame() {
+        assertTrue(closePopupEnabledForGroup(DetectionGroup.PRE_GAME))
+        assertTrue(closePopupEnabledForGroup(DetectionGroup.POST_GAME))
+        assertFalse(closePopupEnabledForGroup(DetectionGroup.IN_GAME))
+    }
+
     @Test fun postGameRelicCandidatesStillHonorDetectRelicOption() {
         val stages = postGameStages(
             listOf(BotStage.RELIC_COMPLETE, BotStage.RELIC_CLAIM, BotStage.LEVEL_UP),
