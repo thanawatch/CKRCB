@@ -17,6 +17,7 @@ object BotOptionsStore {
             .putBoolean("friend_life", options.sendFriendLife)
             .putInt("friend_life_interval_minutes", options.friendLifeIntervalMinutes)
             .putBoolean("quick_lives", options.receiveSendLivesAfterEachGame)
+            .putInt("quick_lives_interval_minutes", options.quickLivesIntervalMinutes)
             .putBoolean("save_debug_images", options.saveDebugImages)
             .putBoolean("save_result_images", options.saveResultImages)
             .putString("jump_mode", options.jumpMode.name)
@@ -52,6 +53,9 @@ object BotOptionsStore {
                     preferences.getInt("friend_life_interval_minutes", FRIEND_LIFE_DEFAULT_INTERVAL_MINUTES),
                 ),
                 receiveSendLivesAfterEachGame = preferences.getBoolean("quick_lives", false),
+                quickLivesIntervalMinutes = quickLivesIntervalMinutesFromStoredValue(
+                    preferences.getInt("quick_lives_interval_minutes", QUICK_LIVES_DEFAULT_INTERVAL_MINUTES),
+                ),
                 saveDebugImages = preferences.getBoolean("save_debug_images", true),
                 saveResultImages = preferences.getBoolean("save_result_images", true),
                 jumpMode = jumpMode,
@@ -91,6 +95,10 @@ object BotOptionsStore {
     internal fun friendLifeIntervalMinutesFromStoredValue(value: Int): Int =
         value.takeIf { it in FRIEND_LIFE_MIN_INTERVAL_MINUTES..FRIEND_LIFE_MAX_INTERVAL_MINUTES }
             ?: FRIEND_LIFE_DEFAULT_INTERVAL_MINUTES
+
+    internal fun quickLivesIntervalMinutesFromStoredValue(value: Int): Int =
+        value.takeIf { it in QUICK_LIVES_MIN_INTERVAL_MINUTES..QUICK_LIVES_MAX_INTERVAL_MINUTES }
+            ?: QUICK_LIVES_DEFAULT_INTERVAL_MINUTES
 
     internal fun performanceProfileFromStoredValue(value: String?): PerformanceProfile =
         enumValueOrDefault(value, PerformanceProfile.LEGACY)
