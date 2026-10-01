@@ -29,6 +29,7 @@ data class BotOptions(
     val sendFriendLife: Boolean = false,
     val friendLifeIntervalMinutes: Int = FRIEND_LIFE_DEFAULT_INTERVAL_MINUTES,
     val receiveSendLivesAfterEachGame: Boolean = false,
+    val quickLivesIntervalMinutes: Int = QUICK_LIVES_DEFAULT_INTERVAL_MINUTES,
     val saveDebugImages: Boolean = true,
     val saveResultImages: Boolean = true,
     val jumpMode: JumpMode = JumpMode.NONE,
@@ -39,6 +40,9 @@ data class BotOptions(
         require(friendLifeIntervalMinutes in FRIEND_LIFE_MIN_INTERVAL_MINUTES..FRIEND_LIFE_MAX_INTERVAL_MINUTES) {
             "Friend Life interval must be 1-1440 minutes"
         }
+        require(quickLivesIntervalMinutes in QUICK_LIVES_MIN_INTERVAL_MINUTES..QUICK_LIVES_MAX_INTERVAL_MINUTES) {
+            "Receive/Send Lives interval must be 1-1440 minutes"
+        }
         require(tapIntervalMs in 100..1000) { "Tap interval must be 100-1000 ms" }
         require(jumpMode != JumpMode.FIXED_COUNT || fixedJumpCount > 0) {
             "Fixed jump count must be positive"
@@ -47,4 +51,16 @@ data class BotOptions(
             "Post Cookie Relay sequence requires Cookie Relay"
         }
     }
+}
+
+
+const val QUICK_LIVES_DEFAULT_INTERVAL_MINUTES = 1
+const val QUICK_LIVES_MIN_INTERVAL_MINUTES = 1
+const val QUICK_LIVES_MAX_INTERVAL_MINUTES = 1440
+
+internal fun quickLivesIntervalMs(minutes: Int): Long {
+    require(minutes in QUICK_LIVES_MIN_INTERVAL_MINUTES..QUICK_LIVES_MAX_INTERVAL_MINUTES) {
+        "Receive/Send Lives interval must be 1-1440 minutes"
+    }
+    return minutes.toLong() * 60_000L
 }
