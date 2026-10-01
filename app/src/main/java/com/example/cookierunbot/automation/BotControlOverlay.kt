@@ -59,6 +59,7 @@ class BotControlOverlay(private val context: Context) {
     private val sendFriendLife = Switch(context)
     private val friendLifeMinutes = EditText(context)
     private val quickLives = Switch(context)
+    private val quickLivesMinutes = EditText(context)
     private val saveDebugImages = Switch(context)
     private val saveResultImages = Switch(context)
     private val jumpFixed = Switch(context)
@@ -250,7 +251,20 @@ class BotControlOverlay(private val context: Context) {
                 if (!tool.open()) tool.close()
             }
         }, matchWidth())
-        addSwitch(quickLives, "Receive/Send Lives after each game", options.receiveSendLivesAfterEachGame)
+        addSwitch(quickLives, "Receive/Send Lives after game on a schedule", options.receiveSendLivesAfterEachGame)
+        panel.addView(TextView(context).apply {
+            text = "Receive/Send Lives interval (minutes, 1-1440)"
+            setTextColor(Color.WHITE)
+        }, matchWidth())
+        quickLivesMinutes.apply {
+            hint = "Minutes (default 1)"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setSingleLine(true)
+            setText(options.quickLivesIntervalMinutes.toString())
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.LTGRAY)
+        }
+        panel.addView(quickLivesMinutes, matchWidth())
         addSwitch(saveDebugImages, "Save NO_MATCH Debug Images", options.saveDebugImages)
         addSwitch(saveResultImages, "Save GAME_COMPLETE / MYSTERY_BOX Images", options.saveResultImages)
         val saveImageOptions = android.widget.CompoundButton.OnCheckedChangeListener { _, _ ->
@@ -288,6 +302,7 @@ class BotControlOverlay(private val context: Context) {
         }
         desiredBoost.setOnCheckedChangeListener { _, _ -> updateInputStates() }
         sendFriendLife.setOnCheckedChangeListener { _, _ -> updateInputStates() }
+        quickLives.setOnCheckedChangeListener { _, _ -> updateInputStates() }
         jumpFixed.setOnCheckedChangeListener { _, checked ->
             if (checked) jumpContinuous.isChecked = false
             updateInputStates()
@@ -372,6 +387,8 @@ class BotControlOverlay(private val context: Context) {
         val tapInterval = interval.text.toString().toIntOrNull() ?: 250
         val friendIntervalMinutes = friendLifeMinutes.text.toString().trim().toIntOrNull()
             ?: throw IllegalArgumentException("Friend Life interval must be 1-1440 minutes")
+        val quickLivesIntervalMinutes = quickLivesMinutes.text.toString().trim().toIntOrNull()
+            ?: throw IllegalArgumentException("Receive/Send Lives interval must be 1-1440 minutes")
         return BotOptions(
             performanceProfile = if (redfingerProfile.isChecked) {
                 PerformanceProfile.REDFINGER_OPTIMIZED
@@ -387,6 +404,7 @@ class BotControlOverlay(private val context: Context) {
             sendFriendLife = sendFriendLife.isChecked,
             friendLifeIntervalMinutes = friendIntervalMinutes,
             receiveSendLivesAfterEachGame = quickLives.isChecked,
+            quickLivesIntervalMinutes = quickLivesIntervalMinutes,
             saveDebugImages = saveDebugImages.isChecked,
             saveResultImages = saveResultImages.isChecked,
             jumpMode = mode,
@@ -405,6 +423,7 @@ class BotControlOverlay(private val context: Context) {
 
     private fun updateInputStates() {
         friendLifeMinutes.isEnabled = sendFriendLife.isChecked
+        quickLivesMinutes.isEnabled = quickLives.isChecked
         postRelay.isEnabled = cookieRelay.isChecked
         boostGroup.visibility = if (desiredBoost.isChecked) View.VISIBLE else View.GONE
         fixedCount.isEnabled = jumpFixed.isChecked
