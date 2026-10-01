@@ -1899,6 +1899,18 @@ class BotController(
                         )
                     }
                     if (!revalidateMainMenu(detector, "AFTER_FRIEND_LIFE")) return
+                    val quickLivesAfterFriendNow = SystemClock.elapsedRealtime()
+                    livesPendingAfterGame = options.receiveSendLivesAfterEachGame &&
+                        !livesDoneForRound && quickLivesAfterFriendNow >= quickLivesNextDueAt
+                    logDiagnostic(
+                        "[QUICK_LIVES_AFTER_FRIEND_LIFE] enabled=${options.receiveSendLivesAfterEachGame} " +
+                            "intervalMinutes=${options.quickLivesIntervalMinutes} due=$livesPendingAfterGame " +
+                            "nextDueInMs=${if (options.receiveSendLivesAfterEachGame) {
+                                (quickLivesNextDueAt - quickLivesAfterFriendNow).coerceAtLeast(0L)
+                            } else {
+                                0L
+                            }}",
+                    )
                 }
                 FriendLifeWorkflowResult.INTERRUPTED -> {
                     friendLifeScheduler.interrupt()
