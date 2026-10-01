@@ -92,6 +92,7 @@ class BotController(
     private var mysteryBoxCount = 0
     private var livesDoneForRound = true
     private var livesPendingAfterGame = false
+    private var quickLivesNextDueAt = Long.MAX_VALUE
     private val friendLifeScheduler = FriendLifeScheduler()
     private val purchaseItemRetryState = PurchaseItemRetryState()
     private var lastNoMatchDiagnosticAt = 0L
@@ -222,8 +223,20 @@ class BotController(
             mysteryBoxCount = 0
             livesDoneForRound = true
             livesPendingAfterGame = false
+            val now = SystemClock.elapsedRealtime()
+            val configuredQuickLivesIntervalMs = quickLivesIntervalMs(options.quickLivesIntervalMinutes)
+            quickLivesNextDueAt = if (options.receiveSendLivesAfterEachGame) {
+                now + configuredQuickLivesIntervalMs
+            } else {
+                Long.MAX_VALUE
+            }
+            logDiagnostic(
+                "[QUICK_LIVES_TIMER] enabled=${options.receiveSendLivesAfterEachGame} " +
+                    "intervalMinutes=${options.quickLivesIntervalMinutes} intervalMs=$configuredQuickLivesIntervalMs " +
+                    "firstDueInMs=${if (options.receiveSendLivesAfterEachGame) configuredQuickLivesIntervalMs else 0}",
+            )
             val configuredFriendLifeIntervalMs = friendLifeIntervalMs(options.friendLifeIntervalMinutes)
-            friendLifeScheduler.start(options.sendFriendLife, SystemClock.elapsedRealtime(), configuredFriendLifeIntervalMs)
+            friendLifeScheduler.start(options.sendFriendLife, now, configuredFriendLifeIntervalMs)
             logDiagnostic(
                 "[FRIEND_LIFE_TIMER] enabled=${options.sendFriendLife} " +
                     "intervalMinutes=${options.friendLifeIntervalMinutes} intervalMs=$configuredFriendLifeIntervalMs " +
@@ -1904,6 +1917,12 @@ class BotController(
                 livesDoneForRound = true
                 livesPendingAfterGame = false
             }
+            val completedAt = SystemClock.elapsedRealtime()
+            quickLivesNextDueAt = completedAt + quickLivesIntervalMs(options.quickLivesIntervalMinutes)
+            logDiagnostic(
+                "[QUICK_LIVES_TIMER] intervalMinutes=${options.quickLivesIntervalMinutes} " +
+                    "nextDueInMs=${quickLivesIntervalMs(options.quickLivesIntervalMinutes)}",
+            )
             Log.i(CookieRunBotApplication.TAG, "[LIVES] Workflow completed")
         }
         if (!isFirstGame) {
@@ -2302,7 +2321,18 @@ class BotController(
         val finishAccepted = performTap("GAME_COMPLETE_FINISH", AutomationConfig.COMPLETE_FINISH, sourceWidth, sourceHeight)
         if (!finishAccepted && !synchronized(lock) { canDispatchActionLocked() }) return
         delayOrStop(randomMs(800, 1400))
-        livesPendingAfterGame = options.receiveSendLivesAfterEachGame
+        val quickLivesNow = SystemClock.elapsedRealtime()
+        livesPendingAfterGame = options.receiveSendLivesAfterEachGame &&
+            quickLivesNow >= quickLivesNextDueAt
+        logDiagnostic(
+            "[QUICK_LIVES_POST_GAME] enabled=${options.receiveSendLivesAfterEachGame} " +
+                "intervalMinutes=${options.quickLivesIntervalMinutes} due=$livesPendingAfterGame " +
+                "nextDueInMs=${if (options.receiveSendLivesAfterEachGame) {
+                    (quickLivesNextDueAt - quickLivesNow).coerceAtLeast(0L)
+                } else {
+                    0L
+                }}",
+        )
     }
 
     private fun handleMysteryBox(sourceWidth: Int, sourceHeight: Int, detectedFrame: Mat) {
