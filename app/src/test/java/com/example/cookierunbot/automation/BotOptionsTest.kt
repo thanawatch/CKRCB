@@ -91,4 +91,42 @@ class BotOptionsTest {
         assertEquals(7, settings.friendLifeIntervalMinutes)
     }
 
+    @Test
+    fun quickLivesIntervalDefaultsToOneMinuteAndStoredValuesAreSanitized() {
+        assertEquals(1, BotOptions().quickLivesIntervalMinutes)
+        assertEquals(1, BotOptionsStore.quickLivesIntervalMinutesFromStoredValue(1))
+        assertEquals(5, BotOptionsStore.quickLivesIntervalMinutesFromStoredValue(5))
+        assertEquals(1440, BotOptionsStore.quickLivesIntervalMinutesFromStoredValue(1440))
+        assertEquals(1, BotOptionsStore.quickLivesIntervalMinutesFromStoredValue(0))
+        assertEquals(1, BotOptionsStore.quickLivesIntervalMinutesFromStoredValue(1441))
+    }
+
+    @Test
+    fun quickLivesIntervalSupportsMinutePrecisionAndBounds() {
+        assertEquals(
+            5,
+            BotOptions(
+                receiveSendLivesAfterEachGame = true,
+                quickLivesIntervalMinutes = 5,
+            ).quickLivesIntervalMinutes,
+        )
+        assertEquals(300_000L, quickLivesIntervalMs(5))
+        assertThrows(IllegalArgumentException::class.java) {
+            BotOptions(quickLivesIntervalMinutes = 0)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            BotOptions(quickLivesIntervalMinutes = 1441)
+        }
+    }
+
+    @Test
+    fun disabledQuickLivesCanRetainSelectedMinutesForLaterStart() {
+        val settings = BotOptions(
+            receiveSendLivesAfterEachGame = false,
+            quickLivesIntervalMinutes = 30,
+        )
+        assertEquals(false, settings.receiveSendLivesAfterEachGame)
+        assertEquals(30, settings.quickLivesIntervalMinutes)
+    }
+
 }
