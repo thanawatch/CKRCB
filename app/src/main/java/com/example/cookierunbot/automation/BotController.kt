@@ -81,7 +81,6 @@ class BotController(
     private var lastTraceHeartbeatAt = 0L
     private var lastDetectFrameLogAt = 0L
     private var lastPreviousResultsDiagnosticAt = 0L
-    private var isFirstGame = true
     private var roundNumber = 0
     private var gameStartDetectedForRound = false
     private var fastStartPollDeadlineNanos = 0L
@@ -209,7 +208,6 @@ class BotController(
             group = DetectionGroup.PRE_GAME
             lastStage = null
             lastDetectionAt = SystemClock.elapsedRealtime()
-            isFirstGame = true
             roundNumber = 0
             purchaseItemRetryState.reset()
             gameStartDetectedForRound = false
@@ -1937,18 +1935,12 @@ class BotController(
             )
             Log.i(CookieRunBotApplication.TAG, "[LIVES] Workflow completed")
         }
-        if (!isFirstGame) {
-            val wait = randomMs(2000, 3000)
-            Log.i(CookieRunBotApplication.TAG, "[BOT] Waiting ${wait / 1000.0}s before next game")
-            delayOrStop(wait)
-        }
         if (!revalidateMainMenu(detector, "BEFORE_MAINMENU_START")) return
         if (!performTap("MAINMENU_START", LogicalPoint(955, 650), sourceWidth, sourceHeight)) {
             return
         }
         synchronized(lock) {
             if (!isCurrentWorkerRunLocked()) return
-            isFirstGame = false
             livesDoneForRound = false
             livesPendingAfterGame = false
         }
