@@ -1847,6 +1847,18 @@ class BotController(
         Log.i(CookieRunBotApplication.TAG, "[BOT] MAINMENU reached; waiting 5 seconds for screen refresh")
         delayOrStop(5000L)
         if (!revalidateMainMenu(detector, "AFTER_INITIAL_WAIT")) return
+        val quickLivesNow = SystemClock.elapsedRealtime()
+        livesPendingAfterGame = options.receiveSendLivesAfterEachGame &&
+            !livesDoneForRound && quickLivesNow >= quickLivesNextDueAt
+        logDiagnostic(
+            "[QUICK_LIVES_MAINMENU] enabled=${options.receiveSendLivesAfterEachGame} " +
+                "intervalMinutes=${options.quickLivesIntervalMinutes} due=$livesPendingAfterGame " +
+                "nextDueInMs=${if (options.receiveSendLivesAfterEachGame) {
+                    (quickLivesNextDueAt - quickLivesNow).coerceAtLeast(0L)
+                } else {
+                    0L
+                }}",
+        )
         val friendNow = SystemClock.elapsedRealtime()
         if (friendLifeScheduler.observeTime(friendNow)) {
             logDiagnostic("[FRIEND_LIFE_DUE] source=MAINMENU_PRECHECK nowMs=$friendNow pending=true")
@@ -2321,18 +2333,7 @@ class BotController(
         val finishAccepted = performTap("GAME_COMPLETE_FINISH", AutomationConfig.COMPLETE_FINISH, sourceWidth, sourceHeight)
         if (!finishAccepted && !synchronized(lock) { canDispatchActionLocked() }) return
         delayOrStop(randomMs(800, 1400))
-        val quickLivesNow = SystemClock.elapsedRealtime()
-        livesPendingAfterGame = options.receiveSendLivesAfterEachGame &&
-            quickLivesNow >= quickLivesNextDueAt
-        logDiagnostic(
-            "[QUICK_LIVES_POST_GAME] enabled=${options.receiveSendLivesAfterEachGame} " +
-                "intervalMinutes=${options.quickLivesIntervalMinutes} due=$livesPendingAfterGame " +
-                "nextDueInMs=${if (options.receiveSendLivesAfterEachGame) {
-                    (quickLivesNextDueAt - quickLivesNow).coerceAtLeast(0L)
-                } else {
-                    0L
-                }}",
-        )
+        livesPendingAfterGame = false
     }
 
     private fun handleMysteryBox(sourceWidth: Int, sourceHeight: Int, detectedFrame: Mat) {
