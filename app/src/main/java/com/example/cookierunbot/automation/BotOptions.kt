@@ -29,12 +29,12 @@ data class BotOptions(
     val sendFriendLife: Boolean = false,
     val friendLifeIntervalMinutes: Int = FRIEND_LIFE_DEFAULT_INTERVAL_MINUTES,
     val receiveSendLivesAfterEachGame: Boolean = false,
-    val quickLivesIntervalMinutes: Int = QUICK_LIVES_DEFAULT_INTERVAL_MINUTES,
     val saveDebugImages: Boolean = true,
     val saveResultImages: Boolean = true,
     val jumpMode: JumpMode = JumpMode.NONE,
     val fixedJumpCount: Int = 0,
     val tapIntervalMs: Int = 250,
+    val quickLivesIntervalMinutes: Int = QUICK_LIVES_DEFAULT_INTERVAL_MINUTES,
 ) {
     init {
         require(friendLifeIntervalMinutes in FRIEND_LIFE_MIN_INTERVAL_MINUTES..FRIEND_LIFE_MAX_INTERVAL_MINUTES) {
