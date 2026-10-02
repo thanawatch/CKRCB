@@ -1950,16 +1950,26 @@ class BotController(
                     val failedAt = SystemClock.elapsedRealtime()
                     val activeElapsedMs = friendLifeScheduler.activeElapsedMs(failedAt)
                     val budgetExhausted = activeElapsedMs >= FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS
-                    logDiagnostic(
-                        "[FRIEND_LIFE_BUDGET] action=" +
-                            (if (budgetExhausted) "rollover_after_budget_exhausted" else "pause_for_retry") +
-                            " activeElapsedMs=$activeElapsedMs retryDelayMs=$FRIEND_LIFE_RETRY_DELAY_MS",
-                    )
-                    friendLifeScheduler.fail(
-                        failedAt,
-                        FRIEND_LIFE_RETRY_DELAY_MS,
-                        resetActiveBudget = budgetExhausted,
-                    )
+                    if (budgetExhausted) {
+                        logDiagnostic(
+                            "[FRIEND_LIFE_BUDGET] action=budget_exhausted_no_retry " +
+                                "activeElapsedMs=$activeElapsedMs",
+                        )
+                        friendLifeScheduler.exhaust(friendTrigger, failedAt)
+                        if (friendTrigger != FriendLifeTrigger.TEST) {
+                            logDiagnostic(
+                                "[FRIEND_LIFE_TIMER] reason=budget_exhausted " +
+                                    "intervalMinutes=${options.friendLifeIntervalMinutes} " +
+                                    "nextDueInMs=${friendLifeIntervalMs(options.friendLifeIntervalMinutes)}",
+                            )
+                        }
+                    } else {
+                        logDiagnostic(
+                            "[FRIEND_LIFE_BUDGET] action=pause_for_retry " +
+                                "activeElapsedMs=$activeElapsedMs retryDelayMs=$FRIEND_LIFE_RETRY_DELAY_MS",
+                        )
+                        friendLifeScheduler.fail(failedAt, FRIEND_LIFE_RETRY_DELAY_MS)
+                    }
                     lastStage = null
                     updateGroup(DetectionGroup.PRE_GAME)
                     return
