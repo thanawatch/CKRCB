@@ -142,26 +142,29 @@ class FriendLifeSchedulerTest {
         assertEquals(15 * 60_000L, scheduler.activeElapsedMs(retryAt + 3 * 60_000L))
     }
 
-    @Test fun exhaustedBudgetRollsOverOnlyForTheNextRetryCycle() {
+    @Test fun exhaustedBudgetEndsCurrentCycleWithoutRetry() {
         val scheduler = FriendLifeScheduler()
         scheduler.start(true, 0L)
         scheduler.observeTime(FRIEND_LIFE_INTERVAL_MS)
 
         val startedAt = FRIEND_LIFE_INTERVAL_MS
-        assertEquals(FriendLifeTrigger.SCHEDULED, scheduler.beginIfReady(startedAt))
-        val failedAt = startedAt + FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS
-        assertEquals(FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS, scheduler.activeElapsedMs(failedAt))
+        val trigger = requireNotNull(scheduler.beginIfReady(startedAt))
+        assertEquals(FriendLifeTrigger.SCHEDULED, trigger)
+        val exhaustedAt = startedAt + FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS
+        assertEquals(FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS, scheduler.activeElapsedMs(exhaustedAt))
 
-        scheduler.fail(
-            failedAt,
-            5 * 60_000L,
-            resetActiveBudget = true,
+        scheduler.exhaust(trigger, exhaustedAt)
+
+        assertEquals(0L, scheduler.activeElapsedMs(exhaustedAt + 1L))
+        assertFalse(scheduler.scheduledPending())
+        assertEquals(exhaustedAt + FRIEND_LIFE_INTERVAL_MS, scheduler.nextDueAt())
+        assertFalse(scheduler.hasPendingWork(exhaustedAt + 5 * 60_000L))
+        assertFalse(scheduler.observeTime(scheduler.nextDueAt() - 1L))
+        assertTrue(scheduler.observeTime(scheduler.nextDueAt()))
+        assertEquals(
+            FriendLifeTrigger.SCHEDULED,
+            scheduler.beginIfReady(scheduler.nextDueAt()),
         )
-        assertEquals(0L, scheduler.activeElapsedMs(failedAt + 1L))
-
-        val retryAt = failedAt + 5 * 60_000L
-        assertEquals(FriendLifeTrigger.SCHEDULED, scheduler.beginIfReady(retryAt))
-        assertEquals(2 * 60_000L, scheduler.activeElapsedMs(retryAt + 2 * 60_000L))
     }
 
     @Test fun safetyFailureClearsManualButDelaysScheduledRetry() {
