@@ -1889,7 +1889,10 @@ class BotController(
                 logDiagnostic("[FRIEND_LIFE_PRECHECK] pending=true mainMenuValid=true action=defer_not_ready")
                 return
             }
-            logDiagnostic("[FRIEND_LIFE_PRECHECK] pending=true mainMenuValid=true action=begin")
+            logDiagnostic(
+                "[FRIEND_LIFE_PRECHECK] pending=true mainMenuValid=true action=begin " +
+                    "activeElapsedMs=${friendLifeScheduler.activeElapsedMs(SystemClock.elapsedRealtime())}",
+            )
             friendLifeWorkflowActive = true
             friendLifeCurrentSentCount = 0
             friendLifeLastProgressAt = SystemClock.elapsedRealtime()
@@ -1905,6 +1908,10 @@ class BotController(
             when (friendLifeResult) {
                 FriendLifeWorkflowResult.COMPLETED -> {
                     val completedAt = SystemClock.elapsedRealtime()
+                    logDiagnostic(
+                        "[FRIEND_LIFE_BUDGET] action=complete activeElapsedMs=" +
+                            "${friendLifeScheduler.activeElapsedMs(completedAt)}",
+                    )
                     friendLifeScheduler.complete(friendTrigger, completedAt)
                     if (friendTrigger != FriendLifeTrigger.TEST) {
                         logDiagnostic(
@@ -1928,13 +1935,24 @@ class BotController(
                     )
                 }
                 FriendLifeWorkflowResult.INTERRUPTED -> {
-                    friendLifeScheduler.interrupt()
+                    val interruptedAt = SystemClock.elapsedRealtime()
+                    val activeElapsedMs = friendLifeScheduler.activeElapsedMs(interruptedAt)
+                    friendLifeScheduler.interrupt(interruptedAt)
+                    logDiagnostic(
+                        "[FRIEND_LIFE_BUDGET] action=pause activeElapsedMs=$activeElapsedMs " +
+                            "remainingMs=${(FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS - activeElapsedMs).coerceAtLeast(0L)}",
+                    )
                     lastStage = null
                     updateGroup(DetectionGroup.PRE_GAME)
                     return
                 }
                 FriendLifeWorkflowResult.FAILED -> {
-                    friendLifeScheduler.fail(SystemClock.elapsedRealtime(), FRIEND_LIFE_RETRY_DELAY_MS)
+                    val failedAt = SystemClock.elapsedRealtime()
+                    logDiagnostic(
+                        "[FRIEND_LIFE_BUDGET] action=reset_after_failure activeElapsedMs=" +
+                            "${friendLifeScheduler.activeElapsedMs(failedAt)} retryDelayMs=$FRIEND_LIFE_RETRY_DELAY_MS",
+                    )
+                    friendLifeScheduler.fail(failedAt, FRIEND_LIFE_RETRY_DELAY_MS)
                     lastStage = null
                     updateGroup(DetectionGroup.PRE_GAME)
                     return
@@ -2479,7 +2497,16 @@ class BotController(
             logDiagnostic("[FRIEND_LIFE_TOP_FOUND] swipeCount=0 elapsedMs=${SystemClock.elapsedRealtime() - findTopStartedAt}")
         }
         while (!topFound && isRunning()) {
-            val elapsedMs = SystemClock.elapsedRealtime() - findTopStartedAt
+            val now = SystemClock.elapsedRealtime()
+            val activeElapsedMs = friendLifeScheduler.activeElapsedMs(now)
+            if (activeElapsedMs >= FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS) {
+                logDiagnostic(
+                    "[FRIEND_LIFE_ABORT] phase=FIND_TOP reason=absolute_timeout " +
+                        "elapsedMs=$activeElapsedMs topSwipeCount=$topSwipeCount",
+                )
+                return FriendLifeWorkflowResult.FAILED
+            }
+            val elapsedMs = now - findTopStartedAt
             if (friendLifeTopSearchDecision(false, elapsedMs) == FriendLifeTopSearchDecision.CONTINUE_TRAVERSAL) break
             topSwipeCount += 1
             val beforeTopScroll = LatestFrameProvider.snapshot()
@@ -2585,7 +2612,7 @@ class BotController(
                 )
             }
             val watchdogNow = SystemClock.elapsedRealtime()
-            val friendLifeElapsedMs = watchdogNow - startedAt
+            val friendLifeElapsedMs = friendLifeScheduler.activeElapsedMs(watchdogNow)
             val noProgressMs = watchdogNow - lastProgressElapsedRealtime
             if (watchdogNow - lastWatchdogLogAt >= FRIEND_LIFE_WATCHDOG_LOG_INTERVAL_MS) {
                 logDiagnostic(
@@ -2647,7 +2674,8 @@ class BotController(
                     logDiagnostic(
                         "[FRIEND_LIFE_COMPLETE] trigger=${friendTriggerText(trigger)} sentCount=$sentCount " +
                             "traverseSwipeCount=$traverseSwipeCount " +
-                            "elapsedMs=${SystemClock.elapsedRealtime() - startedAt} reason=bottom_reached",
+                            "elapsedMs=${friendLifeScheduler.activeElapsedMs(SystemClock.elapsedRealtime())} " +
+                            "reason=bottom_reached",
                     )
                     return FriendLifeWorkflowResult.COMPLETED
                 }
@@ -4106,7 +4134,7 @@ class BotController(
         private val DESIRED_BOOST_REGION = Rect(701, 505, 1091 - 701, 578 - 505)
         private const val FAST_START_PRIORITY_WINDOW_NANOS = 8_000_000_000L
         private const val FRIEND_RESCAN_TIMEOUT_MS = 2_500L
-        private const val FRIEND_LIFE_RETRY_DELAY_MS = 15L * 60L * 1000L
+        private const val FRIEND_LIFE_RETRY_DELAY_MS = 5L * 60L * 1000L
         private val FRIEND_TOP_REGION = Rect(100, 230, 160, 390)
         private val FRIEND_BOTTOM_REGION = Rect(220, 500, 450, 170)
         private val FRIEND_SEND_REGION = Rect(550, 230, 240, 440)
