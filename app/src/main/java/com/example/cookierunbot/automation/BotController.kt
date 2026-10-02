@@ -2631,7 +2631,8 @@ class BotController(
                     }
                     friendLifeTemplateConfirmStep(
                         detector, "CONFIRM_2", confirm1.freshGeneration,
-                        requireNewFrame = confirm1.skipped, postTapPacingMs = FRIEND_POST_TAP_SETTLE_MS,
+                        requireNewFrame = confirm1.skipped,
+                        postTapPacingMs = randomMs(FRIEND_FINAL_PACING_MIN_MS, FRIEND_FINAL_PACING_MAX_MS),
                     ).let { step ->
                         if (!step.success) return friendLifeAbort("SEND", step.failureReason, sentCount)
                         val decision = friendLifeSendDecision(FriendLifeSendStep.CONFIRM_2, step.interrupt)
@@ -4105,7 +4106,6 @@ class BotController(
         private val DESIRED_BOOST_REGION = Rect(701, 505, 1091 - 701, 578 - 505)
         private const val FAST_START_PRIORITY_WINDOW_NANOS = 8_000_000_000L
         private const val FRIEND_RESCAN_TIMEOUT_MS = 2_500L
-        private const val FRIEND_POST_TAP_SETTLE_MS = 300L
         private const val FRIEND_LIFE_RETRY_DELAY_MS = 15L * 60L * 1000L
         private val FRIEND_TOP_REGION = Rect(100, 230, 160, 390)
         private val FRIEND_BOTTOM_REGION = Rect(220, 500, 450, 170)
