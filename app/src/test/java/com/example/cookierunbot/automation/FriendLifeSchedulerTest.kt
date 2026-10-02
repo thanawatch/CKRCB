@@ -394,6 +394,8 @@ class FriendLifeSchedulerTest {
         assertEquals(360L, FRIEND_FIND_TOP_SWIPE_DURATION_MS)
         assertEquals(800L, FRIEND_TRAVERSE_SWIPE_DURATION_MS)
         assertEquals(3_500L, FRIEND_GESTURE_TIMEOUT_MS)
+        assertEquals(300, FRIEND_SEND_PACING_MIN_MS)
+        assertEquals(600, FRIEND_SEND_PACING_MAX_MS)
         assertEquals(30_000L, FRIEND_LIFE_NO_PROGRESS_TIMEOUT_MS)
         assertEquals(1_800_000L, FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS)
         assertEquals(5, FRIEND_TOP_SWIPES_PER_CHECK)
