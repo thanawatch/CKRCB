@@ -35,6 +35,8 @@ class FriendLifeScheduler(private var intervalMs: Long = FRIEND_LIFE_INTERVAL_MS
     private var testPending = false
     private var inProgress = false
     private var retryNotBefore = 0L
+    private var activeAccumulatedMs = 0L
+    private var activeRunStartedAt = 0L
 
     @Synchronized fun start(
         enableSchedule: Boolean,
@@ -49,6 +51,8 @@ class FriendLifeScheduler(private var intervalMs: Long = FRIEND_LIFE_INTERVAL_MS
         testPending = false
         inProgress = false
         retryNotBefore = 0L
+        activeAccumulatedMs = 0L
+        activeRunStartedAt = 0L
     }
 
     @Synchronized fun stop() = start(false, 0L)
@@ -74,6 +78,7 @@ class FriendLifeScheduler(private var intervalMs: Long = FRIEND_LIFE_INTERVAL_MS
     @Synchronized fun beginIfReady(nowMs: Long): FriendLifeTrigger? {
         if (inProgress || nowMs < retryNotBefore || (!scheduledPending && !testPending)) return null
         inProgress = true
+        activeRunStartedAt = nowMs
         return when {
             scheduledPending && testPending -> FriendLifeTrigger.SCHEDULED_AND_TEST
             scheduledPending -> FriendLifeTrigger.SCHEDULED
@@ -84,6 +89,8 @@ class FriendLifeScheduler(private var intervalMs: Long = FRIEND_LIFE_INTERVAL_MS
     @Synchronized fun complete(trigger: FriendLifeTrigger, completedAtMs: Long) {
         inProgress = false
         retryNotBefore = 0L
+        activeAccumulatedMs = 0L
+        activeRunStartedAt = 0L
         if (trigger != FriendLifeTrigger.TEST) {
             scheduledPending = false
             nextDueAt = completedAtMs + intervalMs
@@ -91,13 +98,28 @@ class FriendLifeScheduler(private var intervalMs: Long = FRIEND_LIFE_INTERVAL_MS
         testPending = false
     }
 
-    @Synchronized fun interrupt() { inProgress = false }
+    @Synchronized fun interrupt(nowMs: Long) {
+        if (inProgress) {
+            activeAccumulatedMs += (nowMs - activeRunStartedAt).coerceAtLeast(0L)
+        }
+        inProgress = false
+        activeRunStartedAt = 0L
+    }
 
     @Synchronized fun fail(nowMs: Long, retryDelayMs: Long) {
         inProgress = false
+        activeAccumulatedMs = 0L
+        activeRunStartedAt = 0L
         testPending = false
         if (scheduledPending) retryNotBefore = nowMs + retryDelayMs
     }
+
+    @Synchronized fun activeElapsedMs(nowMs: Long): Long =
+        activeAccumulatedMs + if (inProgress) {
+            (nowMs - activeRunStartedAt).coerceAtLeast(0L)
+        } else {
+            0L
+        }
 
     @Synchronized fun nextDueAt(): Long = nextDueAt
     @Synchronized fun scheduledPending(): Boolean = scheduledPending
