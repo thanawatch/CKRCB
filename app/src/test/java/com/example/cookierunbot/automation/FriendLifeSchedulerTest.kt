@@ -129,6 +129,18 @@ class FriendLifeSchedulerTest {
         )
     }
 
+    @Test fun finalVisibleSendAndBottomStillRespectAbsoluteTimeout() {
+        assertEquals(
+            FriendLifeTraversalDecision.ABORT_ABSOLUTE_TIMEOUT,
+            friendLifeTraversalDecision(
+                sendButtonMatched = true,
+                bottomMatched = true,
+                elapsedMs = FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS,
+                noProgressMs = 1_000L,
+            ),
+        )
+    }
+
     @Test fun longHealthyTraversalDoesNotTimeoutWhileProgressIsRecent() {
         assertEquals(
             FriendLifeTraversalDecision.SCROLL_DOWN,
