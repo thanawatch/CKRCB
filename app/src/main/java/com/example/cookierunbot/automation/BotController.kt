@@ -1948,11 +1948,18 @@ class BotController(
                 }
                 FriendLifeWorkflowResult.FAILED -> {
                     val failedAt = SystemClock.elapsedRealtime()
+                    val activeElapsedMs = friendLifeScheduler.activeElapsedMs(failedAt)
+                    val budgetExhausted = activeElapsedMs >= FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS
                     logDiagnostic(
-                        "[FRIEND_LIFE_BUDGET] action=reset_after_failure activeElapsedMs=" +
-                            "${friendLifeScheduler.activeElapsedMs(failedAt)} retryDelayMs=$FRIEND_LIFE_RETRY_DELAY_MS",
+                        "[FRIEND_LIFE_BUDGET] action=" +
+                            (if (budgetExhausted) "rollover_after_budget_exhausted" else "pause_for_retry") +
+                            " activeElapsedMs=$activeElapsedMs retryDelayMs=$FRIEND_LIFE_RETRY_DELAY_MS",
                     )
-                    friendLifeScheduler.fail(failedAt, FRIEND_LIFE_RETRY_DELAY_MS)
+                    friendLifeScheduler.fail(
+                        failedAt,
+                        FRIEND_LIFE_RETRY_DELAY_MS,
+                        resetActiveBudget = budgetExhausted,
+                    )
                     lastStage = null
                     updateGroup(DetectionGroup.PRE_GAME)
                     return
