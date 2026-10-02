@@ -143,8 +143,9 @@ internal fun friendLifeInterruptStages(
     preGame: List<BotStage>,
     detectRelic: Boolean,
     relicStages: Set<BotStage>,
-): List<BotStage> = (always + preGame.filterNot { it == BotStage.MAINMENU })
+): List<BotStage> = (always + BotStage.CLOSE_BUTTON + preGame.filterNot { it == BotStage.MAINMENU })
     .filterNot { !detectRelic && it in relicStages }
+    .distinct()
 
 internal fun isGenuinelyPostGestureFrame(frameGeneration: Long, postGestureBaseline: Long): Boolean =
     frameGeneration > postGestureBaseline
@@ -164,6 +165,7 @@ internal fun friendLifeTraversalDecision(
     noProgressTimeoutMs: Long = FRIEND_LIFE_NO_PROGRESS_TIMEOUT_MS,
     absoluteTimeoutMs: Long = FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS,
 ): FriendLifeTraversalDecision = when {
+    sendButtonMatched && bottomMatched -> FriendLifeTraversalDecision.SEND
     bottomMatched -> FriendLifeTraversalDecision.COMPLETE
     elapsedMs >= absoluteTimeoutMs -> FriendLifeTraversalDecision.ABORT_ABSOLUTE_TIMEOUT
     sendButtonMatched -> FriendLifeTraversalDecision.SEND
