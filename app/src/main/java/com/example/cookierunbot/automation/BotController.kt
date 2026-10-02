@@ -1947,6 +1947,20 @@ class BotController(
             )
             Log.i(CookieRunBotApplication.TAG, "[LIVES] Workflow completed")
         }
+        val friendBeforeStartNow = SystemClock.elapsedRealtime()
+        if (friendLifeScheduler.observeTime(friendBeforeStartNow)) {
+            logDiagnostic(
+                "[FRIEND_LIFE_DUE] source=MAINMENU_PRESTART nowMs=$friendBeforeStartNow pending=true",
+            )
+        }
+        if (friendLifeScheduler.hasPendingWork(friendBeforeStartNow)) {
+            logDiagnostic(
+                "[FRIEND_LIFE_PRESTART] pending=true action=defer_mainmenu_start",
+            )
+            lastStage = null
+            updateGroup(DetectionGroup.PRE_GAME)
+            return
+        }
         if (!revalidateMainMenu(detector, "BEFORE_MAINMENU_START")) return
         if (!performTap("MAINMENU_START", LogicalPoint(955, 650), sourceWidth, sourceHeight)) {
             return
@@ -2685,7 +2699,7 @@ class BotController(
         warnIfFriendLifeRoiInvalid("TOP", FRIEND_TOP_REGION, FRIEND_TOP_TEMPLATE_WIDTH, FRIEND_TOP_TEMPLATE_HEIGHT)
         warnIfFriendLifeRoiInvalid("BOTTOM", FRIEND_BOTTOM_REGION, FRIEND_BOTTOM_TEMPLATE_WIDTH, FRIEND_BOTTOM_TEMPLATE_HEIGHT)
         warnIfFriendLifeRoiInvalid("SEND", FRIEND_SEND_REGION, FRIEND_SEND_TEMPLATE_WIDTH, FRIEND_SEND_TEMPLATE_HEIGHT)
-        val interrupt = detector.detectFirst(friendLifeInterruptStages(), snapshot.mat)?.state
+        val interrupt = detectFriendLifeInterrupt(detector, snapshot.mat)
         FriendLifeFrameScan(
             interrupt = interrupt,
             top = detector.detectTemplate(
@@ -2703,10 +2717,23 @@ class BotController(
     private fun detectFriendLifeInterrupt(detector: StateDetector): BotStage? {
         val snapshot = LatestFrameProvider.snapshot() ?: return null
         return try {
-            detector.detectFirst(friendLifeInterruptStages(), snapshot.mat)?.state
+            detectFriendLifeInterrupt(detector, snapshot.mat)
         } finally {
             snapshot.mat.release()
         }
+    }
+
+    private fun detectFriendLifeInterrupt(detector: StateDetector, frame: Mat): BotStage? {
+        val primary = detector.detectFirst(friendLifeInterruptStages(), frame)?.state
+        if (primary != null) return primary
+        val closeRoi = GameProgressCloseRecovery.topRightRoi(frame.cols(), frame.rows())
+        val closeMatched = detector.detectTemplate(
+            frame,
+            GameProgressCloseRecovery.TEMPLATE,
+            closeRoi,
+            GameProgressCloseRecovery.MATCH_THRESHOLD,
+        ).matched
+        return friendLifeInterruptState(primary = null, closeButtonMatched = closeMatched)
     }
 
     private fun logFriendLifeMatch(
