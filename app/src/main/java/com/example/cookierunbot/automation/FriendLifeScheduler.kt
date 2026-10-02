@@ -106,21 +106,26 @@ class FriendLifeScheduler(private var intervalMs: Long = FRIEND_LIFE_INTERVAL_MS
         activeRunStartedAt = 0L
     }
 
-    @Synchronized fun fail(
-        nowMs: Long,
-        retryDelayMs: Long,
-        resetActiveBudget: Boolean = false,
-    ) {
+    @Synchronized fun fail(nowMs: Long, retryDelayMs: Long) {
         if (inProgress) {
             activeAccumulatedMs += (nowMs - activeRunStartedAt).coerceAtLeast(0L)
         }
         inProgress = false
         activeRunStartedAt = 0L
-        if (resetActiveBudget) {
-            activeAccumulatedMs = 0L
-        }
         testPending = false
         if (scheduledPending) retryNotBefore = nowMs + retryDelayMs
+    }
+
+    @Synchronized fun exhaust(trigger: FriendLifeTrigger, endedAtMs: Long) {
+        inProgress = false
+        retryNotBefore = 0L
+        activeAccumulatedMs = 0L
+        activeRunStartedAt = 0L
+        if (trigger != FriendLifeTrigger.TEST) {
+            scheduledPending = false
+            nextDueAt = endedAtMs + intervalMs
+        }
+        testPending = false
     }
 
     @Synchronized fun activeElapsedMs(nowMs: Long): Long =
