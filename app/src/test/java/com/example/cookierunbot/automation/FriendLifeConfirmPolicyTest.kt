@@ -10,8 +10,8 @@ import org.junit.Test
 
 class FriendLifeConfirmPolicyTest {
     @Test fun confirmWaitAndRadiusStayWithinRequestedBounds() {
-        assertEquals(250, FriendLifeConfirmPolicy.WAIT_MIN_MS)
-        assertEquals(500, FriendLifeConfirmPolicy.WAIT_MAX_MS)
+        assertEquals(150, FriendLifeConfirmPolicy.WAIT_MIN_MS)
+        assertEquals(300, FriendLifeConfirmPolicy.WAIT_MAX_MS)
         assertEquals(5.0, FriendLifeConfirmPolicy.RADIUS_LOGICAL, 0.0)
     }
 
