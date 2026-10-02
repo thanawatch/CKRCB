@@ -8,8 +8,8 @@ import kotlin.random.Random
 internal object FriendLifeConfirmPolicy {
     const val TEMPLATE = "CONFIRM_SEND_LIFE_1.png"
     const val RADIUS_LOGICAL = GameProgressRecovery.RADIUS_LOGICAL
-    const val WAIT_MIN_MS = 200
-    const val WAIT_MAX_MS = 400
+    const val WAIT_MIN_MS = 250
+    const val WAIT_MAX_MS = 500
 
     fun fullFrame(width: Int, height: Int): Rect = Rect(0, 0, width, height)
 
