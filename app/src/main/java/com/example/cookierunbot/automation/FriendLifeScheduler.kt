@@ -202,6 +202,8 @@ internal fun friendLifeIntervalMs(minutes: Int): Long {
 internal const val FRIEND_FIND_TOP_SWIPE_DURATION_MS = 360L
 internal const val FRIEND_TRAVERSE_SWIPE_DURATION_MS = 800L
 internal const val FRIEND_GESTURE_TIMEOUT_MS = 3_500L
+internal const val FRIEND_SEND_PACING_MIN_MS = 300
+internal const val FRIEND_SEND_PACING_MAX_MS = 600
 internal const val FRIEND_LIFE_NO_PROGRESS_TIMEOUT_MS = 30_000L
 internal const val FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS = 30L * 60L * 1000L
 internal const val FRIEND_LIFE_WATCHDOG_LOG_INTERVAL_MS = 10_000L
