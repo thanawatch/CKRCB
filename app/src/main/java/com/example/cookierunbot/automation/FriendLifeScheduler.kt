@@ -143,12 +143,14 @@ internal fun friendLifeInterruptStages(
     preGame: List<BotStage>,
     detectRelic: Boolean,
     relicStages: Set<BotStage>,
-): List<BotStage> = (always + BotStage.CLOSE_BUTTON + preGame.filterNot { it == BotStage.MAINMENU })
+): List<BotStage> = (always + preGame.filterNot { it == BotStage.MAINMENU })
     .filterNot { !detectRelic && it in relicStages }
-    .distinct()
 
 internal fun isGenuinelyPostGestureFrame(frameGeneration: Long, postGestureBaseline: Long): Boolean =
     frameGeneration > postGestureBaseline
+
+internal fun friendLifeInterruptState(primary: BotStage?, closeButtonMatched: Boolean): BotStage? =
+    primary ?: if (closeButtonMatched) BotStage.CLOSE_BUTTON else null
 
 internal fun friendLifeRoiContainsTemplate(
     roiWidth: Int,
