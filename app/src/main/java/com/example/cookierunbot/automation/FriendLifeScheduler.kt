@@ -170,7 +170,6 @@ internal fun friendLifeTraversalDecision(
     bottomMatched && !sendButtonMatched -> FriendLifeTraversalDecision.COMPLETE
     elapsedMs >= absoluteTimeoutMs -> FriendLifeTraversalDecision.ABORT_ABSOLUTE_TIMEOUT
     sendButtonMatched -> FriendLifeTraversalDecision.SEND
-    noProgressMs >= noProgressTimeoutMs -> FriendLifeTraversalDecision.ABORT_NO_PROGRESS
     else -> FriendLifeTraversalDecision.SCROLL_DOWN
 }
 
