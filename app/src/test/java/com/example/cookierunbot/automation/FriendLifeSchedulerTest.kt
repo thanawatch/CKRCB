@@ -79,7 +79,10 @@ class FriendLifeSchedulerTest {
         scheduler.interrupt(FRIEND_LIFE_INTERVAL_MS + 5_000L)
         assertTrue(scheduler.scheduledPending())
         assertTrue(scheduler.testPending())
-        assertEquals(FriendLifeTrigger.SCHEDULED_AND_TEST, scheduler.beginIfReady(FRIEND_LIFE_INTERVAL_MS + 1L))
+        assertEquals(
+            FriendLifeTrigger.SCHEDULED_AND_TEST,
+            scheduler.beginIfReady(FRIEND_LIFE_INTERVAL_MS + 5_001L),
+        )
     }
 
     @Test fun activeBudgetPausesAcrossPopupAndResumesWithoutCountingPausedTime() {
@@ -96,6 +99,17 @@ class FriendLifeSchedulerTest {
         val resumedAt = firstInterrupt + 3 * 60_000L
         assertEquals(FriendLifeTrigger.SCHEDULED, scheduler.beginIfReady(resumedAt))
         assertEquals(20 * 60_000L, scheduler.activeElapsedMs(resumedAt + 5 * 60_000L))
+        val thirtyMinutesActive = scheduler.activeElapsedMs(resumedAt + 15 * 60_000L)
+        assertEquals(FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS, thirtyMinutesActive)
+        assertEquals(
+            FriendLifeTraversalDecision.ABORT_ABSOLUTE_TIMEOUT,
+            friendLifeTraversalDecision(
+                sendButtonMatched = false,
+                bottomMatched = false,
+                elapsedMs = thirtyMinutesActive,
+                noProgressMs = 1_000L,
+            ),
+        )
     }
 
     @Test fun completionAndFailureResetAccumulatedActiveBudget() {
