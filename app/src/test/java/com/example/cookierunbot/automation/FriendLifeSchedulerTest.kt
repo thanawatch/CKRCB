@@ -117,6 +117,18 @@ class FriendLifeSchedulerTest {
         )
     }
 
+    @Test fun finalVisibleSendButtonWinsWhenBottomMarkerIsAlsoVisible() {
+        assertEquals(
+            FriendLifeTraversalDecision.SEND,
+            friendLifeTraversalDecision(
+                sendButtonMatched = true,
+                bottomMatched = true,
+                elapsedMs = 150_000L,
+                noProgressMs = 5_000L,
+            ),
+        )
+    }
+
     @Test fun longHealthyTraversalDoesNotTimeoutWhileProgressIsRecent() {
         assertEquals(
             FriendLifeTraversalDecision.SCROLL_DOWN,
@@ -225,6 +237,25 @@ class FriendLifeSchedulerTest {
         val enabled = friendLifeInterruptStages(always, preGame, true, relic)
         assertTrue(BotStage.RELIC_COMPLETE in enabled)
         assertTrue(BotStage.RELIC_CLAIM in enabled)
+    }
+
+    @Test fun closeButtonIsAnAuxiliaryFriendLifeInterruptWithoutChangingStageList() {
+        val stages = friendLifeInterruptStages(
+            always = listOf(BotStage.CONNECTION_LOST, BotStage.INACTIVE),
+            preGame = listOf(BotStage.CONGRATULATIONS, BotStage.MAINMENU),
+            detectRelic = false,
+            relicStages = emptySet(),
+        )
+        assertFalse(BotStage.CLOSE_BUTTON in stages)
+        assertEquals(
+            BotStage.CLOSE_BUTTON,
+            friendLifeInterruptState(primary = null, closeButtonMatched = true),
+        )
+        assertNull(friendLifeInterruptState(primary = null, closeButtonMatched = false))
+        assertEquals(
+            BotStage.CONNECTION_LOST,
+            friendLifeInterruptState(BotStage.CONNECTION_LOST, closeButtonMatched = true),
+        )
     }
 
     @Test fun onlyFrameNewerThanPostGestureBaselineIsAccepted() {
@@ -416,6 +447,18 @@ class FriendLifeSchedulerTest {
         scheduler.requestTest(true)
         scheduler.complete(requireNotNull(scheduler.beginIfReady(60_000L)), 90_000L)
         assertEquals(due, scheduler.nextDueAt())
+    }
+
+    @Test fun preStartRecheckCapturesScheduleThatBecameDueDuringManualWork() {
+        val scheduler = FriendLifeScheduler()
+        scheduler.start(true, 0L, friendLifeIntervalMs(1))
+        scheduler.requestTest(true)
+        val manual = requireNotNull(scheduler.beginIfReady(30_000L))
+        assertEquals(FriendLifeTrigger.TEST, manual)
+        scheduler.complete(manual, 70_000L)
+        assertTrue(scheduler.observeTime(70_000L))
+        assertTrue(scheduler.hasPendingWork(70_000L))
+        assertEquals(FriendLifeTrigger.SCHEDULED, scheduler.beginIfReady(70_000L))
     }
 
     @Test fun invalidConfiguredMinuteIntervalIsRejectedWithoutChangingExistingSchedule() {
