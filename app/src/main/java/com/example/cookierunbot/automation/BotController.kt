@@ -81,6 +81,7 @@ class BotController(
     private var lastTraceHeartbeatAt = 0L
     private var lastDetectFrameLogAt = 0L
     private var lastPreviousResultsDiagnosticAt = 0L
+    private var lastCloseButtonDiagnosticAt = 0L
     private var roundNumber = 0
     private var gameStartDetectedForRound = false
     private var fastStartPollDeadlineNanos = 0L
@@ -245,6 +246,7 @@ class BotController(
             lastDetectionAttemptAt = 0L
             lastDetectFrameLogAt = 0L
             lastPreviousResultsDiagnosticAt = 0L
+            lastCloseButtonDiagnosticAt = 0L
             resetRewardPopupGuard()
             minimumFreshFrameGeneration = -1L
             freshFrameGateWaitStartedAt = 0L
@@ -1243,7 +1245,20 @@ class BotController(
             roi,
             GameProgressCloseRecovery.MATCH_THRESHOLD,
         )
-        if (!match.matched) return null
+        if (!match.matched) {
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastCloseButtonDiagnosticAt >= CLOSE_BUTTON_DIAGNOSTIC_INTERVAL_MS) {
+                logDiagnostic(
+                    "[CLOSE_BUTTON_DIAG] group=${currentGroup.name} " +
+                        "score=${format(match.score)} matched=false " +
+                        "threshold=${format(GameProgressCloseRecovery.MATCH_THRESHOLD)} " +
+                        "roi=(${roi.x},${roi.y},${roi.x + roi.width},${roi.y + roi.height}) " +
+                        "match=(${match.x},${match.y},${match.width},${match.height})",
+                )
+                lastCloseButtonDiagnosticAt = now
+            }
+            return null
+        }
         logDiagnostic(
             "[CLOSE_BUTTON_POPUP] matched=true group=${currentGroup.name} " +
                 "score=${format(match.score)} threshold=${format(GameProgressCloseRecovery.MATCH_THRESHOLD)} " +
@@ -4103,6 +4118,7 @@ class BotController(
         private const val READINESS_POLL_INTERVAL_MS = 100L
         private const val READINESS_LOG_INTERVAL_MS = 1_000L
         private const val NO_MATCH_DIAGNOSTIC_INTERVAL_MS = 1_500L
+        private const val CLOSE_BUTTON_DIAGNOSTIC_INTERVAL_MS = 1_500L
         private const val NO_MATCH_CAPTURE_LIMIT = 10
         private const val DETECT_FRAME_LOG_INTERVAL_MS = 2_000L
         private const val POPUP_FRESH_FRAME_TIMEOUT_MS = 2_500L
