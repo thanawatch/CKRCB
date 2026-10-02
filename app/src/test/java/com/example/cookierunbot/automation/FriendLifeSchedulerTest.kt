@@ -112,7 +112,7 @@ class FriendLifeSchedulerTest {
         )
     }
 
-    @Test fun completionAndFailureResetAccumulatedActiveBudget() {
+    @Test fun completionStartsFreshBudgetForNextScheduledCycle() {
         val scheduler = FriendLifeScheduler()
         scheduler.start(true, 0L)
         scheduler.observeTime(FRIEND_LIFE_INTERVAL_MS)
@@ -122,12 +122,46 @@ class FriendLifeSchedulerTest {
         assertEquals(10 * 60_000L, scheduler.activeElapsedMs(startedAt + 10 * 60_000L))
         scheduler.complete(trigger, startedAt + 10 * 60_000L)
         assertEquals(0L, scheduler.activeElapsedMs(startedAt + 20 * 60_000L))
+    }
 
-        scheduler.observeTime(scheduler.nextDueAt())
-        val retryStart = scheduler.nextDueAt()
-        scheduler.beginIfReady(retryStart)
-        scheduler.fail(retryStart + 30_000L, 5 * 60_000L)
-        assertEquals(0L, scheduler.activeElapsedMs(retryStart + 60_000L))
+    @Test fun retryableFailurePreservesAccumulatedActiveBudget() {
+        val scheduler = FriendLifeScheduler()
+        scheduler.start(true, 0L)
+        scheduler.observeTime(FRIEND_LIFE_INTERVAL_MS)
+
+        val startedAt = FRIEND_LIFE_INTERVAL_MS
+        assertEquals(FriendLifeTrigger.SCHEDULED, scheduler.beginIfReady(startedAt))
+        val failedAt = startedAt + 12 * 60_000L
+        scheduler.fail(failedAt, 5 * 60_000L)
+
+        assertEquals(12 * 60_000L, scheduler.activeElapsedMs(failedAt + 4 * 60_000L))
+        assertNull(scheduler.beginIfReady(failedAt + 4 * 60_000L))
+
+        val retryAt = failedAt + 5 * 60_000L
+        assertEquals(FriendLifeTrigger.SCHEDULED, scheduler.beginIfReady(retryAt))
+        assertEquals(15 * 60_000L, scheduler.activeElapsedMs(retryAt + 3 * 60_000L))
+    }
+
+    @Test fun exhaustedBudgetRollsOverOnlyForTheNextRetryCycle() {
+        val scheduler = FriendLifeScheduler()
+        scheduler.start(true, 0L)
+        scheduler.observeTime(FRIEND_LIFE_INTERVAL_MS)
+
+        val startedAt = FRIEND_LIFE_INTERVAL_MS
+        assertEquals(FriendLifeTrigger.SCHEDULED, scheduler.beginIfReady(startedAt))
+        val failedAt = startedAt + FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS
+        assertEquals(FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS, scheduler.activeElapsedMs(failedAt))
+
+        scheduler.fail(
+            failedAt,
+            5 * 60_000L,
+            resetActiveBudget = true,
+        )
+        assertEquals(0L, scheduler.activeElapsedMs(failedAt + 1L))
+
+        val retryAt = failedAt + 5 * 60_000L
+        assertEquals(FriendLifeTrigger.SCHEDULED, scheduler.beginIfReady(retryAt))
+        assertEquals(2 * 60_000L, scheduler.activeElapsedMs(retryAt + 2 * 60_000L))
     }
 
     @Test fun safetyFailureClearsManualButDelaysScheduledRetry() {
@@ -137,6 +171,7 @@ class FriendLifeSchedulerTest {
         scheduler.requestTest(true)
         scheduler.beginIfReady(FRIEND_LIFE_INTERVAL_MS)
         scheduler.fail(FRIEND_LIFE_INTERVAL_MS, 5 * 60_000L)
+        assertEquals(0L, scheduler.activeElapsedMs(FRIEND_LIFE_INTERVAL_MS + 1L))
         assertTrue(scheduler.scheduledPending())
         assertFalse(scheduler.testPending())
         assertNull(scheduler.beginIfReady(FRIEND_LIFE_INTERVAL_MS + 4 * 60_000L))
