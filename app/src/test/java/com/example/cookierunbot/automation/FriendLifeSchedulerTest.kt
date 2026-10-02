@@ -108,7 +108,7 @@ class FriendLifeSchedulerTest {
             friendLifeTraversalDecision(false, true, 150_000L, 30_000L),
         )
         assertEquals(
-            FriendLifeTraversalDecision.ABORT_NO_PROGRESS,
+            FriendLifeTraversalDecision.SCROLL_DOWN,
             friendLifeTraversalDecision(false, false, 150_000L, 30_000L),
         )
         assertEquals(
@@ -160,10 +160,19 @@ class FriendLifeSchedulerTest {
         )
     }
 
-    @Test fun actualNoProgressStallAborts() {
+    @Test fun noProgressDoesNotAbortBeforeThirtyMinuteAbsoluteTimeout() {
         assertEquals(
-            FriendLifeTraversalDecision.ABORT_NO_PROGRESS,
+            FriendLifeTraversalDecision.SCROLL_DOWN,
             friendLifeTraversalDecision(false, false, 31_000L, 30_000L),
+        )
+        assertEquals(
+            FriendLifeTraversalDecision.SCROLL_DOWN,
+            friendLifeTraversalDecision(
+                false,
+                false,
+                FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS - 1L,
+                FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS - 1L,
+            ),
         )
     }
 
