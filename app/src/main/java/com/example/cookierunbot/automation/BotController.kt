@@ -2608,7 +2608,8 @@ class BotController(
                             "logicalCenter=(${center.x},${center.y}) sentCount=$sentCount",
                     )
                     val sendStep = friendLifeTapStep(
-                        detector, "SEND_BUTTON", center, true, sourceWidth, sourceHeight, randomMs(1000, 2000),
+                        detector, "SEND_BUTTON", center, true, sourceWidth, sourceHeight,
+                        randomMs(FRIEND_SEND_PACING_MIN_MS, FRIEND_SEND_PACING_MAX_MS),
                     )
                     sendStep.let { step ->
                         if (!step.success) return friendLifeAbort("SEND", step.failureReason, sentCount)
@@ -2617,7 +2618,8 @@ class BotController(
                     }
                     val confirm1 = friendLifeTemplateConfirmStep(
                         detector, "CONFIRM_1", sendStep.freshGeneration,
-                        requireNewFrame = false, postTapPacingMs = randomMs(1000, 2000),
+                        requireNewFrame = false,
+                        postTapPacingMs = randomMs(FRIEND_SEND_PACING_MIN_MS, FRIEND_SEND_PACING_MAX_MS),
                     )
                     confirm1.let { step ->
                         if (!step.success) return friendLifeAbort("SEND", step.failureReason, sentCount)
