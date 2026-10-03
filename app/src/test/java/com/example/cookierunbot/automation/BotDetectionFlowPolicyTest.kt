@@ -6,6 +6,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BotDetectionFlowPolicyTest {
+    @Test fun firstGameCompleteTimestampWinsAcrossRepeatedDetections() {
+        assertEquals(12_345L, firstGameCompleteElapsedRealtime(0L, 12_345L))
+        assertEquals(12_345L, firstGameCompleteElapsedRealtime(12_345L, 20_000L))
+    }
+
     @Test fun confirmedGameCompleteCommitsPostGameBeforeHandlerCanReturn() {
         var group = DetectionGroup.IN_GAME
         val events = mutableListOf<String>()
