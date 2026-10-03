@@ -8,12 +8,18 @@ internal enum class CloseRecoveryDecision { STOP_NO_MATCH, TAP_AND_CONTINUE, TAP
 internal object GameProgressCloseRecovery {
     const val TEMPLATE = "CLOSE_BUTTON_1.png"
     const val MATCH_THRESHOLD = 0.8
-    val MATCH_SCALES = listOf(1.0, 0.9, 1.1, 0.8, 1.2, 1.3, 1.4)
+    const val PRIMARY_SCALE = 1.0
+    val FALLBACK_SCALES = listOf(0.9, 1.1, 0.8, 1.2, 1.3, 1.4)
+    val MATCH_SCALES = listOf(PRIMARY_SCALE) + FALLBACK_SCALES
+    const val FALLBACK_INTERVAL_MS = 5_000L
     const val MAX_ATTEMPTS = 3
     const val RETRY_DELAY_MS = 2_000L
 
     fun topRightRoi(width: Int, height: Int): Rect =
         Rect(width / 2, 0, width - width / 2, height / 2)
+
+    fun fallbackDue(nowMs: Long, lastFallbackAtMs: Long): Boolean =
+        lastFallbackAtMs <= 0L || nowMs - lastFallbackAtMs >= FALLBACK_INTERVAL_MS
 
     /** StateDetector.detectTemplate() already offsets ROI-local matches into full-frame coordinates. */
     fun centerIfMatched(match: TemplateMatch): LogicalPoint? =
