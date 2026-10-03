@@ -18,6 +18,10 @@ internal fun filterRelicStages(
 
 internal fun groupAfterGameComplete(): DetectionGroup = DetectionGroup.POST_GAME
 
+/** Preserve the first confirmed GAME_COMPLETE time so later re-detections cannot extend round duration. */
+internal fun firstGameCompleteElapsedRealtime(existing: Long, detectedAt: Long): Long =
+    if (existing > 0L) existing else detectedAt
+
 /** The group is committed before result handling, including any early handler exit. */
 internal inline fun runConfirmedGameComplete(
     recordProgress: () -> Unit,
