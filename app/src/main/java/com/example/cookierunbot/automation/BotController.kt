@@ -13,6 +13,7 @@ import com.example.cookierunbot.capture.FrameSnapshot
 import com.example.cookierunbot.detection.DetectionResult
 import com.example.cookierunbot.detection.StateDetector
 import com.example.cookierunbot.detection.TemplateMatch
+import com.example.cookierunbot.detection.ScaledTemplateMatch
 import com.example.cookierunbot.detection.GameCompleteSendLifePopupMatch
 import com.example.cookierunbot.diagnostics.IncidentManager
 import com.example.cookierunbot.diagnostics.PersistentTrace
@@ -82,6 +83,7 @@ class BotController(
     private var lastDetectFrameLogAt = 0L
     private var lastPreviousResultsDiagnosticAt = 0L
     private var lastCloseButtonDiagnosticAt = 0L
+    private var lastCloseButtonFallbackAt = 0L
     private var roundNumber = 0
     private var gameStartDetectedForRound = false
     private var fastStartPollDeadlineNanos = 0L
@@ -210,6 +212,7 @@ class BotController(
             group = DetectionGroup.PRE_GAME
             lastStage = null
             lastDetectionAt = SystemClock.elapsedRealtime()
+            lastCloseButtonFallbackAt = 0L
             roundNumber = 0
             purchaseItemRetryState.reset()
             gameStartDetectedForRound = false
@@ -1240,17 +1243,41 @@ class BotController(
         }
     }
 
-    private fun detectClosePopup(detector: StateDetector, frame: Mat): DetectionResult? {
-        val currentGroup = group
-        if (!closePopupEnabledForGroup(currentGroup)) return null
-        val roi = GameProgressCloseRecovery.topRightRoi(frame.cols(), frame.rows())
-        val scaledMatch = detector.detectTemplateMultiScale(
+    private fun detectCloseButtonLightweight(
+        detector: StateDetector,
+        frame: Mat,
+        roi: Rect,
+    ): ScaledTemplateMatch {
+        val primary = detector.detectTemplate(
             frame,
             GameProgressCloseRecovery.TEMPLATE,
             roi,
             GameProgressCloseRecovery.MATCH_THRESHOLD,
-            GameProgressCloseRecovery.MATCH_SCALES,
         )
+        if (primary.matched) {
+            return ScaledTemplateMatch(primary, GameProgressCloseRecovery.PRIMARY_SCALE)
+        }
+
+        val now = SystemClock.elapsedRealtime()
+        if (!GameProgressCloseRecovery.fallbackDue(now, lastCloseButtonFallbackAt)) {
+            return ScaledTemplateMatch(primary, GameProgressCloseRecovery.PRIMARY_SCALE)
+        }
+        lastCloseButtonFallbackAt = now
+        val fallback = detector.detectTemplateMultiScale(
+            frame,
+            GameProgressCloseRecovery.TEMPLATE,
+            roi,
+            GameProgressCloseRecovery.MATCH_THRESHOLD,
+            GameProgressCloseRecovery.FALLBACK_SCALES,
+        )
+        if (fallback.match.matched || fallback.match.score > primary.score) return fallback
+        return ScaledTemplateMatch(primary, GameProgressCloseRecovery.PRIMARY_SCALE)
+    }
+    private fun detectClosePopup(detector: StateDetector, frame: Mat): DetectionResult? {
+        val currentGroup = group
+        if (!closePopupEnabledForGroup(currentGroup)) return null
+        val roi = GameProgressCloseRecovery.topRightRoi(frame.cols(), frame.rows())
+        val scaledMatch = detectCloseButtonLightweight(detector, frame, roi)
         val match = scaledMatch.match
         if (!match.matched) {
             val now = SystemClock.elapsedRealtime()
@@ -2823,12 +2850,10 @@ class BotController(
         val primary = detector.detectFirst(friendLifeInterruptStages(), frame)?.state
         if (primary != null) return primary
         val closeRoi = GameProgressCloseRecovery.topRightRoi(frame.cols(), frame.rows())
-        val closeMatched = detector.detectTemplateMultiScale(
+        val closeMatched = detectCloseButtonLightweight(
+            detector,
             frame,
-            GameProgressCloseRecovery.TEMPLATE,
             closeRoi,
-            GameProgressCloseRecovery.MATCH_THRESHOLD,
-            GameProgressCloseRecovery.MATCH_SCALES,
         ).match.matched
         return friendLifeInterruptState(primary = null, closeButtonMatched = closeMatched)
     }
