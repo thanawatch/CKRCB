@@ -517,16 +517,19 @@ class BotController(
                     ) return
                     val frame = requireNotNull(currentFrame)
                     val roi = GameProgressCloseRecovery.topRightRoi(frame.mat.cols(), frame.mat.rows())
-                    val closeMatch = detector.detectTemplate(
+                    val scaledClose = detector.detectTemplateMultiScale(
                         frame.mat,
                         GameProgressCloseRecovery.TEMPLATE,
                         roi,
                         GameProgressCloseRecovery.MATCH_THRESHOLD,
+                        GameProgressCloseRecovery.MATCH_SCALES,
                     )
+                    val closeMatch = scaledClose.match
                     val decision = GameProgressCloseRecovery.decision(attempt, closeMatch.matched)
                     logDiagnostic(
                         "[GAME_PROGRESS_CLOSE] attempt=$attempt scan=TOP_RIGHT matched=${closeMatch.matched} " +
-                            "score=${format(closeMatch.score)} threshold=${format(GameProgressCloseRecovery.MATCH_THRESHOLD)} " +
+                            "score=${format(closeMatch.score)} scale=${format(scaledClose.scale)} " +
+                            "threshold=${format(GameProgressCloseRecovery.MATCH_THRESHOLD)} " +
                             "method=TM_CCOEFF_NORMED rule=score>=threshold" +
                             if (decision == CloseRecoveryDecision.STOP_NO_MATCH) " action=STOP" else "",
                     )
@@ -1241,18 +1244,21 @@ class BotController(
         val currentGroup = group
         if (!closePopupEnabledForGroup(currentGroup)) return null
         val roi = GameProgressCloseRecovery.topRightRoi(frame.cols(), frame.rows())
-        val match = detector.detectTemplate(
+        val scaledMatch = detector.detectTemplateMultiScale(
             frame,
             GameProgressCloseRecovery.TEMPLATE,
             roi,
             GameProgressCloseRecovery.MATCH_THRESHOLD,
+            GameProgressCloseRecovery.MATCH_SCALES,
         )
+        val match = scaledMatch.match
         if (!match.matched) {
             val now = SystemClock.elapsedRealtime()
             if (now - lastCloseButtonDiagnosticAt >= CLOSE_BUTTON_DIAGNOSTIC_INTERVAL_MS) {
                 logDiagnostic(
                     "[CLOSE_BUTTON_DIAG] group=${currentGroup.name} " +
                         "score=${format(match.score)} matched=false " +
+                        "bestScale=${format(scaledMatch.scale)} " +
                         "threshold=${format(GameProgressCloseRecovery.MATCH_THRESHOLD)} " +
                         "roi=(${roi.x},${roi.y},${roi.x + roi.width},${roi.y + roi.height}) " +
                         "match=(${match.x},${match.y},${match.width},${match.height})",
@@ -1263,7 +1269,8 @@ class BotController(
         }
         logDiagnostic(
             "[CLOSE_BUTTON_POPUP] matched=true group=${currentGroup.name} " +
-                "score=${format(match.score)} threshold=${format(GameProgressCloseRecovery.MATCH_THRESHOLD)} " +
+                "score=${format(match.score)} scale=${format(scaledMatch.scale)} " +
+                "threshold=${format(GameProgressCloseRecovery.MATCH_THRESHOLD)} " +
                 "match=(${match.x},${match.y},${match.width},${match.height})",
         )
         return DetectionResult(
@@ -2816,12 +2823,13 @@ class BotController(
         val primary = detector.detectFirst(friendLifeInterruptStages(), frame)?.state
         if (primary != null) return primary
         val closeRoi = GameProgressCloseRecovery.topRightRoi(frame.cols(), frame.rows())
-        val closeMatched = detector.detectTemplate(
+        val closeMatched = detector.detectTemplateMultiScale(
             frame,
             GameProgressCloseRecovery.TEMPLATE,
             closeRoi,
             GameProgressCloseRecovery.MATCH_THRESHOLD,
-        ).matched
+            GameProgressCloseRecovery.MATCH_SCALES,
+        ).match.matched
         return friendLifeInterruptState(primary = null, closeButtonMatched = closeMatched)
     }
 
