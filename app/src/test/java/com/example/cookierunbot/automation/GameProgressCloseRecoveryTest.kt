@@ -10,6 +10,13 @@ class GameProgressCloseRecoveryTest {
         assertEquals(0.8, GameProgressCloseRecovery.MATCH_THRESHOLD, 0.0)
     }
 
+    @Test fun closeRecoveryChecksOriginalScaleBeforeSmallerAndLargerFallbacks() {
+        assertEquals(
+            listOf(1.0, 0.9, 1.1, 0.8, 1.2, 1.3, 1.4),
+            GameProgressCloseRecovery.MATCH_SCALES,
+        )
+    }
+
     @Test fun closeRecoveryWaitsTwoSecondsBetweenAttempts() {
         assertEquals(2_000L, GameProgressCloseRecovery.RETRY_DELAY_MS)
     }
