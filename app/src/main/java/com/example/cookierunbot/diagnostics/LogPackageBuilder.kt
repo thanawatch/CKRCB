@@ -9,6 +9,10 @@ import java.util.Locale
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
+
+internal fun logPackageEntry(rootName: String, relativePath: String): String =
+    rootName.trimEnd('/') + "/" + relativePath.trimStart('/')
+
 /** A user-requested, private ZIP. Built on a separate worker; no capture or detector blocking. */
 object LogPackageBuilder {
     private const val MAX_INCIDENTS = 5
@@ -17,10 +21,8 @@ object LogPackageBuilder {
     fun create(context: Context, maxBytes: Long = OvernightLogPolicy.TELEGRAM_MAX_BYTES): File {
         val now = System.currentTimeMillis()
         val staging = File(context.cacheDir, "overnight-log-export/${now}").apply { mkdirs() }
-        val output = File(
-            staging,
-            "RobotRun-Logs-${SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date(now))}.zip",
-        )
+        val archiveRoot = "RobotRun-Logs-${SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date(now))}"
+        val output = File(staging, "$archiveRoot.zip")
         try {
             val log = File(staging, "robotrun_10h.txt")
             OvernightLogArchive.copyWindow(now - OvernightLogPolicy.RETENTION_MS, now, log)
@@ -28,9 +30,9 @@ object LogPackageBuilder {
             var mediaBytes = 0L
             val omitted = mutableListOf<String>()
             ZipOutputStream(output.outputStream().buffered()).use { zip ->
-                add(zip, log, "robotrun_10h.txt")
+                add(zip, log, logPackageEntry(archiveRoot, "robotrun_10h.txt"))
                 for (incident in incidents) {
-                    val prefix = "incidents/${incident.name}/"
+                    val prefix = logPackageEntry(archiveRoot, "incidents/${incident.name}/")
                     val files = incident.listFiles()?.filter { it.isFile }?.sortedBy { it.name }
                         ?: emptyList()
                     for (file in files) {
@@ -78,7 +80,7 @@ object LogPackageBuilder {
                         omitted.forEach { appendLine(it) }
                     }
                 }
-                zip.putNextEntry(ZipEntry("manifest.txt"))
+                zip.putNextEntry(ZipEntry(logPackageEntry(archiveRoot, "manifest.txt")))
                 zip.write(manifest.toByteArray(Charsets.UTF_8))
                 zip.closeEntry()
             }
