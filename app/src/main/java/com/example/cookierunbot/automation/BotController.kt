@@ -88,6 +88,7 @@ class BotController(
     private val fastStartAttemptMetrics = FastStartAttemptMetrics()
     private var postRelaySequenceDone = false
     private var gameCompleteImageSaved = true
+    private var gameCompleteDetectedElapsedRealtime = 0L
     private var mysteryBoxImageSaved = true
     private var mysteryBoxCount = 0
     private var livesDoneForRound = true
@@ -218,6 +219,7 @@ class BotController(
             }
             postRelaySequenceDone = false
             gameCompleteImageSaved = true
+            gameCompleteDetectedElapsedRealtime = 0L
             mysteryBoxImageSaved = true
             mysteryBoxCount = 0
             livesDoneForRound = true
@@ -1300,12 +1302,30 @@ class BotController(
             BotStage.GAME_START -> handleGameStart(result, frame, sourceWidth, sourceHeight, timing)
             BotStage.GAME_RELAY -> handleGameRelay(result, frame, sourceWidth, sourceHeight, timing)
             BotStage.GAME_COMPLETE -> {
+                val detectedAt = SystemClock.elapsedRealtime()
+                val roundCompletedAt = synchronized(lock) {
+                    firstGameCompleteElapsedRealtime(
+                        gameCompleteDetectedElapsedRealtime,
+                        detectedAt,
+                    ).also { gameCompleteDetectedElapsedRealtime = it }
+                }
+                logDiagnostic(
+                    "[ROUND_DURATION_END] round=$roundNumber reason=GAME_COMPLETE " +
+                        "detectedElapsedRealtime=$roundCompletedAt",
+                )
                 runConfirmedGameComplete(
                     recordProgress = {
                         GameProgressWatchdogManager.recordProgress(GameProgressReason.GAME_COMPLETE)
                     },
                     commitGroup = { commitConfirmedGameCompleteGroup(it) },
-                    handleResult = { handleGameComplete(detector, sourceWidth, sourceHeight) },
+                    handleResult = {
+                        handleGameComplete(
+                            detector,
+                            sourceWidth,
+                            sourceHeight,
+                            roundCompletedAt,
+                        )
+                    },
                 )
             }
             BotStage.MYSTERY_BOX -> handleMysteryBox(sourceWidth, sourceHeight, frame)
@@ -2138,6 +2158,7 @@ class BotController(
                 fastStartPollDeadlineNanos = 0L
                 flushFastStartAttemptMetrics("NEW_ROUND")
                 gameCompleteImageSaved = false
+                gameCompleteDetectedElapsedRealtime = 0L
                 mysteryBoxImageSaved = false
                 mysteryBoxCount = 0
                 autoTapper.resetForRound(options, sourceWidth, sourceHeight)
@@ -2348,7 +2369,12 @@ class BotController(
         Log.i(CookieRunBotApplication.TAG, "[COOKIE RELAY SEQUENCE] Completed")
     }
 
-    private fun handleGameComplete(detector: StateDetector, sourceWidth: Int, sourceHeight: Int) {
+    private fun handleGameComplete(
+        detector: StateDetector,
+        sourceWidth: Int,
+        sourceHeight: Int,
+        completedElapsedRealtime: Long,
+    ) {
         flushFastStartAttemptMetrics("ROUND_ENDED")
         autoTapper.stop("GAME_COMPLETE")
         Log.i(CookieRunBotApplication.TAG, "[RESULT] GAME_COMPLETE detected")
@@ -2360,7 +2386,7 @@ class BotController(
             )
             delayOrStop(waitMs)
             if (!synchronized(lock) { canDispatchActionLocked() }) return
-            captureGameCompleteResult()
+            captureGameCompleteResult(completedElapsedRealtime)
             gameCompleteImageSaved = true
         }
         val baseline = LatestFrameProvider.currentGeneration()
@@ -3490,10 +3516,13 @@ class BotController(
         } finally { snapshot.mat.release() }
     }
 
-    private fun captureGameCompleteResult() {
+    private fun captureGameCompleteResult(completedElapsedRealtime: Long) {
         val snapshot = LatestFrameProvider.snapshot()
         if (snapshot == null) {
-            roundResultCollector.completeRoundWithoutFrame(roundNumber)
+            roundResultCollector.completeRoundWithoutFrame(
+                round = roundNumber,
+                completedElapsedRealtime = completedElapsedRealtime,
+            )
             return
         }
         try {
@@ -3515,6 +3544,7 @@ class BotController(
                 frameSequence = snapshot.generation,
                 settledFrame = snapshot.mat,
                 screenshotPath = screenshotPath,
+                completedElapsedRealtime = completedElapsedRealtime,
             )
         } catch (error: Exception) {
             Log.e(CookieRunBotApplication.TAG, "[RESULT_READ_FAILED] enqueue reason=${error.message}", error)
