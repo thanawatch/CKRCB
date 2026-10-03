@@ -11,10 +11,22 @@ class GameProgressCloseRecoveryTest {
     }
 
     @Test fun closeRecoveryChecksOriginalScaleBeforeSmallerAndLargerFallbacks() {
+        assertEquals(1.0, GameProgressCloseRecovery.PRIMARY_SCALE, 0.0)
+        assertEquals(
+            listOf(0.9, 1.1, 0.8, 1.2, 1.3, 1.4),
+            GameProgressCloseRecovery.FALLBACK_SCALES,
+        )
         assertEquals(
             listOf(1.0, 0.9, 1.1, 0.8, 1.2, 1.3, 1.4),
             GameProgressCloseRecovery.MATCH_SCALES,
         )
+    }
+
+    @Test fun fallbackScalesAreAllowedOnlyEveryFiveSeconds() {
+        assertEquals(5_000L, GameProgressCloseRecovery.FALLBACK_INTERVAL_MS)
+        org.junit.Assert.assertTrue(GameProgressCloseRecovery.fallbackDue(1_000L, 0L))
+        org.junit.Assert.assertFalse(GameProgressCloseRecovery.fallbackDue(5_999L, 1_000L))
+        org.junit.Assert.assertTrue(GameProgressCloseRecovery.fallbackDue(6_000L, 1_000L))
     }
 
     @Test fun closeRecoveryWaitsTwoSecondsBetweenAttempts() {
