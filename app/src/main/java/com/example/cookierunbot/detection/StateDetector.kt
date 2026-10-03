@@ -28,6 +28,7 @@ class StateDetector(
     private val appContext = context.applicationContext
     private val templates = EnumMap<BotStage, List<Mat>>(BotStage::class.java)
     private val auxiliaryTemplates = mutableMapOf<String, Mat>()
+    private val scaledAuxiliaryTemplates = mutableMapOf<String, Mat>()
     private val maskedAuxiliaryTemplates = mutableMapOf<String, MaskedTemplate>()
     private val reusableScreenGray = Mat()
     private val reusableStageMatch = Mat()
@@ -106,6 +107,74 @@ class StateDetector(
         }
     }
 
+    fun detectTemplateMultiScale(
+        normalizedRgba: Mat,
+        assetName: String,
+        roiRect: Rect,
+        threshold: Double,
+        scales: List<Double>,
+    ): ScaledTemplateMatch {
+        require(scales.isNotEmpty()) { "At least one template scale is required" }
+        val roiRgba = normalizedRgba.submat(roiRect)
+        val roiGray = Mat()
+        try {
+            Imgproc.cvtColor(roiRgba, roiGray, Imgproc.COLOR_RGBA2GRAY)
+            val baseTemplate = auxiliaryTemplates.getOrPut(assetName) {
+                loadGrayTemplate(appContext, "templates/$assetName")
+            }
+            var best = TemplateMatch(-1.0, false, -1, -1, 0, 0)
+            var bestScale = scales.first()
+
+            for (scale in scales) {
+                require(scale > 0.0) { "Template scale must be > 0" }
+                val template = if (scale == 1.0) {
+                    baseTemplate
+                } else {
+                    val key = "$assetName@${String.format(Locale.US, "%.2f", scale)}"
+                    scaledAuxiliaryTemplates.getOrPut(key) {
+                        Mat().also { scaled ->
+                            val width = (baseTemplate.cols() * scale).roundToInt().coerceAtLeast(1)
+                            val height = (baseTemplate.rows() * scale).roundToInt().coerceAtLeast(1)
+                            Imgproc.resize(
+                                baseTemplate,
+                                scaled,
+                                Size(width.toDouble(), height.toDouble()),
+                                0.0,
+                                0.0,
+                                Imgproc.INTER_LINEAR,
+                            )
+                        }
+                    }
+                }
+                if (roiGray.cols() < template.cols() || roiGray.rows() < template.rows()) continue
+
+                val result = Mat()
+                val candidate = try {
+                    Imgproc.matchTemplate(roiGray, template, result, Imgproc.TM_CCOEFF_NORMED)
+                    val match = Core.minMaxLoc(result)
+                    TemplateMatch(
+                        match.maxVal,
+                        templateScoreMatches(match.maxVal, threshold),
+                        match.maxLoc.x.toInt() + roiRect.x,
+                        match.maxLoc.y.toInt() + roiRect.y,
+                        template.cols(),
+                        template.rows(),
+                    )
+                } finally {
+                    result.release()
+                }
+                if (candidate.score > best.score) {
+                    best = candidate
+                    bestScale = scale
+                }
+                if (candidate.matched) return ScaledTemplateMatch(candidate, scale)
+            }
+            return ScaledTemplateMatch(best, bestScale)
+        } finally {
+            roiGray.release()
+            roiRgba.release()
+        }
+    }
     /**
      * Separate dual-popup probe on the SAME normalized 1280x720 frame. Both searches use
      * independent full-frame rectangles, not GAME_COMPLETE's stage ROI or Quick Lives' old
@@ -384,6 +453,8 @@ class StateDetector(
         templates.clear()
         auxiliaryTemplates.values.forEach(Mat::release)
         auxiliaryTemplates.clear()
+        scaledAuxiliaryTemplates.values.forEach(Mat::release)
+        scaledAuxiliaryTemplates.clear()
         maskedAuxiliaryTemplates.values.forEach(MaskedTemplate::release)
         maskedAuxiliaryTemplates.clear()
         reusableScreenGray.release()
@@ -628,6 +699,11 @@ data class TemplateMatch(
     val y: Int,
     val width: Int,
     val height: Int,
+)
+
+data class ScaledTemplateMatch(
+    val match: TemplateMatch,
+    val scale: Double,
 )
 
 internal fun templateScoreMatches(score: Double, threshold: Double): Boolean = score >= threshold
