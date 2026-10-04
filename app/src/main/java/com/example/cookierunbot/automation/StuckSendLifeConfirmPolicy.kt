@@ -28,13 +28,11 @@ internal data class StuckSendLifeConfirmObservation(
 internal class StuckSendLifeConfirmTracker {
     private var firstSeenAtMs = -1L
     private var lastSeenAtMs = -1L
-    private var episodeGroup: DetectionGroup? = null
 
     fun reset(): Boolean {
         val wasTracking = firstSeenAtMs >= 0L || lastSeenAtMs >= 0L
         firstSeenAtMs = -1L
         lastSeenAtMs = -1L
-        episodeGroup = null
         return wasTracking
     }
 
@@ -58,17 +56,15 @@ internal class StuckSendLifeConfirmTracker {
             )
         }
 
-        val groupChanged = wasTracking && episodeGroup != group
-        val startedNewEpisode = !wasTracking || groupChanged
+        val startedNewEpisode = !wasTracking
         if (startedNewEpisode) firstSeenAtMs = nowMs
-        episodeGroup = group
         lastSeenAtMs = nowMs
         val elapsedMs = (nowMs - firstSeenAtMs).coerceAtLeast(0L)
 
         return StuckSendLifeConfirmObservation(
             startedNewEpisode = startedNewEpisode,
-            continuityReset = groupChanged,
-            groupChangedReset = groupChanged,
+            continuityReset = false,
+            groupChangedReset = false,
             disappearedReset = false,
             elapsedMs = elapsedMs,
             shouldTap = elapsedMs >= StuckSendLifeConfirmPolicy.STUCK_DURATION_MS,
