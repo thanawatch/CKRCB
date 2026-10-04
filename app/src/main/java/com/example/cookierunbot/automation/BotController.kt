@@ -120,6 +120,7 @@ class BotController(
     private var pendingPreviousResultsGesture: GestureCancellation? = null
     // Dedicated two-template popup probe. Never changes normal GAME_COMPLETE or Quick Lives ROI.
     private var lastDualSendLifeProbeAt = 0L
+    private val stuckSendLifeConfirmTracker = StuckSendLifeConfirmTracker()
     private var dualSendLifeVisibleAttempts = 0
     private var pendingDualSendLifeGesture: GestureCancellation? = null
     private var pendingProgressRecoveryGesture: GestureCancellation? = null
@@ -271,6 +272,7 @@ class BotController(
             timeDealCallbackFailures = 0
             pendingPreviousResultsGesture = null
             lastDualSendLifeProbeAt = 0L
+            stuckSendLifeConfirmTracker.reset()
             dualSendLifeVisibleAttempts = 0
             pendingDualSendLifeGesture = null
             previousResultsSettleUntilElapsedRealtime = 0L
@@ -1087,6 +1089,9 @@ class BotController(
             }
             // PRE_GAME / POST_GAME only: auxiliary full-frame AND-probe before a legacy
             // GAME_COMPLETE result is recorded. Never scan the auxiliary pair in IN_GAME.
+            if (!StuckSendLifeConfirmPolicy.eligibleGroup(group)) {
+                stuckSendLifeConfirmTracker.reset()
+            }
             val dualProbeNow = SystemClock.elapsedRealtime()
             val oldGameCompleteMatched = result?.state == BotStage.GAME_COMPLETE
             if (DualGameCompleteSendLifePolicy.shouldProbe(
@@ -1098,6 +1103,7 @@ class BotController(
                 lastDualSendLifeProbeAt = dualProbeNow
                 val pair = detector.detectGameCompleteSendLifePopup(frame.mat)
                 if (pair.matched) {
+                    stuckSendLifeConfirmTracker.reset()
                     logDiagnostic(
                         "[GAME_COMPLETE_SEND_LIFE] matched=true frameGeneration=${frame.generation} " +
                             "gameCompleteScore=${format(requireNotNull(pair.gameComplete).score)} " +
@@ -1109,12 +1115,40 @@ class BotController(
                     return // Never dispatch the legacy GAME_COMPLETE on a frame with both matches.
                 }
                 dualSendLifeVisibleAttempts = 0
+                val stuckConfirm = stuckSendLifeConfirmTracker.observe(
+                    group = group,
+                    nowMs = dualProbeNow,
+                    score = pair.confirm.score,
+                )
+                if (stuckConfirm.disappearedReset) {
+                    logDiagnostic(
+                        "[STUCK_SEND_LIFE_CONFIRM] action=RESET reason=not_detected " +
+                            "score=${format(pair.confirm.score)} threshold=${format(StuckSendLifeConfirmPolicy.MATCH_THRESHOLD)}",
+                    )
+                }
+                if (stuckConfirm.startedNewEpisode) {
+                    logDiagnostic(
+                        "[STUCK_SEND_LIFE_CONFIRM] action=START " +
+                            "reason=${if (stuckConfirm.continuityReset) \"observation_gap\" else \"high_confidence_match\"} " +
+                            "group=${group.name} score=${format(pair.confirm.score)} " +
+                            "threshold=${format(StuckSendLifeConfirmPolicy.MATCH_THRESHOLD)} " +
+                            "requiredMs=${StuckSendLifeConfirmPolicy.STUCK_DURATION_MS}",
+                    )
+                }
+                if (stuckConfirm.shouldTap) {
+                    logDiagnostic(
+                        "[STUCK_SEND_LIFE_CONFIRM] action=TAP elapsedMs=${stuckConfirm.elapsedMs} " +
+                            "score=${format(pair.confirm.score)} group=${group.name}",
+                    )
+                    handleStuckSendLifeConfirmPopup(pair.confirm, frame)
+                    return
+                }
                 if (oldGameCompleteMatched || pair.confirm.matched) {
                     logDiagnostic(
                         "[GAME_COMPLETE_SEND_LIFE] matched=false " +
-                            "gameCompleteScore=${pair.gameComplete?.score?.let(::format) ?: "not_scanned"} " +
+                            "gameCompleteScore=${pair.gameComplete?.score?.let(::format) ?: \"not_scanned\"} " +
                             "confirmScore=${format(pair.confirm.score)} " +
-                            "fallback=${if (oldGameCompleteMatched) "LEGACY_GAME_COMPLETE" else "NORMAL_DETECTION"}",
+                            "fallback=${if (oldGameCompleteMatched) \"LEGACY_GAME_COMPLETE\" else \"NORMAL_DETECTION\"}",
                     )
                 }
             }
@@ -1645,6 +1679,45 @@ class BotController(
      * BotStage.GAME_COMPLETE and must NEVER record GAME_COMPLETE watchdog progress, change
      * its stage ROI/threshold, or call the old Quick Lives confirm matcher/ROI.
      */
+    private fun handleStuckSendLifeConfirmPopup(
+        confirm: TemplateMatch,
+        frame: FrameSnapshot,
+    ) {
+        val center = StuckSendLifeConfirmPolicy.center(
+            confirm.x, confirm.y, confirm.width, confirm.height,
+        ) ?: run {
+            stuckSendLifeConfirmTracker.reset()
+            return
+        }
+        // One rescue tap per 60-second continuous episode. If the popup remains,
+        // it must be observed continuously for another full minute before another tap.
+        stuckSendLifeConfirmTracker.reset()
+        detectionActionFrameGeneration.set(frame.generation)
+        try {
+            pendingPopupAction = "STUCK_SEND_LIFE_CONFIRM"
+            val accepted = performDetectedTap(
+                "STUCK_SEND_LIFE_CONFIRM",
+                center,
+                frame.sourceWidth,
+                frame.sourceHeight,
+            )
+            logDiagnostic(
+                "[STUCK_SEND_LIFE_CONFIRM] action=TAP_CONFIRM " +
+                    "logicalCenter=(${center.x},${center.y}) dispatchAccepted=$accepted " +
+                    "frameGeneration=${frame.generation}",
+            )
+            if (accepted) {
+                synchronized(lock) {
+                    minimumFreshFrameGeneration = maxOf(minimumFreshFrameGeneration, frame.generation)
+                    freshFrameGateWaitStartedAt = 0L
+                    lastStage = null
+                }
+            }
+        } finally {
+            pendingPopupAction = "NONE"
+            detectionActionFrameGeneration.remove()
+        }
+    }
     private fun handleDualGameCompleteSendLifePopup(
         pair: GameCompleteSendLifePopupMatch,
         frame: FrameSnapshot,
