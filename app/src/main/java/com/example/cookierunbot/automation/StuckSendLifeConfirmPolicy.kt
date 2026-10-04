@@ -65,3 +65,40 @@ internal class StuckSendLifeConfirmTracker {
         )
     }
 }
+
+internal object StuckSendLifeFollowUpPolicy {
+    const val OLD_CONFIRM_DISAPPEAR_TIMEOUT_MS = 3_000L
+    const val NEXT_CONFIRM_WAIT_MS = 2_500L
+
+    enum class Phase {
+        INACTIVE,
+        WAIT_OLD_CONFIRM_DISAPPEAR,
+        WAIT_NEXT_CONFIRM,
+    }
+
+    enum class Decision {
+        WAIT,
+        OLD_CONFIRM_DISAPPEARED,
+        TAP_NEXT_CONFIRM,
+        STOP_CHAIN,
+    }
+
+    fun decide(
+        phase: Phase,
+        elapsedMs: Long,
+        confirmMatched: Boolean,
+    ): Decision = when (phase) {
+        Phase.INACTIVE -> Decision.STOP_CHAIN
+        Phase.WAIT_OLD_CONFIRM_DISAPPEAR -> when {
+            !confirmMatched -> Decision.OLD_CONFIRM_DISAPPEARED
+            elapsedMs >= OLD_CONFIRM_DISAPPEAR_TIMEOUT_MS -> Decision.STOP_CHAIN
+            else -> Decision.WAIT
+        }
+        Phase.WAIT_NEXT_CONFIRM -> when {
+            confirmMatched -> Decision.TAP_NEXT_CONFIRM
+            elapsedMs >= NEXT_CONFIRM_WAIT_MS -> Decision.STOP_CHAIN
+            else -> Decision.WAIT
+        }
+    }
+}
+
