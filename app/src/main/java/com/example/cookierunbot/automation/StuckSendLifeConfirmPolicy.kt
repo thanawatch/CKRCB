@@ -4,7 +4,7 @@ internal object StuckSendLifeConfirmPolicy {
     const val MATCH_THRESHOLD = 0.95
     const val STUCK_DURATION_MS = 60_000L
     const val CALLBACK_TIMEOUT_MS = 3_000L
-    const val MAX_OBSERVATION_GAP_MS = 7_500L
+    const val PROBE_INTERVAL_MS = 1_500L
 
     fun eligibleGroup(group: DetectionGroup): Boolean =
         group == DetectionGroup.PRE_GAME || group == DetectionGroup.POST_GAME
@@ -59,9 +59,7 @@ internal class StuckSendLifeConfirmTracker {
         }
 
         val groupChanged = wasTracking && episodeGroup != group
-        val gapBroken = wasTracking &&
-            nowMs - lastSeenAtMs > StuckSendLifeConfirmPolicy.MAX_OBSERVATION_GAP_MS
-        val startedNewEpisode = !wasTracking || gapBroken || groupChanged
+        val startedNewEpisode = !wasTracking || groupChanged
         if (startedNewEpisode) firstSeenAtMs = nowMs
         episodeGroup = group
         lastSeenAtMs = nowMs
@@ -69,7 +67,7 @@ internal class StuckSendLifeConfirmTracker {
 
         return StuckSendLifeConfirmObservation(
             startedNewEpisode = startedNewEpisode,
-            continuityReset = gapBroken || groupChanged,
+            continuityReset = groupChanged,
             groupChangedReset = groupChanged,
             disappearedReset = false,
             elapsedMs = elapsedMs,
