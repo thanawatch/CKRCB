@@ -3,7 +3,7 @@ package com.example.cookierunbot.automation
 internal object StuckSendLifeConfirmPolicy {
     const val MATCH_THRESHOLD = 0.95
     const val STUCK_DURATION_MS = 60_000L
-    const val MAX_OBSERVATION_GAP_MS = 3_500L
+    const val MAX_OBSERVATION_GAP_MS = 7_500L
 
     fun eligibleGroup(group: DetectionGroup): Boolean =
         group == DetectionGroup.PRE_GAME || group == DetectionGroup.POST_GAME
