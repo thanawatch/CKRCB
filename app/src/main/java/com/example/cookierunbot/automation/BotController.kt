@@ -128,6 +128,7 @@ class BotController(
     private var stuckSendLifeFollowUpPhase = StuckSendLifeFollowUpPolicy.Phase.INACTIVE
     private var stuckSendLifeFollowUpPhaseStartedAt = 0L
     private var stuckSendLifeFollowUpLastCheckedGeneration = -1L
+    private var stuckSendLifeFollowUpLastTappedCenter: LogicalPoint? = null
     private var pendingProgressRecoveryGesture: GestureCancellation? = null
     @Volatile private var previousResultsSettleUntilElapsedRealtime = 0L
     @Volatile private var pendingPreviousResultsRedetectBaseline = -1L
@@ -286,6 +287,7 @@ class BotController(
             stuckSendLifeFollowUpPhase = StuckSendLifeFollowUpPolicy.Phase.INACTIVE
             stuckSendLifeFollowUpPhaseStartedAt = 0L
             stuckSendLifeFollowUpLastCheckedGeneration = -1L
+            stuckSendLifeFollowUpLastTappedCenter = null
             previousResultsSettleUntilElapsedRealtime = 0L
             pendingPreviousResultsRedetectBaseline = -1L
             resetNoMatchEpisode("bot_started")
@@ -344,6 +346,7 @@ class BotController(
             stuckSendLifeFollowUpPhase = StuckSendLifeFollowUpPolicy.Phase.INACTIVE
             stuckSendLifeFollowUpPhaseStartedAt = 0L
             stuckSendLifeFollowUpLastCheckedGeneration = -1L
+            stuckSendLifeFollowUpLastTappedCenter = null
             stoppedRecoveryGesture = pendingProgressRecoveryGesture
             pendingProgressRecoveryGesture = null
             calibrationBlockState.clear()
@@ -1758,6 +1761,7 @@ class BotController(
                 stuckSendLifeFollowUpPhase = StuckSendLifeFollowUpPolicy.Phase.INACTIVE
                 stuckSendLifeFollowUpPhaseStartedAt = 0L
                 stuckSendLifeFollowUpLastCheckedGeneration = -1L
+                stuckSendLifeFollowUpLastTappedCenter = null
                 stuckSendLifeConfirmTracker.reset()
                 return false
             }
@@ -1776,10 +1780,21 @@ class BotController(
             Rect(0, 0, frame.mat.cols(), frame.mat.rows()),
             StuckSendLifeConfirmPolicy.MATCH_THRESHOLD,
         )
+        val currentCenter = if (match.matched) {
+            StuckSendLifeConfirmPolicy.center(match.x, match.y, match.width, match.height)
+        } else {
+            null
+        }
+        val lastTappedCenter = synchronized(lock) { stuckSendLifeFollowUpLastTappedCenter }
+        val movedToNewPosition = StuckSendLifeFollowUpPolicy.movedToNewPosition(
+            lastTappedCenter,
+            currentCenter,
+        )
         val decision = StuckSendLifeFollowUpPolicy.decide(
             phase = phase,
             elapsedMs = (now - phaseStartedAt).coerceAtLeast(0L),
             confirmMatched = match.matched,
+            confirmMovedToNewPosition = movedToNewPosition,
         )
         return when (decision) {
             StuckSendLifeFollowUpPolicy.Decision.WAIT -> {
@@ -1808,7 +1823,8 @@ class BotController(
             StuckSendLifeFollowUpPolicy.Decision.TAP_NEXT_CONFIRM -> {
                 logDiagnostic(
                     "[STUCK_SEND_LIFE_CONFIRM] action=FOLLOW_UP_TAP_NEW_CONFIRM " +
-                        "score=${format(match.score)} frameGeneration=${frame.generation}",
+                        "score=${format(match.score)} movedToNewPosition=$movedToNewPosition " +
+                        "frameGeneration=${frame.generation}",
                 )
                 handleStuckSendLifeConfirmPopup(match, frame)
                 true
@@ -1818,6 +1834,7 @@ class BotController(
                     stuckSendLifeFollowUpPhase = StuckSendLifeFollowUpPolicy.Phase.INACTIVE
                     stuckSendLifeFollowUpPhaseStartedAt = 0L
                     stuckSendLifeFollowUpLastCheckedGeneration = -1L
+                    stuckSendLifeFollowUpLastTappedCenter = null
                     stuckSendLifeConfirmTracker.reset()
                 }
                 logDiagnostic(
@@ -1853,7 +1870,7 @@ class BotController(
                     sourceHeight = frame.sourceHeight,
                     callbackTimeoutMs = StuckSendLifeConfirmPolicy.CALLBACK_TIMEOUT_MS,
                     onGestureCompleted = { success, timedOut ->
-                        handleStuckSendLifeConfirmCallback(runGeneration, success, timedOut)
+                        handleStuckSendLifeConfirmCallback(runGeneration, center, success, timedOut)
                     },
                 )
             }
@@ -1878,6 +1895,7 @@ class BotController(
 
     private fun handleStuckSendLifeConfirmCallback(
         runGeneration: Long,
+        tappedCenter: LogicalPoint,
         success: Boolean,
         timedOut: Boolean,
     ) = synchronized(lock) {
@@ -1895,6 +1913,7 @@ class BotController(
         stuckSendLifeFollowUpPhase = StuckSendLifeFollowUpPolicy.Phase.WAIT_OLD_CONFIRM_DISAPPEAR
         stuckSendLifeFollowUpPhaseStartedAt = SystemClock.elapsedRealtime()
         stuckSendLifeFollowUpLastCheckedGeneration = postCallbackBaseline
+        stuckSendLifeFollowUpLastTappedCenter = tappedCenter
         minimumFreshFrameGeneration = postCallbackBaseline
         freshFrameGateWaitStartedAt = 0L
         lastStage = null
