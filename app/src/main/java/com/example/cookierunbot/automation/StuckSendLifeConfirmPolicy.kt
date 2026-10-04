@@ -69,6 +69,7 @@ internal class StuckSendLifeConfirmTracker {
 internal object StuckSendLifeFollowUpPolicy {
     const val OLD_CONFIRM_DISAPPEAR_TIMEOUT_MS = 3_000L
     const val NEXT_CONFIRM_WAIT_MS = 2_500L
+    const val NEW_CONFIRM_MIN_CENTER_SHIFT_LOGICAL = 24
 
     enum class Phase {
         INACTIVE,
@@ -87,9 +88,11 @@ internal object StuckSendLifeFollowUpPolicy {
         phase: Phase,
         elapsedMs: Long,
         confirmMatched: Boolean,
+        confirmMovedToNewPosition: Boolean = false,
     ): Decision = when (phase) {
         Phase.INACTIVE -> Decision.STOP_CHAIN
         Phase.WAIT_OLD_CONFIRM_DISAPPEAR -> when {
+            confirmMatched && confirmMovedToNewPosition -> Decision.TAP_NEXT_CONFIRM
             !confirmMatched -> Decision.OLD_CONFIRM_DISAPPEARED
             elapsedMs >= OLD_CONFIRM_DISAPPEAR_TIMEOUT_MS -> Decision.STOP_CHAIN
             else -> Decision.WAIT
@@ -99,6 +102,14 @@ internal object StuckSendLifeFollowUpPolicy {
             elapsedMs >= NEXT_CONFIRM_WAIT_MS -> Decision.STOP_CHAIN
             else -> Decision.WAIT
         }
+    }
+
+    fun movedToNewPosition(previous: LogicalPoint?, current: LogicalPoint?): Boolean {
+        if (previous == null || current == null) return false
+        val dx = (current.x - previous.x).toLong()
+        val dy = (current.y - previous.y).toLong()
+        val minimum = NEW_CONFIRM_MIN_CENTER_SHIFT_LOGICAL.toLong()
+        return dx * dx + dy * dy >= minimum * minimum
     }
 }
 
