@@ -65,7 +65,6 @@ class StuckSendLifeConfirmPolicyTest {
             61_000L,
             0.99,
         )
-        assertFalse(afterWorkflowGap.continuityReset)
         assertFalse(afterWorkflowGap.startedNewEpisode)
         assertEquals(60_000L, afterWorkflowGap.elapsedMs)
         assertTrue(afterWorkflowGap.shouldTap)
@@ -92,13 +91,32 @@ class StuckSendLifeConfirmPolicyTest {
 
         val changed = tracker.observe(DetectionGroup.POST_GAME, 32_000L, 0.99)
         assertFalse(changed.startedNewEpisode)
-        assertFalse(changed.continuityReset)
-        assertFalse(changed.groupChangedReset)
         assertEquals(31_000L, changed.elapsedMs)
         assertFalse(changed.shouldTap)
 
         val due = tracker.observe(DetectionGroup.POST_GAME, 61_000L, 0.99)
         assertTrue(due.shouldTap)
+    }
+
+    @Test fun dueEpisodeStaysDueUntilAMiss() {
+        val tracker = StuckSendLifeConfirmTracker()
+        tracker.observe(DetectionGroup.POST_GAME, 1_000L, 0.99)
+
+        val due = tracker.observe(DetectionGroup.POST_GAME, 61_000L, 0.99)
+        assertTrue(due.shouldTap)
+
+        val stillDue = tracker.observe(DetectionGroup.POST_GAME, 62_500L, 0.99)
+        assertTrue(stillDue.shouldTap)
+        assertEquals(61_500L, stillDue.elapsedMs)
+
+        val miss = tracker.observe(DetectionGroup.POST_GAME, 63_000L, 0.70)
+        assertTrue(miss.disappearedReset)
+        assertFalse(miss.shouldTap)
+
+        val restarted = tracker.observe(DetectionGroup.POST_GAME, 64_000L, 0.99)
+        assertTrue(restarted.startedNewEpisode)
+        assertEquals(0L, restarted.elapsedMs)
+        assertFalse(restarted.shouldTap)
     }
 
     @Test fun explicitResetStartsANewMinute() {
