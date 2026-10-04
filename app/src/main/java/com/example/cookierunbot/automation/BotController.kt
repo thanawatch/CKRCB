@@ -125,6 +125,7 @@ class BotController(
     private var dualSendLifeVisibleAttempts = 0
     private var pendingDualSendLifeGesture: GestureCancellation? = null
     private var pendingStuckSendLifeGesture: GestureCancellation? = null
+    private var stuckSendLifeFollowUpCheckPending = false
     private var pendingProgressRecoveryGesture: GestureCancellation? = null
     @Volatile private var previousResultsSettleUntilElapsedRealtime = 0L
     @Volatile private var pendingPreviousResultsRedetectBaseline = -1L
@@ -280,6 +281,7 @@ class BotController(
             dualSendLifeVisibleAttempts = 0
             pendingDualSendLifeGesture = null
             pendingStuckSendLifeGesture = null
+            stuckSendLifeFollowUpCheckPending = false
             previousResultsSettleUntilElapsedRealtime = 0L
             pendingPreviousResultsRedetectBaseline = -1L
             resetNoMatchEpisode("bot_started")
@@ -335,6 +337,7 @@ class BotController(
             pendingDualSendLifeGesture = null
             stoppedStuckSendLifeGesture = pendingStuckSendLifeGesture
             pendingStuckSendLifeGesture = null
+            stuckSendLifeFollowUpCheckPending = false
             stoppedRecoveryGesture = pendingProgressRecoveryGesture
             pendingProgressRecoveryGesture = null
             calibrationBlockState.clear()
@@ -1045,6 +1048,7 @@ class BotController(
             autoTapper.updateDisplay(frame.sourceWidth, frame.sourceHeight)
             logDetectorFrame(frame)
             if (synchronized(lock) { progressRecoveryGate.isActive() }) return
+            if (handleStuckSendLifeFollowUpCheck(detector, frame)) return
             val detectionStartedAtNanos = SystemClock.elapsedRealtimeNanos()
             val profilingEnabled = RedfingerPerformancePolicy.profilingEnabled(options.performanceProfile)
             val fastStartPriorityAtDetectionStart = if (profilingEnabled) {
@@ -1738,6 +1742,47 @@ class BotController(
         }
         return observation
     }
+    private fun handleStuckSendLifeFollowUpCheck(
+        detector: StateDetector,
+        frame: FrameSnapshot,
+    ): Boolean {
+        val shouldCheck = synchronized(lock) {
+            if (!stuckSendLifeFollowUpCheckPending) return@synchronized false
+            if (!StuckSendLifeConfirmPolicy.eligibleGroup(group) || progressRecoveryGate.isActive()) {
+                stuckSendLifeFollowUpCheckPending = false
+                stuckSendLifeConfirmTracker.reset()
+                return@synchronized false
+            }
+            true
+        }
+        if (!shouldCheck) return false
+
+        val match = detector.detectTemplate(
+            frame.mat,
+            FriendLifeConfirmPolicy.TEMPLATE,
+            Rect(0, 0, frame.mat.cols(), frame.mat.rows()),
+            StuckSendLifeConfirmPolicy.MATCH_THRESHOLD,
+        )
+        if (!match.matched) {
+            synchronized(lock) {
+                stuckSendLifeFollowUpCheckPending = false
+                stuckSendLifeConfirmTracker.reset()
+            }
+            logDiagnostic(
+                "[STUCK_SEND_LIFE_CONFIRM] action=FOLLOW_UP_STOP matched=false " +
+                    "score=${format(match.score)} threshold=${format(StuckSendLifeConfirmPolicy.MATCH_THRESHOLD)} " +
+                    "frameGeneration=${frame.generation}",
+            )
+            return false
+        }
+
+        logDiagnostic(
+            "[STUCK_SEND_LIFE_CONFIRM] action=FOLLOW_UP_TAP matched=true " +
+                "score=${format(match.score)} frameGeneration=${frame.generation}",
+        )
+        handleStuckSendLifeConfirmPopup(match, frame)
+        return true
+    }
     private fun handleStuckSendLifeConfirmPopup(
         confirm: TemplateMatch,
         frame: FrameSnapshot,
@@ -1801,12 +1846,13 @@ class BotController(
             return@synchronized
         }
         val postCallbackBaseline = LatestFrameProvider.currentGeneration()
+        stuckSendLifeFollowUpCheckPending = true
         minimumFreshFrameGeneration = postCallbackBaseline
         freshFrameGateWaitStartedAt = 0L
         lastStage = null
         logDiagnostic(
-            "[STUCK_SEND_LIFE_CONFIRM] action=KEEP_TIMER reason=gesture_success " +
-                "postCallbackBaseline=$postCallbackBaseline action=REDETECT_FRESH_FRAME",
+            "[STUCK_SEND_LIFE_CONFIRM] action=FOLLOW_UP_CHECK_PENDING reason=gesture_success " +
+                "postCallbackBaseline=$postCallbackBaseline action=CHECK_NEXT_FRESH_FRAME",
         )
     }
     /**
