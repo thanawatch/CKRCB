@@ -10,6 +10,8 @@ internal object FriendLifeConfirmPolicy {
     const val RADIUS_LOGICAL = GameProgressRecovery.RADIUS_LOGICAL
     const val WAIT_MIN_MS = 150
     const val WAIT_MAX_MS = 300
+    const val CONFIRM_2_SEARCH_TIMEOUT_MS = 10_000L
+    const val CONFIRM_2_RETRY_INTERVAL_MS = 120L
 
     fun fullFrame(width: Int, height: Int): Rect = Rect(0, 0, width, height)
 
