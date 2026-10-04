@@ -15,6 +15,11 @@ class FriendLifeConfirmPolicyTest {
         assertEquals(5.0, FriendLifeConfirmPolicy.RADIUS_LOGICAL, 0.0)
     }
 
+    @Test fun confirmTwoRetryWindowMatchesDelayedPopupRequirement() {
+        assertEquals(10_000L, FriendLifeConfirmPolicy.CONFIRM_2_SEARCH_TIMEOUT_MS)
+        assertEquals(120L, FriendLifeConfirmPolicy.CONFIRM_2_RETRY_INTERVAL_MS)
+    }
+
     @Test fun actualMatchDeterminesConfirmCenter() {
         assertEquals(
             LogicalPoint(740, 452),
