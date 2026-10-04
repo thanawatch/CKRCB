@@ -56,20 +56,19 @@ class StuckSendLifeConfirmPolicyTest {
         assertTrue(tracker.observe(DetectionGroup.PRE_GAME, 101_000L, 0.99).shouldTap)
     }
 
-    @Test fun longObservationGapBreaksContinuity() {
+    @Test fun longObservationGapKeepsTimerWhenNextProbeStillMatches() {
         val tracker = StuckSendLifeConfirmTracker()
         tracker.observe(DetectionGroup.POST_GAME, 1_000L, 0.99)
-        tracker.observe(DetectionGroup.POST_GAME, 3_000L, 0.99)
 
         val afterWorkflowGap = tracker.observe(
             DetectionGroup.POST_GAME,
-            3_000L + StuckSendLifeConfirmPolicy.MAX_OBSERVATION_GAP_MS + 1L,
+            61_000L,
             0.99,
         )
-        assertTrue(afterWorkflowGap.continuityReset)
-        assertTrue(afterWorkflowGap.startedNewEpisode)
-        assertEquals(0L, afterWorkflowGap.elapsedMs)
-        assertFalse(afterWorkflowGap.shouldTap)
+        assertFalse(afterWorkflowGap.continuityReset)
+        assertFalse(afterWorkflowGap.startedNewEpisode)
+        assertEquals(60_000L, afterWorkflowGap.elapsedMs)
+        assertTrue(afterWorkflowGap.shouldTap)
     }
 
     @Test fun inGameObservationClearsAnExistingEpisode() {
