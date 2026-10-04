@@ -20,6 +20,10 @@ class FriendLifeConfirmPolicyTest {
         assertEquals(120L, FriendLifeConfirmPolicy.CONFIRM_2_RETRY_INTERVAL_MS)
     }
 
+    @Test fun orphanConfirmDoesNotResetGameProgressWatchdog() {
+        assertNull(friendSendTapProgressReason("CONFIRM_2_ORPHAN", gestureSucceeded = true))
+    }
+
     @Test fun actualMatchDeterminesConfirmCenter() {
         assertEquals(
             LogicalPoint(740, 452),
