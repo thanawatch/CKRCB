@@ -24,6 +24,19 @@ class FriendLifeConfirmPolicyTest {
         assertNull(friendSendTapProgressReason("CONFIRM_2_ORPHAN", gestureSucceeded = true))
     }
 
+    @Test fun friendLifeUsesSeparateConfirmRegionsFromReferenceFrames() {
+        val confirmOne = FriendLifeConfirmPolicy.confirmOneRegion(1280, 720)
+        assertEquals(640, confirmOne.x)
+        assertEquals(402, confirmOne.y)
+        assertEquals(304, confirmOne.width)
+        assertEquals(113, confirmOne.height)
+
+        val confirmTwo = FriendLifeConfirmPolicy.confirmTwoRegion(1280, 720)
+        assertEquals(487, confirmTwo.x)
+        assertEquals(402, confirmTwo.y)
+        assertEquals(304, confirmTwo.width)
+        assertEquals(113, confirmTwo.height)
+    }
     @Test fun actualMatchDeterminesConfirmCenter() {
         assertEquals(
             LogicalPoint(740, 452),
