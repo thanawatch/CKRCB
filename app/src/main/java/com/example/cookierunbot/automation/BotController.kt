@@ -3171,12 +3171,13 @@ class BotController(
         val confirm = detector.detectTemplate(
             snapshot.mat,
             FriendLifeConfirmPolicy.TEMPLATE,
-            FriendLifeConfirmPolicy.fullFrame(snapshot.mat.cols(), snapshot.mat.rows()),
+            FriendLifeConfirmPolicy.confirmTwoRegion(snapshot.mat.cols(), snapshot.mat.rows()),
         )
-        val stuckObservation = observeWorkflowStuckSendLifeConfirmMatch(
-            confirm,
+        val stuckObservation = observeWorkflowStuckSendLifeConfirm(
+            detector,
+            snapshot.mat,
             "FRIEND_LIFE_SCAN",
-        )
+        )?.second
         FriendLifeFrameScan(
             interrupt = interrupt,
             top = detector.detectTemplate(
@@ -3189,7 +3190,7 @@ class BotController(
                 snapshot.mat, "FRIEND_SEND_LIFE_1.png", FRIEND_SEND_REGION, FRIEND_LIFE_MATCH_THRESHOLD,
             ),
             confirm = confirm,
-            stuckConfirmDue = stuckObservation.shouldTap,
+            stuckConfirmDue = stuckObservation?.shouldTap == true,
         )
     } finally { snapshot.mat.release() }
 
@@ -3343,6 +3344,11 @@ class BotController(
         val frameGeneration = snapshot.generation
         val sourceWidth = snapshot.sourceWidth
         val sourceHeight = snapshot.sourceHeight
+        val confirmRegion = when (step) {
+            "CONFIRM_1" -> FriendLifeConfirmPolicy.confirmOneRegion(snapshot.mat.cols(), snapshot.mat.rows())
+            "CONFIRM_2" -> FriendLifeConfirmPolicy.confirmTwoRegion(snapshot.mat.cols(), snapshot.mat.rows())
+            else -> FriendLifeConfirmPolicy.fullFrame(snapshot.mat.cols(), snapshot.mat.rows())
+        }
         val interrupt: BotStage?
         val match: TemplateMatch?
         try {
@@ -3350,7 +3356,7 @@ class BotController(
             match = if (interrupt == null) detector.detectTemplate(
                 snapshot.mat,
                 FriendLifeConfirmPolicy.TEMPLATE,
-                FriendLifeConfirmPolicy.fullFrame(snapshot.mat.cols(), snapshot.mat.rows()),
+                confirmRegion,
             ) else null
         } finally {
             snapshot.mat.release()
@@ -3368,7 +3374,9 @@ class BotController(
         )
         val center = FriendLifeConfirmPolicy.centerIfMatched(confirmation)
         logDiagnostic(
-            "[FRIEND_LIFE_CONFIRM] step=$step scan=FULL_FRAME matched=${confirmation.matched} " +
+            "[FRIEND_LIFE_CONFIRM] step=$step scan=ROI " +
+                "roi=(${confirmRegion.x},${confirmRegion.y},${confirmRegion.x + confirmRegion.width}," +
+                "${confirmRegion.y + confirmRegion.height}) matched=${confirmation.matched} " +
                 "score=${format(confirmation.score)} frameSequence=$frameGeneration" +
                 if (center == null) " action=SKIP" else "",
         )
@@ -3436,6 +3444,7 @@ class BotController(
             attempt += 1
             val sourceWidth = snapshot.sourceWidth
             val sourceHeight = snapshot.sourceHeight
+            val confirmRegion = FriendLifeConfirmPolicy.confirmTwoRegion(snapshot.mat.cols(), snapshot.mat.rows())
             val interrupt: BotStage?
             val confirmation: TemplateMatch?
             try {
@@ -3443,7 +3452,7 @@ class BotController(
                 confirmation = if (interrupt == null) detector.detectTemplate(
                     snapshot.mat,
                     FriendLifeConfirmPolicy.TEMPLATE,
-                    FriendLifeConfirmPolicy.fullFrame(snapshot.mat.cols(), snapshot.mat.rows()),
+                    confirmRegion,
                 ) else null
             } finally {
                 snapshot.mat.release()
@@ -3461,9 +3470,10 @@ class BotController(
             observeWorkflowStuckSendLifeConfirmMatch(match, "FRIEND_LIFE_CONFIRM_2")
             val center = FriendLifeConfirmPolicy.centerIfMatched(match)
             logDiagnostic(
-                "[FRIEND_LIFE_CONFIRM] step=CONFIRM_2 scan=FULL_FRAME attempt=$attempt " +
-                    "matched=${match.matched} score=${format(match.score)} " +
-                    "frameSequence=$lastGeneration" +
+                "[FRIEND_LIFE_CONFIRM] step=CONFIRM_2 scan=ROI attempt=$attempt " +
+                    "roi=(${confirmRegion.x},${confirmRegion.y},${confirmRegion.x + confirmRegion.width}," +
+                    "${confirmRegion.y + confirmRegion.height}) matched=${match.matched} " +
+                    "score=${format(match.score)} frameSequence=$lastGeneration" +
                     if (center == null) " action=WAIT" else "",
             )
             if (center != null) {
