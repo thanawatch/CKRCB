@@ -16,8 +16,8 @@ internal object FriendSwipeProfileGenerator {
     const val SAFE_MIN_Y = 315
     const val SAFE_MAX_Y = 585
     const val POINT_COUNT = 6
-    const val FIND_TOP_MIN_DURATION_MS = 300L
-    const val FIND_TOP_MAX_DURATION_MS = 480L
+    const val FIND_TOP_MIN_DURATION_MS = 120L
+    const val FIND_TOP_MAX_DURATION_MS = 160L
     const val SCROLL_DOWN_MIN_DURATION_MS = 650L
     const val SCROLL_DOWN_MAX_DURATION_MS = 950L
 
