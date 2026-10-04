@@ -1129,7 +1129,7 @@ class BotController(
                 if (stuckConfirm.startedNewEpisode) {
                     logDiagnostic(
                         "[STUCK_SEND_LIFE_CONFIRM] action=START " +
-                            "reason=${if (stuckConfirm.continuityReset) \"observation_gap\" else \"high_confidence_match\"} " +
+                            "reason=${if (stuckConfirm.continuityReset) "observation_gap" else "high_confidence_match"} " +
                             "group=${group.name} score=${format(pair.confirm.score)} " +
                             "threshold=${format(StuckSendLifeConfirmPolicy.MATCH_THRESHOLD)} " +
                             "requiredMs=${StuckSendLifeConfirmPolicy.STUCK_DURATION_MS}",
@@ -1146,9 +1146,9 @@ class BotController(
                 if (oldGameCompleteMatched || pair.confirm.matched) {
                     logDiagnostic(
                         "[GAME_COMPLETE_SEND_LIFE] matched=false " +
-                            "gameCompleteScore=${pair.gameComplete?.score?.let(::format) ?: \"not_scanned\"} " +
+                            "gameCompleteScore=${pair.gameComplete?.score?.let(::format) ?: "not_scanned"} " +
                             "confirmScore=${format(pair.confirm.score)} " +
-                            "fallback=${if (oldGameCompleteMatched) \"LEGACY_GAME_COMPLETE\" else \"NORMAL_DETECTION\"}",
+                            "fallback=${if (oldGameCompleteMatched) "LEGACY_GAME_COMPLETE" else "NORMAL_DETECTION"}",
                     )
                 }
             }
