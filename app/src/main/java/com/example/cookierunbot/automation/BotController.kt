@@ -2985,33 +2985,96 @@ class BotController(
         var sentCount = 0
         var traverseSwipeCount = 0
         var lastWatchdogLogAt = 0L
+        var suppressOrphanConfirmUntilDisappear = false
         while (isRunning()) {
             val snapshot = LatestFrameProvider.snapshot() ?: return friendLifeAbort("TRAVERSE", "no_frame", traverseSwipeCount)
             val beforeScrollGeneration = snapshot.generation
             val beforeScrollSample = FriendScrollVerifier.capture(snapshot.mat, FRIEND_SCROLL_VERIFY_REGION)
             val scan = scanFriendFrame(detector, snapshot)
             scan.interrupt?.let { return friendLifeInterrupt(it, "TRAVERSE") }
+            if (!scan.confirm.matched && suppressOrphanConfirmUntilDisappear) {
+                suppressOrphanConfirmUntilDisappear = false
+                logDiagnostic(
+                    "[FRIEND_LIFE_ORPHAN_CONFIRM] action=REARM reason=confirm_disappeared " +
+                        "frameSequence=${snapshot.generation}",
+                )
+            }
             if (scan.confirm.matched) {
-                val center = requireNotNull(FriendLifeConfirmPolicy.centerIfMatched(scan.confirm))
-                val waitMs = randomMs(FriendLifeConfirmPolicy.WAIT_MIN_MS, FriendLifeConfirmPolicy.WAIT_MAX_MS)
-                logDiagnostic(
-                    "[FRIEND_LIFE_ORPHAN_CONFIRM] matched=true score=${format(scan.confirm.score)} " +
-                        "center=(${center.x},${center.y}) waitMs=$waitMs frameSequence=${snapshot.generation}",
-                )
-                delayOrStop(waitMs)
-                val point = FriendLifeConfirmPolicy.pointInCircle(center)
-                val orphan = friendLifeTapStep(
-                    detector, "CONFIRM_2_ORPHAN", point, true, sourceWidth, sourceHeight,
-                    randomMs(FRIEND_FINAL_PACING_MIN_MS, FRIEND_FINAL_PACING_MAX_MS),
-                    physicalRadius = 0.0,
-                )
-                if (!orphan.success) return friendLifeAbort("TRAVERSE", orphan.failureReason, traverseSwipeCount)
-                orphan.interrupt?.let { return friendLifeInterrupt(it, "AFTER_ORPHAN_CONFIRM") }
-                logDiagnostic(
-                    "[FRIEND_LIFE_ORPHAN_CONFIRM] action=TAP_COMPLETE sentCount=$sentCount " +
-                        "traverseSwipeCount=$traverseSwipeCount",
-                )
-                continue
+                val orphanNow = SystemClock.elapsedRealtime()
+                val orphanElapsedMs = friendLifeScheduler.activeElapsedMs(orphanNow)
+                val orphanNoProgressMs = orphanNow - lastProgressElapsedRealtime
+                if (orphanNow - lastWatchdogLogAt >= FRIEND_LIFE_WATCHDOG_LOG_INTERVAL_MS) {
+                    logDiagnostic(
+                        "[FRIEND_LIFE_WATCHDOG] phase=TRAVERSE elapsedMs=$orphanElapsedMs " +
+                            "noProgressMs=$orphanNoProgressMs sentCount=$sentCount " +
+                            "traverseSwipeCount=$traverseSwipeCount orphanConfirm=true",
+                    )
+                    lastWatchdogLogAt = orphanNow
+                }
+                when (FriendLifeConfirmPolicy.orphanDecision(
+                    suppressOrphanConfirmUntilDisappear,
+                    scan.stuckConfirmDue,
+                    orphanElapsedMs,
+                    orphanNoProgressMs,
+                )) {
+                    FriendLifeConfirmPolicy.OrphanDecision.ABORT_ABSOLUTE_TIMEOUT -> {
+                        logDiagnostic(
+                            "[FRIEND_LIFE_ABORT] phase=TRAVERSE reason=absolute_timeout " +
+                                "elapsedMs=$orphanElapsedMs sentCount=$sentCount " +
+                                "traverseSwipeCount=$traverseSwipeCount orphanConfirm=true",
+                        )
+                        return FriendLifeWorkflowResult.FAILED
+                    }
+                    FriendLifeConfirmPolicy.OrphanDecision.INTERRUPT_STUCK -> {
+                        logDiagnostic(
+                            "[FRIEND_LIFE_INTERRUPT] reason=stuck_send_life_confirm_due " +
+                                "phase=TRAVERSE orphanConfirm=true",
+                        )
+                        return FriendLifeWorkflowResult.INTERRUPTED
+                    }
+                    FriendLifeConfirmPolicy.OrphanDecision.ABORT_NO_PROGRESS -> {
+                        logDiagnostic(
+                            "[FRIEND_LIFE_ABORT] phase=TRAVERSE reason=no_progress_timeout " +
+                                "noProgressMs=$orphanNoProgressMs sentCount=$sentCount " +
+                                "traverseSwipeCount=$traverseSwipeCount orphanConfirm=true",
+                        )
+                        return FriendLifeWorkflowResult.FAILED
+                    }
+                    FriendLifeConfirmPolicy.OrphanDecision.WAIT_FOR_DISAPPEAR -> {
+                        logDiagnostic(
+                            "[FRIEND_LIFE_ORPHAN_CONFIRM] action=WAIT_FOR_DISAPPEAR " +
+                                "score=${format(scan.confirm.score)} frameSequence=${snapshot.generation} " +
+                                "noProgressMs=$orphanNoProgressMs",
+                        )
+                        delayOrStop(FriendLifeConfirmPolicy.CONFIRM_2_RETRY_INTERVAL_MS)
+                        continue
+                    }
+                    FriendLifeConfirmPolicy.OrphanDecision.TAP_ONCE -> {
+                        val center = requireNotNull(FriendLifeConfirmPolicy.centerIfMatched(scan.confirm))
+                        val waitMs = randomMs(FriendLifeConfirmPolicy.WAIT_MIN_MS, FriendLifeConfirmPolicy.WAIT_MAX_MS)
+                        logDiagnostic(
+                            "[FRIEND_LIFE_ORPHAN_CONFIRM] matched=true score=${format(scan.confirm.score)} " +
+                                "center=(${center.x},${center.y}) waitMs=$waitMs frameSequence=${snapshot.generation}",
+                        )
+                        delayOrStop(waitMs)
+                        val point = FriendLifeConfirmPolicy.pointInCircle(center)
+                        val orphan = friendLifeTapStep(
+                            detector, "CONFIRM_2_ORPHAN", point, true, sourceWidth, sourceHeight,
+                            randomMs(FRIEND_FINAL_PACING_MIN_MS, FRIEND_FINAL_PACING_MAX_MS),
+                            physicalRadius = 0.0,
+                        )
+                        if (!orphan.success) {
+                            return friendLifeAbort("TRAVERSE", orphan.failureReason, traverseSwipeCount)
+                        }
+                        orphan.interrupt?.let { return friendLifeInterrupt(it, "AFTER_ORPHAN_CONFIRM") }
+                        suppressOrphanConfirmUntilDisappear = true
+                        logDiagnostic(
+                            "[FRIEND_LIFE_ORPHAN_CONFIRM] action=TAP_COMPLETE oneShot=true " +
+                                "sentCount=$sentCount traverseSwipeCount=$traverseSwipeCount",
+                        )
+                        continue
+                    }
+                }
             }
             if (scan.stuckConfirmDue) {
                 logDiagnostic("[FRIEND_LIFE_INTERRUPT] reason=stuck_send_life_confirm_due phase=TRAVERSE")
@@ -3078,14 +3141,20 @@ class BotController(
                             return friendLifeInterrupt(it, "AFTER_CONFIRM_1")
                         }
                     }
-                    friendLifeConfirmTwoRetryStep(
+                    val confirm2 = friendLifeConfirmTwoRetryStep(
                         detector, confirm1.freshGeneration,
                         requireNewFrame = confirm1.skipped,
                         postTapPacingMs = randomMs(FRIEND_FINAL_PACING_MIN_MS, FRIEND_FINAL_PACING_MAX_MS),
-                    ).let { step ->
-                        if (!step.success) return friendLifeAbort("SEND", step.failureReason, sentCount)
-                        val decision = friendLifeSendDecision(FriendLifeSendStep.CONFIRM_2, step.interrupt)
-                        decision.interrupt?.let { return friendLifeInterrupt(it, "AFTER_CONFIRM_2") }
+                    )
+                    if (!confirm2.success) return friendLifeAbort("SEND", confirm2.failureReason, sentCount)
+                    val confirm2Decision = friendLifeSendDecision(FriendLifeSendStep.CONFIRM_2, confirm2.interrupt)
+                    confirm2Decision.interrupt?.let { return friendLifeInterrupt(it, "AFTER_CONFIRM_2") }
+                    suppressOrphanConfirmUntilDisappear = !confirm2.skipped
+                    if (suppressOrphanConfirmUntilDisappear) {
+                        logDiagnostic(
+                            "[FRIEND_LIFE_ORPHAN_CONFIRM] action=SUPPRESS_UNTIL_DISAPPEAR " +
+                                "reason=confirm_2_tapped",
+                        )
                     }
                     sentCount += 1
                     friendLifeCurrentSentCount = sentCount
@@ -3433,7 +3502,33 @@ class BotController(
                     lastGeneration,
                     minOf(FRIEND_RESCAN_TIMEOUT_MS, remainingMs),
                 )
-            } ?: return FriendLifeTapStepResult(false, null, "confirm_2_fresh_frame_timeout")
+            }
+            if (snapshot == null) {
+                if (!synchronized(lock) { isCurrentWorkerRunLocked() && !progressRecoveryGate.isActive() }) {
+                    return FriendLifeTapStepResult(false, null, "bot_stopped")
+                }
+                val afterWait = SystemClock.elapsedRealtime()
+                when (FriendLifeConfirmPolicy.confirmTwoNoFreshFrameDecision(afterWait, deadline)) {
+                    FriendLifeConfirmPolicy.NoFreshFrameDecision.RETRY -> {
+                        logDiagnostic(
+                            "[FRIEND_LIFE_CONFIRM] step=CONFIRM_2 action=WAIT reason=no_fresh_frame " +
+                                "elapsedMs=${afterWait - startedAt} " +
+                                "remainingMs=${(deadline - afterWait).coerceAtLeast(0L)}",
+                        )
+                        continue
+                    }
+                    FriendLifeConfirmPolicy.NoFreshFrameDecision.SKIP -> {
+                        logDiagnostic(
+                            "[FRIEND_LIFE_CONFIRM] step=CONFIRM_2 action=SKIP reason=search_timeout " +
+                                "elapsedMs=${afterWait - startedAt} " +
+                                "timeoutMs=${FriendLifeConfirmPolicy.CONFIRM_2_SEARCH_TIMEOUT_MS}",
+                        )
+                        return FriendLifeTapStepResult(
+                            true, null, "", freshGeneration = lastGeneration, skipped = true,
+                        )
+                    }
+                }
+            }
 
             firstScan = false
             lastGeneration = snapshot.generation
