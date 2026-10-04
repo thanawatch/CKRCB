@@ -3510,11 +3510,17 @@ class BotController(
                 val afterWait = SystemClock.elapsedRealtime()
                 when (FriendLifeConfirmPolicy.confirmTwoNoFreshFrameDecision(afterWait, deadline)) {
                     FriendLifeConfirmPolicy.NoFreshFrameDecision.RETRY -> {
+                        val retryDelayMs = minOf(
+                            FriendLifeConfirmPolicy.CONFIRM_2_RETRY_INTERVAL_MS,
+                            (deadline - afterWait).coerceAtLeast(0L),
+                        )
                         logDiagnostic(
                             "[FRIEND_LIFE_CONFIRM] step=CONFIRM_2 action=WAIT reason=no_fresh_frame " +
                                 "elapsedMs=${afterWait - startedAt} " +
-                                "remainingMs=${(deadline - afterWait).coerceAtLeast(0L)}",
+                                "remainingMs=${(deadline - afterWait).coerceAtLeast(0L)} " +
+                                "retryDelayMs=$retryDelayMs",
                         )
+                        delayOrStop(retryDelayMs)
                         continue
                     }
                     FriendLifeConfirmPolicy.NoFreshFrameDecision.SKIP -> {
