@@ -164,6 +164,18 @@ class StuckSendLifeConfirmPolicyTest {
         )
     }
 
+    @Test fun followUpDebouncesImmediateMovedMatch() {
+        assertEquals(
+            StuckSendLifeFollowUpPolicy.Decision.WAIT,
+            StuckSendLifeFollowUpPolicy.decide(
+                StuckSendLifeFollowUpPolicy.Phase.WAIT_OLD_CONFIRM_DISAPPEAR,
+                StuckSendLifeFollowUpPolicy.NEW_CONFIRM_MIN_MOVE_DELAY_MS - 1L,
+                confirmMatched = true,
+                confirmMovedToNewPosition = true,
+            ),
+        )
+    }
+
     @Test fun followUpIgnoresSmallTemplatePositionNoise() {
         val previous = LogicalPoint(793, 458)
         val jittered = LogicalPoint(799, 463)
