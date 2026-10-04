@@ -125,7 +125,9 @@ class BotController(
     private var dualSendLifeVisibleAttempts = 0
     private var pendingDualSendLifeGesture: GestureCancellation? = null
     private var pendingStuckSendLifeGesture: GestureCancellation? = null
-    private var stuckSendLifeFollowUpCheckPending = false
+    private var stuckSendLifeFollowUpPhase = StuckSendLifeFollowUpPolicy.Phase.INACTIVE
+    private var stuckSendLifeFollowUpPhaseStartedAt = 0L
+    private var stuckSendLifeFollowUpLastCheckedGeneration = -1L
     private var pendingProgressRecoveryGesture: GestureCancellation? = null
     @Volatile private var previousResultsSettleUntilElapsedRealtime = 0L
     @Volatile private var pendingPreviousResultsRedetectBaseline = -1L
@@ -281,7 +283,9 @@ class BotController(
             dualSendLifeVisibleAttempts = 0
             pendingDualSendLifeGesture = null
             pendingStuckSendLifeGesture = null
-            stuckSendLifeFollowUpCheckPending = false
+            stuckSendLifeFollowUpPhase = StuckSendLifeFollowUpPolicy.Phase.INACTIVE
+            stuckSendLifeFollowUpPhaseStartedAt = 0L
+            stuckSendLifeFollowUpLastCheckedGeneration = -1L
             previousResultsSettleUntilElapsedRealtime = 0L
             pendingPreviousResultsRedetectBaseline = -1L
             resetNoMatchEpisode("bot_started")
@@ -337,7 +341,9 @@ class BotController(
             pendingDualSendLifeGesture = null
             stoppedStuckSendLifeGesture = pendingStuckSendLifeGesture
             pendingStuckSendLifeGesture = null
-            stuckSendLifeFollowUpCheckPending = false
+            stuckSendLifeFollowUpPhase = StuckSendLifeFollowUpPolicy.Phase.INACTIVE
+            stuckSendLifeFollowUpPhaseStartedAt = 0L
+            stuckSendLifeFollowUpLastCheckedGeneration = -1L
             stoppedRecoveryGesture = pendingProgressRecoveryGesture
             pendingProgressRecoveryGesture = null
             calibrationBlockState.clear()
@@ -1746,42 +1752,82 @@ class BotController(
         detector: StateDetector,
         frame: FrameSnapshot,
     ): Boolean {
-        val shouldCheck = synchronized(lock) {
-            if (!stuckSendLifeFollowUpCheckPending) return@synchronized false
+        val phase = synchronized(lock) {
+            if (stuckSendLifeFollowUpPhase == StuckSendLifeFollowUpPolicy.Phase.INACTIVE) return false
             if (!StuckSendLifeConfirmPolicy.eligibleGroup(group) || progressRecoveryGate.isActive()) {
-                stuckSendLifeFollowUpCheckPending = false
+                stuckSendLifeFollowUpPhase = StuckSendLifeFollowUpPolicy.Phase.INACTIVE
+                stuckSendLifeFollowUpPhaseStartedAt = 0L
+                stuckSendLifeFollowUpLastCheckedGeneration = -1L
                 stuckSendLifeConfirmTracker.reset()
-                return@synchronized false
+                return false
             }
-            true
+            if (frame.generation <= stuckSendLifeFollowUpLastCheckedGeneration) {
+                listener.onStateChanged("WAITING_FOR_STUCK_SEND_LIFE_FOLLOW_UP_FRAME")
+                return true
+            }
+            stuckSendLifeFollowUpLastCheckedGeneration = frame.generation
+            stuckSendLifeFollowUpPhase
         }
-        if (!shouldCheck) return false
-
+        val now = SystemClock.elapsedRealtime()
+        val phaseStartedAt = synchronized(lock) { stuckSendLifeFollowUpPhaseStartedAt }
         val match = detector.detectTemplate(
             frame.mat,
             FriendLifeConfirmPolicy.TEMPLATE,
             Rect(0, 0, frame.mat.cols(), frame.mat.rows()),
             StuckSendLifeConfirmPolicy.MATCH_THRESHOLD,
         )
-        if (!match.matched) {
-            synchronized(lock) {
-                stuckSendLifeFollowUpCheckPending = false
-                stuckSendLifeConfirmTracker.reset()
-            }
-            logDiagnostic(
-                "[STUCK_SEND_LIFE_CONFIRM] action=FOLLOW_UP_STOP matched=false " +
-                    "score=${format(match.score)} threshold=${format(StuckSendLifeConfirmPolicy.MATCH_THRESHOLD)} " +
-                    "frameGeneration=${frame.generation}",
-            )
-            return false
-        }
-
-        logDiagnostic(
-            "[STUCK_SEND_LIFE_CONFIRM] action=FOLLOW_UP_TAP matched=true " +
-                "score=${format(match.score)} frameGeneration=${frame.generation}",
+        val decision = StuckSendLifeFollowUpPolicy.decide(
+            phase = phase,
+            elapsedMs = (now - phaseStartedAt).coerceAtLeast(0L),
+            confirmMatched = match.matched,
         )
-        handleStuckSendLifeConfirmPopup(match, frame)
-        return true
+        return when (decision) {
+            StuckSendLifeFollowUpPolicy.Decision.WAIT -> {
+                listener.onStateChanged(
+                    if (phase == StuckSendLifeFollowUpPolicy.Phase.WAIT_OLD_CONFIRM_DISAPPEAR)
+                        "WAITING_FOR_OLD_STUCK_SEND_LIFE_CONFIRM_TO_DISAPPEAR"
+                    else
+                        "WAITING_FOR_NEXT_STUCK_SEND_LIFE_CONFIRM",
+                )
+                true
+            }
+            StuckSendLifeFollowUpPolicy.Decision.OLD_CONFIRM_DISAPPEARED -> {
+                synchronized(lock) {
+                    stuckSendLifeFollowUpPhase = StuckSendLifeFollowUpPolicy.Phase.WAIT_NEXT_CONFIRM
+                    stuckSendLifeFollowUpPhaseStartedAt = now
+                    stuckSendLifeConfirmTracker.reset()
+                }
+                logDiagnostic(
+                    "[STUCK_SEND_LIFE_CONFIRM] action=OLD_CONFIRM_DISAPPEARED " +
+                        "score=${format(match.score)} frameGeneration=${frame.generation} " +
+                        "nextWaitMs=${StuckSendLifeFollowUpPolicy.NEXT_CONFIRM_WAIT_MS}",
+                )
+                listener.onStateChanged("WAITING_FOR_NEXT_STUCK_SEND_LIFE_CONFIRM")
+                true
+            }
+            StuckSendLifeFollowUpPolicy.Decision.TAP_NEXT_CONFIRM -> {
+                logDiagnostic(
+                    "[STUCK_SEND_LIFE_CONFIRM] action=FOLLOW_UP_TAP_NEW_CONFIRM " +
+                        "score=${format(match.score)} frameGeneration=${frame.generation}",
+                )
+                handleStuckSendLifeConfirmPopup(match, frame)
+                true
+            }
+            StuckSendLifeFollowUpPolicy.Decision.STOP_CHAIN -> {
+                synchronized(lock) {
+                    stuckSendLifeFollowUpPhase = StuckSendLifeFollowUpPolicy.Phase.INACTIVE
+                    stuckSendLifeFollowUpPhaseStartedAt = 0L
+                    stuckSendLifeFollowUpLastCheckedGeneration = -1L
+                    stuckSendLifeConfirmTracker.reset()
+                }
+                logDiagnostic(
+                    "[STUCK_SEND_LIFE_CONFIRM] action=FOLLOW_UP_STOP " +
+                        "phase=${phase.name} matched=${match.matched} score=${format(match.score)} " +
+                        "frameGeneration=${frame.generation}",
+                )
+                false
+            }
+        }
     }
     private fun handleStuckSendLifeConfirmPopup(
         confirm: TemplateMatch,
@@ -1846,13 +1892,16 @@ class BotController(
             return@synchronized
         }
         val postCallbackBaseline = LatestFrameProvider.currentGeneration()
-        stuckSendLifeFollowUpCheckPending = true
+        stuckSendLifeFollowUpPhase = StuckSendLifeFollowUpPolicy.Phase.WAIT_OLD_CONFIRM_DISAPPEAR
+        stuckSendLifeFollowUpPhaseStartedAt = SystemClock.elapsedRealtime()
+        stuckSendLifeFollowUpLastCheckedGeneration = postCallbackBaseline
         minimumFreshFrameGeneration = postCallbackBaseline
         freshFrameGateWaitStartedAt = 0L
         lastStage = null
         logDiagnostic(
-            "[STUCK_SEND_LIFE_CONFIRM] action=FOLLOW_UP_CHECK_PENDING reason=gesture_success " +
-                "postCallbackBaseline=$postCallbackBaseline action=CHECK_NEXT_FRESH_FRAME",
+            "[STUCK_SEND_LIFE_CONFIRM] action=FOLLOW_UP_WAIT_OLD_DISAPPEAR reason=gesture_success " +
+                "postCallbackBaseline=$postCallbackBaseline " +
+                "timeoutMs=${StuckSendLifeFollowUpPolicy.OLD_CONFIRM_DISAPPEAR_TIMEOUT_MS}",
         )
     }
     /**
