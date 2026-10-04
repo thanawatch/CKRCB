@@ -789,11 +789,33 @@ class BotController(
         runGeneration: Long,
         reservation: GameProgressRecoveryReservation,
         frameGeneration: Long,
-    ): Boolean = synchronized(lock) {
-        running && botRunGeneration == runGeneration &&
-            GameProgressWatchdogManager.isCurrentRecovery(reservation) &&
-            !PopupFreshFramePolicy.blocks(frameGeneration, minimumFreshFrameGeneration) &&
-            progressRecoveryGate.begin(runGeneration)
+    ): Boolean {
+        var cancelledStuckFollowUp = false
+        val begun = synchronized(lock) {
+            val canBegin = running && botRunGeneration == runGeneration &&
+                GameProgressWatchdogManager.isCurrentRecovery(reservation) &&
+                !PopupFreshFramePolicy.blocks(frameGeneration, minimumFreshFrameGeneration)
+            if (!canBegin || !progressRecoveryGate.begin(runGeneration)) {
+                false
+            } else {
+                cancelledStuckFollowUp =
+                    stuckSendLifeFollowUpPhase != StuckSendLifeFollowUpPolicy.Phase.INACTIVE
+                if (cancelledStuckFollowUp) {
+                    stuckSendLifeFollowUpPhase = StuckSendLifeFollowUpPolicy.Phase.INACTIVE
+                    stuckSendLifeFollowUpPhaseStartedAt = 0L
+                    stuckSendLifeFollowUpLastCheckedGeneration = -1L
+                    stuckSendLifeFollowUpLastTappedCenter = null
+                    stuckSendLifeConfirmTracker.reset()
+                }
+                true
+            }
+        }
+        if (cancelledStuckFollowUp) {
+            logDiagnostic(
+                "[STUCK_SEND_LIFE_CONFIRM] action=FOLLOW_UP_CANCEL reason=progress_recovery",
+            )
+        }
+        return begun
     }
 
     private fun dispatchProgressRecoveryTap(
