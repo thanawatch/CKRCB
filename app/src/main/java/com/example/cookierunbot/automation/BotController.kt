@@ -3368,10 +3368,6 @@ class BotController(
             true, interrupt, "", freshGeneration = frameGeneration, skipped = true,
         )
         val confirmation = requireNotNull(match)
-        observeWorkflowStuckSendLifeConfirmMatch(
-            confirmation,
-            "FRIEND_LIFE_$step",
-        )
         val center = FriendLifeConfirmPolicy.centerIfMatched(confirmation)
         logDiagnostic(
             "[FRIEND_LIFE_CONFIRM] step=$step scan=ROI " +
@@ -3467,7 +3463,6 @@ class BotController(
             }
 
             val match = requireNotNull(confirmation)
-            observeWorkflowStuckSendLifeConfirmMatch(match, "FRIEND_LIFE_CONFIRM_2")
             val center = FriendLifeConfirmPolicy.centerIfMatched(match)
             logDiagnostic(
                 "[FRIEND_LIFE_CONFIRM] step=CONFIRM_2 scan=ROI attempt=$attempt " +
