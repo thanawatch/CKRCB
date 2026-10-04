@@ -27,7 +27,7 @@ class FriendSwipeProfileTest {
 
     @Test fun durationsStayInsidePhaseSpecificRanges() {
         profiles(FriendSwipePhase.FIND_TOP, FIND_TOP_START, FIND_TOP_END).forEach { profile ->
-            assertTrue(profile.durationMs in 300L..480L)
+            assertTrue(profile.durationMs in 120L..160L)
         }
         profiles(FriendSwipePhase.SCROLL_DOWN, SCROLL_DOWN_START, SCROLL_DOWN_END).forEach { profile ->
             assertTrue(profile.durationMs in 650L..950L)
