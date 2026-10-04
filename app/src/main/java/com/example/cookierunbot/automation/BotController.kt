@@ -123,6 +123,7 @@ class BotController(
     private val stuckSendLifeConfirmTracker = StuckSendLifeConfirmTracker()
     private var dualSendLifeVisibleAttempts = 0
     private var pendingDualSendLifeGesture: GestureCancellation? = null
+    private var pendingStuckSendLifeGesture: GestureCancellation? = null
     private var pendingProgressRecoveryGesture: GestureCancellation? = null
     @Volatile private var previousResultsSettleUntilElapsedRealtime = 0L
     @Volatile private var pendingPreviousResultsRedetectBaseline = -1L
@@ -185,6 +186,7 @@ class BotController(
                 pendingTimeDealGesture?.isCompleted == false -> "TIME_DEAL"
                 pendingPreviousResultsGesture?.isCompleted == false -> "PREVIOUS_RESULTS"
                 pendingDualSendLifeGesture?.isCompleted == false -> "GAME_COMPLETE_SEND_LIFE_POPUP"
+                pendingStuckSendLifeGesture?.isCompleted == false -> "STUCK_SEND_LIFE_CONFIRM"
                 else -> pendingPopupAction
             },
             calibrationBlockedAction = calibrationBlockState.action,
@@ -275,6 +277,7 @@ class BotController(
             stuckSendLifeConfirmTracker.reset()
             dualSendLifeVisibleAttempts = 0
             pendingDualSendLifeGesture = null
+            pendingStuckSendLifeGesture = null
             previousResultsSettleUntilElapsedRealtime = 0L
             pendingPreviousResultsRedetectBaseline = -1L
             resetNoMatchEpisode("bot_started")
@@ -305,6 +308,7 @@ class BotController(
         val stoppedTimeDealGesture: GestureCancellation?
         val stoppedPreviousResultsGesture: GestureCancellation?
         val stoppedDualSendLifeGesture: GestureCancellation?
+        val stoppedStuckSendLifeGesture: GestureCancellation?
         val stoppedRecoveryGesture: GestureCancellation?
         val stoppedRun = synchronized(lock) {
             if (expectedGeneration != null && botRunGeneration != expectedGeneration) return
@@ -327,6 +331,8 @@ class BotController(
             pendingPreviousResultsGesture = null
             stoppedDualSendLifeGesture = pendingDualSendLifeGesture
             pendingDualSendLifeGesture = null
+            stoppedStuckSendLifeGesture = pendingStuckSendLifeGesture
+            pendingStuckSendLifeGesture = null
             stoppedRecoveryGesture = pendingProgressRecoveryGesture
             pendingProgressRecoveryGesture = null
             calibrationBlockState.clear()
@@ -336,6 +342,7 @@ class BotController(
         stoppedTimeDealGesture?.cancel()
         stoppedPreviousResultsGesture?.cancel()
         stoppedDualSendLifeGesture?.cancel()
+        stoppedStuckSendLifeGesture?.cancel()
         stoppedRecoveryGesture?.cancel()
         autoTapper.stop("BOT_EXIT")
         friendLifeScheduler.stop()
@@ -958,6 +965,11 @@ class BotController(
         // gesture is still awaiting its callback.
         if (synchronized(lock) { pendingDualSendLifeGesture?.isCompleted == false }) {
             listener.onStateChanged("WAITING_FOR_GAME_COMPLETE_SEND_LIFE_GESTURE")
+            frame.mat.release()
+            return
+        }
+        if (synchronized(lock) { pendingStuckSendLifeGesture?.isCompleted == false }) {
+            listener.onStateChanged("WAITING_FOR_STUCK_SEND_LIFE_GESTURE")
             frame.mat.release()
             return
         }
@@ -1679,44 +1691,83 @@ class BotController(
      * BotStage.GAME_COMPLETE and must NEVER record GAME_COMPLETE watchdog progress, change
      * its stage ROI/threshold, or call the old Quick Lives confirm matcher/ROI.
      */
+    private fun resetStuckSendLifeConfirmForWorkflow(reason: String) {
+        if (stuckSendLifeConfirmTracker.reset()) {
+            logDiagnostic("[STUCK_SEND_LIFE_CONFIRM] action=RESET reason=workflow_$reason")
+        }
+    }
+
     private fun handleStuckSendLifeConfirmPopup(
         confirm: TemplateMatch,
         frame: FrameSnapshot,
     ) {
+        if (!isRunning() || synchronized(lock) { progressRecoveryGate.isActive() }) return
         val center = StuckSendLifeConfirmPolicy.center(
             confirm.x, confirm.y, confirm.width, confirm.height,
-        ) ?: run {
-            stuckSendLifeConfirmTracker.reset()
+        ) ?: return
+        val runGeneration = synchronized(lock) { botRunGeneration }
+        pendingPopupAction = "STUCK_SEND_LIFE_CONFIRM"
+        val action = synchronized(lock) {
+            if (!isCurrentWorkerRunLocked() || progressRecoveryGate.isActive() ||
+                PopupFreshFramePolicy.blocks(frame.generation, minimumFreshFrameGeneration)
+            ) {
+                ActionResult("STUCK_SEND_LIFE_CONFIRM", false, center.x, center.y, null)
+            } else {
+                actionExecutor.tapDetectedPhysicalCircle(
+                    actionName = "STUCK_SEND_LIFE_CONFIRM",
+                    detectorPoint = center,
+                    physicalRadius = 0.0,
+                    sourceWidth = frame.sourceWidth,
+                    sourceHeight = frame.sourceHeight,
+                    callbackTimeoutMs = StuckSendLifeConfirmPolicy.CALLBACK_TIMEOUT_MS,
+                    onGestureCompleted = { success, timedOut ->
+                        handleStuckSendLifeConfirmCallback(runGeneration, success, timedOut)
+                    },
+                )
+            }
+        }
+        reportActionResult(action)
+        logDiagnostic(
+            "[STUCK_SEND_LIFE_CONFIRM] action=TAP_CONFIRM " +
+                "logicalCenter=(${center.x},${center.y}) dispatchAccepted=${action.accepted} " +
+                "frameGeneration=${frame.generation}",
+        )
+        if (!action.accepted) {
+            pendingPopupAction = "NONE"
+            lastStage = null
             return
         }
-        // One rescue tap per 60-second continuous episode. If the popup remains,
-        // it must be observed continuously for another full minute before another tap.
-        stuckSendLifeConfirmTracker.reset()
-        detectionActionFrameGeneration.set(frame.generation)
-        try {
-            pendingPopupAction = "STUCK_SEND_LIFE_CONFIRM"
-            val accepted = performDetectedTap(
-                "STUCK_SEND_LIFE_CONFIRM",
-                center,
-                frame.sourceWidth,
-                frame.sourceHeight,
-            )
-            logDiagnostic(
-                "[STUCK_SEND_LIFE_CONFIRM] action=TAP_CONFIRM " +
-                    "logicalCenter=(${center.x},${center.y}) dispatchAccepted=$accepted " +
-                    "frameGeneration=${frame.generation}",
-            )
-            if (accepted) {
-                synchronized(lock) {
-                    minimumFreshFrameGeneration = maxOf(minimumFreshFrameGeneration, frame.generation)
-                    freshFrameGateWaitStartedAt = 0L
-                    lastStage = null
-                }
-            }
-        } finally {
-            pendingPopupAction = "NONE"
-            detectionActionFrameGeneration.remove()
+        synchronized(lock) {
+            if (running && botRunGeneration == runGeneration &&
+                action.pendingGesture?.isCompleted == false
+            ) pendingStuckSendLifeGesture = action.pendingGesture
         }
+    }
+
+    private fun handleStuckSendLifeConfirmCallback(
+        runGeneration: Long,
+        success: Boolean,
+        timedOut: Boolean,
+    ) = synchronized(lock) {
+        if (!running || botRunGeneration != runGeneration) return@synchronized
+        pendingStuckSendLifeGesture = null
+        pendingPopupAction = "NONE"
+        logDiagnostic(
+            "[STUCK_SEND_LIFE_CONFIRM] gestureSuccess=$success timedOut=$timedOut",
+        )
+        if (!success || timedOut) {
+            lastStage = null
+            return@synchronized
+        }
+        stuckSendLifeConfirmTracker.reset()
+        val postCallbackBaseline = LatestFrameProvider.currentGeneration()
+        minimumFreshFrameGeneration = postCallbackBaseline
+        freshFrameGateWaitStartedAt = 0L
+        lastStage = null
+        logDiagnostic(
+            "[STUCK_SEND_LIFE_CONFIRM] action=RESET reason=gesture_success " +
+                "postCallbackBaseline=$postCallbackBaseline action=REDETECT_FRESH_FRAME",
+        )
     }
     private fun handleDualGameCompleteSendLifePopup(
         pair: GameCompleteSendLifePopupMatch,
@@ -2614,6 +2665,7 @@ class BotController(
         sourceHeight: Int,
         trigger: FriendLifeTrigger,
     ): FriendLifeWorkflowResult {
+        resetStuckSendLifeConfirmForWorkflow("FRIEND_LIFE")
         val startedAt = SystemClock.elapsedRealtime()
         var lastProgressElapsedRealtime = startedAt
         fun recordFriendLifeProgress(event: String, sentCount: Int, traverseSwipeCount: Int) {
@@ -3195,6 +3247,7 @@ class BotController(
     }
 
     private fun handleQuickLives(detector: StateDetector, sourceWidth: Int, sourceHeight: Int): Boolean {
+        resetStuckSendLifeConfirmForWorkflow("QUICK_LIVES")
         val mailContext = QuickLivesSafetyPolicy.MailContext()
         Log.i(CookieRunBotApplication.TAG, "[LIVES] Safe tap jitter=10 canonical")
         if (!revalidateMainMenu(detector, "BEFORE_MAIL_BOX")) return false
