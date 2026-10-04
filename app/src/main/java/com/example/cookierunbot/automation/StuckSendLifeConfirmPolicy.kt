@@ -18,6 +18,7 @@ internal object StuckSendLifeConfirmPolicy {
 internal data class StuckSendLifeConfirmObservation(
     val startedNewEpisode: Boolean,
     val continuityReset: Boolean,
+    val groupChangedReset: Boolean,
     val disappearedReset: Boolean,
     val elapsedMs: Long,
     val shouldTap: Boolean,
@@ -26,11 +27,13 @@ internal data class StuckSendLifeConfirmObservation(
 internal class StuckSendLifeConfirmTracker {
     private var firstSeenAtMs = -1L
     private var lastSeenAtMs = -1L
+    private var episodeGroup: DetectionGroup? = null
 
     fun reset(): Boolean {
         val wasTracking = firstSeenAtMs >= 0L || lastSeenAtMs >= 0L
         firstSeenAtMs = -1L
         lastSeenAtMs = -1L
+        episodeGroup = null
         return wasTracking
     }
 
@@ -47,22 +50,26 @@ internal class StuckSendLifeConfirmTracker {
             return StuckSendLifeConfirmObservation(
                 startedNewEpisode = false,
                 continuityReset = false,
+                groupChangedReset = false,
                 disappearedReset = reset,
                 elapsedMs = 0L,
                 shouldTap = false,
             )
         }
 
+        val groupChanged = wasTracking && episodeGroup != group
         val gapBroken = wasTracking &&
             nowMs - lastSeenAtMs > StuckSendLifeConfirmPolicy.MAX_OBSERVATION_GAP_MS
-        val startedNewEpisode = !wasTracking || gapBroken
+        val startedNewEpisode = !wasTracking || gapBroken || groupChanged
         if (startedNewEpisode) firstSeenAtMs = nowMs
+        episodeGroup = group
         lastSeenAtMs = nowMs
         val elapsedMs = (nowMs - firstSeenAtMs).coerceAtLeast(0L)
 
         return StuckSendLifeConfirmObservation(
             startedNewEpisode = startedNewEpisode,
-            continuityReset = gapBroken,
+            continuityReset = gapBroken || groupChanged,
+            groupChangedReset = groupChanged,
             disappearedReset = false,
             elapsedMs = elapsedMs,
             shouldTap = elapsedMs >= StuckSendLifeConfirmPolicy.STUCK_DURATION_MS,
