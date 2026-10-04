@@ -1143,11 +1143,7 @@ class BotController(
                 if (stuckConfirm.startedNewEpisode) {
                     logDiagnostic(
                         "[STUCK_SEND_LIFE_CONFIRM] action=START " +
-                            "reason=${when {
-                                stuckConfirm.groupChangedReset -> "group_changed"
-                                stuckConfirm.continuityReset -> "observation_gap"
-                                else -> "high_confidence_match"
-                            }} " +
+                            "reason=${if (stuckConfirm.groupChangedReset) "group_changed" else "high_confidence_match"} " +
                             "group=${group.name} score=${format(pair.confirm.score)} " +
                             "threshold=${format(StuckSendLifeConfirmPolicy.MATCH_THRESHOLD)} " +
                             "requiredMs=${StuckSendLifeConfirmPolicy.STUCK_DURATION_MS}",
@@ -1696,10 +1692,9 @@ class BotController(
         detector: StateDetector,
         frame: Mat,
         contextName: String,
-        force: Boolean = false,
     ): Pair<TemplateMatch, StuckSendLifeConfirmObservation>? {
         val now = SystemClock.elapsedRealtime()
-        if (!force && lastWorkflowStuckSendLifeProbeAt > 0L &&
+        if (lastWorkflowStuckSendLifeProbeAt > 0L &&
             now - lastWorkflowStuckSendLifeProbeAt < StuckSendLifeConfirmPolicy.PROBE_INTERVAL_MS
         ) return null
         lastWorkflowStuckSendLifeProbeAt = now
