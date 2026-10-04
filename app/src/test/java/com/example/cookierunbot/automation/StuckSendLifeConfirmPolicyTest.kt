@@ -130,6 +130,66 @@ class StuckSendLifeConfirmPolicyTest {
         assertFalse(restarted.shouldTap)
     }
 
+    @Test fun followUpWaitsForOldConfirmToDisappearBeforeTappingAgain() {
+        assertEquals(
+            StuckSendLifeFollowUpPolicy.Decision.WAIT,
+            StuckSendLifeFollowUpPolicy.decide(
+                StuckSendLifeFollowUpPolicy.Phase.WAIT_OLD_CONFIRM_DISAPPEAR,
+                500L,
+                confirmMatched = true,
+            ),
+        )
+        assertEquals(
+            StuckSendLifeFollowUpPolicy.Decision.OLD_CONFIRM_DISAPPEARED,
+            StuckSendLifeFollowUpPolicy.decide(
+                StuckSendLifeFollowUpPolicy.Phase.WAIT_OLD_CONFIRM_DISAPPEAR,
+                600L,
+                confirmMatched = false,
+            ),
+        )
+    }
+
+    @Test fun followUpStopsIfOldConfirmNeverDisappears() {
+        assertEquals(
+            StuckSendLifeFollowUpPolicy.Decision.STOP_CHAIN,
+            StuckSendLifeFollowUpPolicy.decide(
+                StuckSendLifeFollowUpPolicy.Phase.WAIT_OLD_CONFIRM_DISAPPEAR,
+                StuckSendLifeFollowUpPolicy.OLD_CONFIRM_DISAPPEAR_TIMEOUT_MS,
+                confirmMatched = true,
+            ),
+        )
+    }
+
+    @Test fun followUpTapsNewConfirmImmediatelyDuringShortWindow() {
+        assertEquals(
+            StuckSendLifeFollowUpPolicy.Decision.TAP_NEXT_CONFIRM,
+            StuckSendLifeFollowUpPolicy.decide(
+                StuckSendLifeFollowUpPolicy.Phase.WAIT_NEXT_CONFIRM,
+                1_200L,
+                confirmMatched = true,
+            ),
+        )
+    }
+
+    @Test fun followUpWaitsAcrossSeveralMissingFramesBeforeStopping() {
+        assertEquals(
+            StuckSendLifeFollowUpPolicy.Decision.WAIT,
+            StuckSendLifeFollowUpPolicy.decide(
+                StuckSendLifeFollowUpPolicy.Phase.WAIT_NEXT_CONFIRM,
+                1_000L,
+                confirmMatched = false,
+            ),
+        )
+        assertEquals(
+            StuckSendLifeFollowUpPolicy.Decision.STOP_CHAIN,
+            StuckSendLifeFollowUpPolicy.decide(
+                StuckSendLifeFollowUpPolicy.Phase.WAIT_NEXT_CONFIRM,
+                StuckSendLifeFollowUpPolicy.NEXT_CONFIRM_WAIT_MS,
+                confirmMatched = false,
+            ),
+        )
+    }
+
     @Test fun centerUsesExactTemplateMatchCenter() {
         assertEquals(LogicalPoint(797, 458), StuckSendLifeConfirmPolicy.center(640, 402, 314, 113))
     }
