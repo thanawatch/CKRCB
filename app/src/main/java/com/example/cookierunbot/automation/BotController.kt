@@ -3007,11 +3007,9 @@ class BotController(
                 )
                 if (!orphan.success) return friendLifeAbort("TRAVERSE", orphan.failureReason, traverseSwipeCount)
                 orphan.interrupt?.let { return friendLifeInterrupt(it, "AFTER_ORPHAN_CONFIRM") }
-                lastProgressElapsedRealtime = SystemClock.elapsedRealtime()
-                friendLifeLastProgressAt = lastProgressElapsedRealtime
                 logDiagnostic(
-                    "[FRIEND_LIFE_PROGRESS] event=ORPHAN_CONFIRM_HANDLED sentCount=$sentCount " +
-                        "traverseSwipeCount=$traverseSwipeCount noProgressMs=0",
+                    "[FRIEND_LIFE_ORPHAN_CONFIRM] action=TAP_COMPLETE sentCount=$sentCount " +
+                        "traverseSwipeCount=$traverseSwipeCount",
                 )
                 continue
             }
