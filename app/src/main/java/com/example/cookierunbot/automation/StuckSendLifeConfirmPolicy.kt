@@ -70,6 +70,7 @@ internal object StuckSendLifeFollowUpPolicy {
     const val OLD_CONFIRM_DISAPPEAR_TIMEOUT_MS = 3_000L
     const val NEXT_CONFIRM_WAIT_MS = 2_500L
     const val NEW_CONFIRM_MIN_CENTER_SHIFT_LOGICAL = 48
+    const val NEW_CONFIRM_MIN_MOVE_DELAY_MS = 250L
 
     enum class Phase {
         INACTIVE,
@@ -92,7 +93,8 @@ internal object StuckSendLifeFollowUpPolicy {
     ): Decision = when (phase) {
         Phase.INACTIVE -> Decision.STOP_CHAIN
         Phase.WAIT_OLD_CONFIRM_DISAPPEAR -> when {
-            confirmMatched && confirmMovedToNewPosition -> Decision.TAP_NEXT_CONFIRM
+            confirmMatched && confirmMovedToNewPosition &&
+                elapsedMs >= NEW_CONFIRM_MIN_MOVE_DELAY_MS -> Decision.TAP_NEXT_CONFIRM
             !confirmMatched -> Decision.OLD_CONFIRM_DISAPPEARED
             elapsedMs >= OLD_CONFIRM_DISAPPEAR_TIMEOUT_MS -> Decision.STOP_CHAIN
             else -> Decision.WAIT
