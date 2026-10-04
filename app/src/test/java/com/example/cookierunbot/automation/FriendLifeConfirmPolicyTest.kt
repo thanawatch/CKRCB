@@ -24,6 +24,80 @@ class FriendLifeConfirmPolicyTest {
         assertNull(friendSendTapProgressReason("CONFIRM_2_ORPHAN", gestureSucceeded = true))
     }
 
+    @Test fun orphanConfirmTapsOnlyOnceUntilThePopupDisappears() {
+        assertEquals(
+            FriendLifeConfirmPolicy.OrphanDecision.TAP_ONCE,
+            FriendLifeConfirmPolicy.orphanDecision(
+                tapSuppressedUntilDisappear = false,
+                stuckConfirmDue = false,
+                elapsedMs = 1_000L,
+                noProgressMs = 1_000L,
+            ),
+        )
+        assertEquals(
+            FriendLifeConfirmPolicy.OrphanDecision.WAIT_FOR_DISAPPEAR,
+            FriendLifeConfirmPolicy.orphanDecision(
+                tapSuppressedUntilDisappear = true,
+                stuckConfirmDue = false,
+                elapsedMs = 2_000L,
+                noProgressMs = 2_000L,
+            ),
+        )
+    }
+
+    @Test fun orphanConfirmCannotBypassNoProgressSafety() {
+        assertEquals(
+            FriendLifeConfirmPolicy.OrphanDecision.ABORT_NO_PROGRESS,
+            FriendLifeConfirmPolicy.orphanDecision(
+                tapSuppressedUntilDisappear = true,
+                stuckConfirmDue = false,
+                elapsedMs = 60_000L,
+                noProgressMs = FRIEND_LIFE_NO_PROGRESS_TIMEOUT_MS,
+            ),
+        )
+    }
+
+    @Test fun orphanConfirmKeepsFullFrameStuckSafetyAheadOfAnotherTap() {
+        assertEquals(
+            FriendLifeConfirmPolicy.OrphanDecision.INTERRUPT_STUCK,
+            FriendLifeConfirmPolicy.orphanDecision(
+                tapSuppressedUntilDisappear = false,
+                stuckConfirmDue = true,
+                elapsedMs = 60_000L,
+                noProgressMs = 1_000L,
+            ),
+        )
+    }
+
+    @Test fun orphanConfirmCannotBypassAbsoluteActiveTimeout() {
+        assertEquals(
+            FriendLifeConfirmPolicy.OrphanDecision.ABORT_ABSOLUTE_TIMEOUT,
+            FriendLifeConfirmPolicy.orphanDecision(
+                tapSuppressedUntilDisappear = false,
+                stuckConfirmDue = true,
+                elapsedMs = FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS,
+                noProgressMs = 0L,
+            ),
+        )
+    }
+
+    @Test fun confirmTwoFreshFrameWaitRetriesUntilOverallDeadline() {
+        assertEquals(
+            FriendLifeConfirmPolicy.NoFreshFrameDecision.RETRY,
+            FriendLifeConfirmPolicy.confirmTwoNoFreshFrameDecision(
+                nowMs = 2_500L,
+                deadlineMs = FriendLifeConfirmPolicy.CONFIRM_2_SEARCH_TIMEOUT_MS,
+            ),
+        )
+        assertEquals(
+            FriendLifeConfirmPolicy.NoFreshFrameDecision.SKIP,
+            FriendLifeConfirmPolicy.confirmTwoNoFreshFrameDecision(
+                nowMs = FriendLifeConfirmPolicy.CONFIRM_2_SEARCH_TIMEOUT_MS,
+                deadlineMs = FriendLifeConfirmPolicy.CONFIRM_2_SEARCH_TIMEOUT_MS,
+            ),
+        )
+    }
+
     @Test fun friendLifeUsesSeparateConfirmRegionsFromReferenceFrames() {
         val confirmOne = FriendLifeConfirmPolicy.confirmOneRegion(1280, 720)
         assertEquals(640, confirmOne.x)
