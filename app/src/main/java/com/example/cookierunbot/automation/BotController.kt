@@ -2991,6 +2991,30 @@ class BotController(
             val beforeScrollSample = FriendScrollVerifier.capture(snapshot.mat, FRIEND_SCROLL_VERIFY_REGION)
             val scan = scanFriendFrame(detector, snapshot)
             scan.interrupt?.let { return friendLifeInterrupt(it, "TRAVERSE") }
+            if (scan.confirm.matched) {
+                val center = requireNotNull(FriendLifeConfirmPolicy.centerIfMatched(scan.confirm))
+                val waitMs = randomMs(FriendLifeConfirmPolicy.WAIT_MIN_MS, FriendLifeConfirmPolicy.WAIT_MAX_MS)
+                logDiagnostic(
+                    "[FRIEND_LIFE_ORPHAN_CONFIRM] matched=true score=${format(scan.confirm.score)} " +
+                        "center=(${center.x},${center.y}) waitMs=$waitMs frameSequence=${snapshot.generation}",
+                )
+                delayOrStop(waitMs)
+                val point = FriendLifeConfirmPolicy.pointInCircle(center)
+                val orphan = friendLifeTapStep(
+                    detector, "CONFIRM_2_ORPHAN", point, true, sourceWidth, sourceHeight,
+                    randomMs(FRIEND_FINAL_PACING_MIN_MS, FRIEND_FINAL_PACING_MAX_MS),
+                    physicalRadius = 0.0,
+                )
+                if (!orphan.success) return friendLifeAbort("TRAVERSE", orphan.failureReason, traverseSwipeCount)
+                orphan.interrupt?.let { return friendLifeInterrupt(it, "AFTER_ORPHAN_CONFIRM") }
+                lastProgressElapsedRealtime = SystemClock.elapsedRealtime()
+                friendLifeLastProgressAt = lastProgressElapsedRealtime
+                logDiagnostic(
+                    "[FRIEND_LIFE_PROGRESS] event=ORPHAN_CONFIRM_HANDLED sentCount=$sentCount " +
+                        "traverseSwipeCount=$traverseSwipeCount noProgressMs=0",
+                )
+                continue
+            }
             if (scan.stuckConfirmDue) {
                 logDiagnostic("[FRIEND_LIFE_INTERRUPT] reason=stuck_send_life_confirm_due phase=TRAVERSE")
                 return FriendLifeWorkflowResult.INTERRUPTED
@@ -3056,8 +3080,8 @@ class BotController(
                             return friendLifeInterrupt(it, "AFTER_CONFIRM_1")
                         }
                     }
-                    friendLifeTemplateConfirmStep(
-                        detector, "CONFIRM_2", confirm1.freshGeneration,
+                    friendLifeConfirmTwoRetryStep(
+                        detector, confirm1.freshGeneration,
                         requireNewFrame = confirm1.skipped,
                         postTapPacingMs = randomMs(FRIEND_FINAL_PACING_MIN_MS, FRIEND_FINAL_PACING_MAX_MS),
                     ).let { step ->
@@ -3146,11 +3170,15 @@ class BotController(
         warnIfFriendLifeRoiInvalid("BOTTOM", FRIEND_BOTTOM_REGION, FRIEND_BOTTOM_TEMPLATE_WIDTH, FRIEND_BOTTOM_TEMPLATE_HEIGHT)
         warnIfFriendLifeRoiInvalid("SEND", FRIEND_SEND_REGION, FRIEND_SEND_TEMPLATE_WIDTH, FRIEND_SEND_TEMPLATE_HEIGHT)
         val interrupt = detectFriendLifeInterrupt(detector, snapshot.mat)
-        val stuckObservation = observeWorkflowStuckSendLifeConfirm(
-            detector,
+        val confirm = detector.detectTemplate(
             snapshot.mat,
+            FriendLifeConfirmPolicy.TEMPLATE,
+            FriendLifeConfirmPolicy.fullFrame(snapshot.mat.cols(), snapshot.mat.rows()),
+        )
+        val stuckObservation = observeWorkflowStuckSendLifeConfirmMatch(
+            confirm,
             "FRIEND_LIFE_SCAN",
-        )?.second
+        )
         FriendLifeFrameScan(
             interrupt = interrupt,
             top = detector.detectTemplate(
@@ -3162,7 +3190,8 @@ class BotController(
             send = detector.detectTemplate(
                 snapshot.mat, "FRIEND_SEND_LIFE_1.png", FRIEND_SEND_REGION, FRIEND_LIFE_MATCH_THRESHOLD,
             ),
-            stuckConfirmDue = stuckObservation?.shouldTap == true,
+            confirm = confirm,
+            stuckConfirmDue = stuckObservation.shouldTap,
         )
     } finally { snapshot.mat.release() }
 
@@ -3361,6 +3390,108 @@ class BotController(
         )
     }
 
+    private fun friendLifeConfirmTwoRetryStep(
+        detector: StateDetector,
+        afterGeneration: Long,
+        requireNewFrame: Boolean,
+        postTapPacingMs: Long,
+    ): FriendLifeTapStepResult {
+        val startedAt = SystemClock.elapsedRealtime()
+        val deadline = startedAt + FriendLifeConfirmPolicy.CONFIRM_2_SEARCH_TIMEOUT_MS
+        var lastGeneration = afterGeneration
+        var firstScan = true
+        var attempt = 0
+        while (isRunning()) {
+            if (!synchronized(lock) { isCurrentWorkerRunLocked() && !progressRecoveryGate.isActive() }) {
+                return FriendLifeTapStepResult(false, null, "bot_stopped")
+            }
+            val now = SystemClock.elapsedRealtime()
+            val remainingMs = deadline - now
+            if (remainingMs <= 0L) {
+                logDiagnostic(
+                    "[FRIEND_LIFE_CONFIRM] step=CONFIRM_2 action=SKIP reason=search_timeout " +
+                        "elapsedMs=${now - startedAt} timeoutMs=${FriendLifeConfirmPolicy.CONFIRM_2_SEARCH_TIMEOUT_MS}",
+                )
+                return FriendLifeTapStepResult(
+                    true, null, "", freshGeneration = lastGeneration, skipped = true,
+                )
+            }
+
+            val snapshot = if (firstScan && !requireNewFrame) {
+                val latest = LatestFrameProvider.snapshot()
+                if (latest != null && latest.generation >= afterGeneration) latest else {
+                    latest?.mat?.release()
+                    LatestFrameProvider.awaitNextSnapshot(
+                        lastGeneration,
+                        minOf(FRIEND_RESCAN_TIMEOUT_MS, remainingMs),
+                    )
+                }
+            } else {
+                LatestFrameProvider.awaitNextSnapshot(
+                    lastGeneration,
+                    minOf(FRIEND_RESCAN_TIMEOUT_MS, remainingMs),
+                )
+            } ?: return FriendLifeTapStepResult(false, null, "confirm_2_fresh_frame_timeout")
+
+            firstScan = false
+            lastGeneration = snapshot.generation
+            attempt += 1
+            val sourceWidth = snapshot.sourceWidth
+            val sourceHeight = snapshot.sourceHeight
+            val interrupt: BotStage?
+            val confirmation: TemplateMatch?
+            try {
+                interrupt = detector.detectFirst(friendLifeInterruptStages(), snapshot.mat)?.state
+                confirmation = if (interrupt == null) detector.detectTemplate(
+                    snapshot.mat,
+                    FriendLifeConfirmPolicy.TEMPLATE,
+                    FriendLifeConfirmPolicy.fullFrame(snapshot.mat.cols(), snapshot.mat.rows()),
+                ) else null
+            } finally {
+                snapshot.mat.release()
+            }
+            if (!synchronized(lock) { isCurrentWorkerRunLocked() && !progressRecoveryGate.isActive() }) {
+                return FriendLifeTapStepResult(false, null, "bot_stopped")
+            }
+            if (interrupt != null) {
+                return FriendLifeTapStepResult(
+                    true, interrupt, "", freshGeneration = lastGeneration, skipped = true,
+                )
+            }
+
+            val match = requireNotNull(confirmation)
+            observeWorkflowStuckSendLifeConfirmMatch(match, "FRIEND_LIFE_CONFIRM_2")
+            val center = FriendLifeConfirmPolicy.centerIfMatched(match)
+            logDiagnostic(
+                "[FRIEND_LIFE_CONFIRM] step=CONFIRM_2 scan=FULL_FRAME attempt=$attempt " +
+                    "matched=${match.matched} score=${format(match.score)} " +
+                    "frameSequence=$lastGeneration" +
+                    if (center == null) " action=WAIT" else "",
+            )
+            if (center != null) {
+                val waitMs = randomMs(FriendLifeConfirmPolicy.WAIT_MIN_MS, FriendLifeConfirmPolicy.WAIT_MAX_MS)
+                logDiagnostic(
+                    "[FRIEND_LIFE_CONFIRM] step=CONFIRM_2 match=(${match.x},${match.y}," +
+                        "${match.width},${match.height}) center=(${center.x},${center.y}) " +
+                        "waitMs=$waitMs attempt=$attempt",
+                )
+                delayOrStop(waitMs)
+                val point = FriendLifeConfirmPolicy.pointInCircle(center)
+                return friendLifeTapStep(
+                    detector, "CONFIRM_2", point, true, sourceWidth, sourceHeight, postTapPacingMs,
+                    physicalRadius = 0.0,
+                )
+            }
+
+            delayOrStop(
+                minOf(
+                    FriendLifeConfirmPolicy.CONFIRM_2_RETRY_INTERVAL_MS,
+                    (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(0L),
+                ),
+            )
+        }
+        return FriendLifeTapStepResult(false, null, "bot_stopped")
+    }
     private fun friendLifeTapStep(
         detector: StateDetector,
         step: String,
@@ -4675,5 +4806,6 @@ private data class FriendLifeFrameScan(
     val top: TemplateMatch,
     val bottom: TemplateMatch,
     val send: TemplateMatch,
+    val confirm: TemplateMatch,
     val stuckConfirmDue: Boolean,
 )
