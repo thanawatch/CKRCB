@@ -85,20 +85,23 @@ class StuckSendLifeConfirmPolicyTest {
     }
 
 
-    @Test fun changingEligibleGroupStartsANewMinute() {
+    @Test fun changingEligibleGroupKeepsTheSameMinute() {
         val tracker = StuckSendLifeConfirmTracker()
         tracker.observe(DetectionGroup.PRE_GAME, 1_000L, 0.99)
         tracker.observe(DetectionGroup.PRE_GAME, 31_000L, 0.99)
 
         val changed = tracker.observe(DetectionGroup.POST_GAME, 32_000L, 0.99)
-        assertTrue(changed.startedNewEpisode)
-        assertTrue(changed.continuityReset)
-        assertTrue(changed.groupChangedReset)
-        assertEquals(0L, changed.elapsedMs)
+        assertFalse(changed.startedNewEpisode)
+        assertFalse(changed.continuityReset)
+        assertFalse(changed.groupChangedReset)
+        assertEquals(31_000L, changed.elapsedMs)
         assertFalse(changed.shouldTap)
+
+        val due = tracker.observe(DetectionGroup.POST_GAME, 61_000L, 0.99)
+        assertTrue(due.shouldTap)
     }
 
-    @Test fun explicitWorkflowResetStartsANewMinute() {
+    @Test fun explicitResetStartsANewMinute() {
         val tracker = StuckSendLifeConfirmTracker()
         tracker.observe(DetectionGroup.POST_GAME, 1_000L, 0.99)
         assertTrue(tracker.reset())
