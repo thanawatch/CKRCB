@@ -1141,7 +1141,11 @@ class BotController(
                 if (stuckConfirm.startedNewEpisode) {
                     logDiagnostic(
                         "[STUCK_SEND_LIFE_CONFIRM] action=START " +
-                            "reason=${if (stuckConfirm.continuityReset) "observation_gap" else "high_confidence_match"} " +
+                            "reason=${when {
+                                stuckConfirm.groupChangedReset -> "group_changed"
+                                stuckConfirm.continuityReset -> "observation_gap"
+                                else -> "high_confidence_match"
+                            }} " +
                             "group=${group.name} score=${format(pair.confirm.score)} " +
                             "threshold=${format(StuckSendLifeConfirmPolicy.MATCH_THRESHOLD)} " +
                             "requiredMs=${StuckSendLifeConfirmPolicy.STUCK_DURATION_MS}",
@@ -1686,11 +1690,7 @@ class BotController(
         )
     }
 
-    /**
-     * Separate popup: both full-frame auxiliary templates matched on ONE frame. It is not
-     * BotStage.GAME_COMPLETE and must NEVER record GAME_COMPLETE watchdog progress, change
-     * its stage ROI/threshold, or call the old Quick Lives confirm matcher/ROI.
-     */
+    /** A synchronous Life workflow owns CONFIRM_SEND_LIFE while it is active. */
     private fun resetStuckSendLifeConfirmForWorkflow(reason: String) {
         if (stuckSendLifeConfirmTracker.reset()) {
             logDiagnostic("[STUCK_SEND_LIFE_CONFIRM] action=RESET reason=workflow_$reason")
@@ -1769,6 +1769,11 @@ class BotController(
                 "postCallbackBaseline=$postCallbackBaseline action=REDETECT_FRESH_FRAME",
         )
     }
+    /**
+     * Separate popup: both full-frame auxiliary templates matched on ONE frame. It is not
+     * BotStage.GAME_COMPLETE and must NEVER record GAME_COMPLETE watchdog progress, change
+     * its stage ROI/threshold, or call the old Quick Lives confirm matcher/ROI.
+     */
     private fun handleDualGameCompleteSendLifePopup(
         pair: GameCompleteSendLifePopupMatch,
         frame: FrameSnapshot,
