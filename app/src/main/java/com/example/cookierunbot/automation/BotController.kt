@@ -1830,19 +1830,25 @@ class BotController(
                 true
             }
             StuckSendLifeFollowUpPolicy.Decision.STOP_CHAIN -> {
+                val oldConfirmStillVisible =
+                    phase == StuckSendLifeFollowUpPolicy.Phase.WAIT_OLD_CONFIRM_DISAPPEAR &&
+                        match.matched
                 synchronized(lock) {
                     stuckSendLifeFollowUpPhase = StuckSendLifeFollowUpPolicy.Phase.INACTIVE
                     stuckSendLifeFollowUpPhaseStartedAt = 0L
                     stuckSendLifeFollowUpLastCheckedGeneration = -1L
                     stuckSendLifeFollowUpLastTappedCenter = null
                     stuckSendLifeConfirmTracker.reset()
+                    if (oldConfirmStillVisible) {
+                        stuckSendLifeConfirmTracker.observe(group, now, match.score)
+                    }
                 }
                 logDiagnostic(
                     "[STUCK_SEND_LIFE_CONFIRM] action=FOLLOW_UP_STOP " +
                         "phase=${phase.name} matched=${match.matched} score=${format(match.score)} " +
-                        "frameGeneration=${frame.generation}",
+                        "rearm60s=$oldConfirmStillVisible frameGeneration=${frame.generation}",
                 )
-                false
+                oldConfirmStillVisible
             }
         }
     }
