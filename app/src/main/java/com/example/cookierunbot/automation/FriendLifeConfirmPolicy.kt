@@ -13,6 +13,34 @@ internal object FriendLifeConfirmPolicy {
     const val CONFIRM_2_SEARCH_TIMEOUT_MS = 10_000L
     const val CONFIRM_2_RETRY_INTERVAL_MS = 120L
 
+    enum class OrphanDecision {
+        TAP_ONCE,
+        WAIT_FOR_DISAPPEAR,
+        INTERRUPT_STUCK,
+        ABORT_NO_PROGRESS,
+        ABORT_ABSOLUTE_TIMEOUT,
+    }
+
+    enum class NoFreshFrameDecision { RETRY, SKIP }
+
+    fun orphanDecision(
+        tapSuppressedUntilDisappear: Boolean,
+        stuckConfirmDue: Boolean,
+        elapsedMs: Long,
+        noProgressMs: Long,
+        noProgressTimeoutMs: Long = FRIEND_LIFE_NO_PROGRESS_TIMEOUT_MS,
+        absoluteTimeoutMs: Long = FRIEND_LIFE_ABSOLUTE_TIMEOUT_MS,
+    ): OrphanDecision = when {
+        elapsedMs >= absoluteTimeoutMs -> OrphanDecision.ABORT_ABSOLUTE_TIMEOUT
+        stuckConfirmDue -> OrphanDecision.INTERRUPT_STUCK
+        noProgressMs >= noProgressTimeoutMs -> OrphanDecision.ABORT_NO_PROGRESS
+        tapSuppressedUntilDisappear -> OrphanDecision.WAIT_FOR_DISAPPEAR
+        else -> OrphanDecision.TAP_ONCE
+    }
+
+    fun confirmTwoNoFreshFrameDecision(nowMs: Long, deadlineMs: Long): NoFreshFrameDecision =
+        if (nowMs >= deadlineMs) NoFreshFrameDecision.SKIP else NoFreshFrameDecision.RETRY
+
     private const val CONFIRM_1_ROI_X = 640
     private const val CONFIRM_1_ROI_Y = 402
     private const val CONFIRM_1_ROI_WIDTH = 304
