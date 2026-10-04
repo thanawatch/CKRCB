@@ -18,8 +18,6 @@ internal object StuckSendLifeConfirmPolicy {
 
 internal data class StuckSendLifeConfirmObservation(
     val startedNewEpisode: Boolean,
-    val continuityReset: Boolean,
-    val groupChangedReset: Boolean,
     val disappearedReset: Boolean,
     val elapsedMs: Long,
     val shouldTap: Boolean,
@@ -48,8 +46,6 @@ internal class StuckSendLifeConfirmTracker {
             val reset = reset()
             return StuckSendLifeConfirmObservation(
                 startedNewEpisode = false,
-                continuityReset = false,
-                groupChangedReset = false,
                 disappearedReset = reset,
                 elapsedMs = 0L,
                 shouldTap = false,
@@ -63,8 +59,6 @@ internal class StuckSendLifeConfirmTracker {
 
         return StuckSendLifeConfirmObservation(
             startedNewEpisode = startedNewEpisode,
-            continuityReset = false,
-            groupChangedReset = false,
             disappearedReset = false,
             elapsedMs = elapsedMs,
             shouldTap = elapsedMs >= StuckSendLifeConfirmPolicy.STUCK_DURATION_MS,
