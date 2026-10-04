@@ -20,18 +20,24 @@ class StuckSendLifeConfirmPolicyTest {
         assertEquals(0L, first.elapsedMs)
         assertFalse(first.shouldTap)
 
-        val middle = tracker.observe(DetectionGroup.POST_GAME, 31_000L, 0.99)
-        assertEquals(30_000L, middle.elapsedMs)
-        assertFalse(middle.shouldTap)
-
-        val due = tracker.observe(DetectionGroup.POST_GAME, 61_000L, 0.99)
-        assertEquals(60_000L, due.elapsedMs)
-        assertTrue(due.shouldTap)
+        var now = 2_500L
+        var latest = first
+        while (now < 61_000L) {
+            latest = tracker.observe(DetectionGroup.POST_GAME, now, 0.99)
+            assertFalse(latest.shouldTap)
+            now += 1_500L
+        }
+        assertTrue(tracker.observe(DetectionGroup.POST_GAME, 61_000L, 0.99).shouldTap)
     }
 
     @Test fun oneMissResetsTheMinute() {
         val tracker = StuckSendLifeConfirmTracker()
         tracker.observe(DetectionGroup.PRE_GAME, 10_000L, 0.99)
+        var now = 11_500L
+        while (now < 40_000L) {
+            tracker.observe(DetectionGroup.PRE_GAME, now, 0.99)
+            now += 1_500L
+        }
 
         val miss = tracker.observe(DetectionGroup.PRE_GAME, 40_000L, 0.94)
         assertTrue(miss.disappearedReset)
@@ -42,7 +48,11 @@ class StuckSendLifeConfirmPolicyTest {
         assertEquals(0L, restarted.elapsedMs)
         assertFalse(restarted.shouldTap)
 
-        assertFalse(tracker.observe(DetectionGroup.PRE_GAME, 100_999L, 0.99).shouldTap)
+        now = 42_500L
+        while (now < 101_000L) {
+            assertFalse(tracker.observe(DetectionGroup.PRE_GAME, now, 0.99).shouldTap)
+            now += 1_500L
+        }
         assertTrue(tracker.observe(DetectionGroup.PRE_GAME, 101_000L, 0.99).shouldTap)
     }
 
