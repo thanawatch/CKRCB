@@ -36,6 +36,7 @@ class FriendLifeScheduler(private var intervalMs: Long = FRIEND_LIFE_INTERVAL_MS
     private var inProgress = false
     private var retryNotBefore = 0L
     private var activeAccumulatedMs = 0L
+    private var activeBudgetStarted = false
     private var activeRunStartedAt = 0L
 
     @Synchronized fun start(
@@ -52,6 +53,7 @@ class FriendLifeScheduler(private var intervalMs: Long = FRIEND_LIFE_INTERVAL_MS
         inProgress = false
         retryNotBefore = 0L
         activeAccumulatedMs = 0L
+        activeBudgetStarted = false
         activeRunStartedAt = 0L
     }
 
@@ -78,7 +80,7 @@ class FriendLifeScheduler(private var intervalMs: Long = FRIEND_LIFE_INTERVAL_MS
     @Synchronized fun beginIfReady(nowMs: Long): FriendLifeTrigger? {
         if (inProgress || nowMs < retryNotBefore || (!scheduledPending && !testPending)) return null
         inProgress = true
-        activeRunStartedAt = nowMs
+        activeRunStartedAt = if (activeBudgetStarted) nowMs else 0L
         return when {
             scheduledPending && testPending -> FriendLifeTrigger.SCHEDULED_AND_TEST
             scheduledPending -> FriendLifeTrigger.SCHEDULED
@@ -90,6 +92,7 @@ class FriendLifeScheduler(private var intervalMs: Long = FRIEND_LIFE_INTERVAL_MS
         inProgress = false
         retryNotBefore = 0L
         activeAccumulatedMs = 0L
+        activeBudgetStarted = false
         activeRunStartedAt = 0L
         if (trigger != FriendLifeTrigger.TEST) {
             scheduledPending = false
@@ -98,8 +101,15 @@ class FriendLifeScheduler(private var intervalMs: Long = FRIEND_LIFE_INTERVAL_MS
         testPending = false
     }
 
+    @Synchronized fun markFirstSend(nowMs: Long): Boolean {
+        if (!inProgress || activeBudgetStarted) return false
+        activeBudgetStarted = true
+        activeRunStartedAt = nowMs
+        return true
+    }
+
     @Synchronized fun interrupt(nowMs: Long) {
-        if (inProgress) {
+        if (inProgress && activeBudgetStarted) {
             activeAccumulatedMs += (nowMs - activeRunStartedAt).coerceAtLeast(0L)
         }
         inProgress = false
@@ -107,7 +117,7 @@ class FriendLifeScheduler(private var intervalMs: Long = FRIEND_LIFE_INTERVAL_MS
     }
 
     @Synchronized fun fail(nowMs: Long, retryDelayMs: Long) {
-        if (inProgress) {
+        if (inProgress && activeBudgetStarted) {
             activeAccumulatedMs += (nowMs - activeRunStartedAt).coerceAtLeast(0L)
         }
         inProgress = false
@@ -120,6 +130,7 @@ class FriendLifeScheduler(private var intervalMs: Long = FRIEND_LIFE_INTERVAL_MS
         inProgress = false
         retryNotBefore = 0L
         activeAccumulatedMs = 0L
+        activeBudgetStarted = false
         activeRunStartedAt = 0L
         if (trigger != FriendLifeTrigger.TEST) {
             scheduledPending = false
@@ -129,7 +140,7 @@ class FriendLifeScheduler(private var intervalMs: Long = FRIEND_LIFE_INTERVAL_MS
     }
 
     @Synchronized fun activeElapsedMs(nowMs: Long): Long =
-        activeAccumulatedMs + if (inProgress) {
+        activeAccumulatedMs + if (inProgress && activeBudgetStarted) {
             (nowMs - activeRunStartedAt).coerceAtLeast(0L)
         } else {
             0L
