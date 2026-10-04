@@ -120,6 +120,7 @@ class BotController(
     private var pendingPreviousResultsGesture: GestureCancellation? = null
     // Dedicated two-template popup probe. Never changes normal GAME_COMPLETE or Quick Lives ROI.
     private var lastDualSendLifeProbeAt = 0L
+    private var lastWorkflowStuckSendLifeProbeAt = 0L
     private val stuckSendLifeConfirmTracker = StuckSendLifeConfirmTracker()
     private var dualSendLifeVisibleAttempts = 0
     private var pendingDualSendLifeGesture: GestureCancellation? = null
@@ -274,6 +275,7 @@ class BotController(
             timeDealCallbackFailures = 0
             pendingPreviousResultsGesture = null
             lastDualSendLifeProbeAt = 0L
+            lastWorkflowStuckSendLifeProbeAt = 0L
             stuckSendLifeConfirmTracker.reset()
             dualSendLifeVisibleAttempts = 0
             pendingDualSendLifeGesture = null
@@ -1690,13 +1692,58 @@ class BotController(
         )
     }
 
-    /** A synchronous Life workflow owns CONFIRM_SEND_LIFE while it is active. */
-    private fun resetStuckSendLifeConfirmForWorkflow(reason: String) {
-        if (stuckSendLifeConfirmTracker.reset()) {
-            logDiagnostic("[STUCK_SEND_LIFE_CONFIRM] action=RESET reason=workflow_$reason")
-        }
+    private fun observeWorkflowStuckSendLifeConfirm(
+        detector: StateDetector,
+        frame: Mat,
+        contextName: String,
+        force: Boolean = false,
+    ): Pair<TemplateMatch, StuckSendLifeConfirmObservation>? {
+        val now = SystemClock.elapsedRealtime()
+        if (!force && lastWorkflowStuckSendLifeProbeAt > 0L &&
+            now - lastWorkflowStuckSendLifeProbeAt < StuckSendLifeConfirmPolicy.PROBE_INTERVAL_MS
+        ) return null
+        lastWorkflowStuckSendLifeProbeAt = now
+        val match = detector.detectTemplate(
+            frame,
+            FriendLifeConfirmPolicy.TEMPLATE,
+            Rect(0, 0, frame.cols(), frame.rows()),
+            StuckSendLifeConfirmPolicy.MATCH_THRESHOLD,
+        )
+        val observation = observeWorkflowStuckSendLifeConfirmMatch(match, contextName, now)
+        return match to observation
     }
 
+    private fun observeWorkflowStuckSendLifeConfirmMatch(
+        match: TemplateMatch,
+        contextName: String,
+        now: Long = SystemClock.elapsedRealtime(),
+    ): StuckSendLifeConfirmObservation {
+        lastWorkflowStuckSendLifeProbeAt = now
+        val observation = stuckSendLifeConfirmTracker.observe(group, now, match.score)
+        if (observation.disappearedReset) {
+            logDiagnostic(
+                "[STUCK_SEND_LIFE_CONFIRM] action=RESET reason=not_detected " +
+                    "context=$contextName score=${format(match.score)} " +
+                    "threshold=${format(StuckSendLifeConfirmPolicy.MATCH_THRESHOLD)}",
+            )
+        }
+        if (observation.startedNewEpisode) {
+            logDiagnostic(
+                "[STUCK_SEND_LIFE_CONFIRM] action=START " +
+                    "reason=${if (observation.groupChangedReset) "group_changed" else "high_confidence_match"} " +
+                    "context=$contextName group=${group.name} score=${format(match.score)} " +
+                    "threshold=${format(StuckSendLifeConfirmPolicy.MATCH_THRESHOLD)} " +
+                    "requiredMs=${StuckSendLifeConfirmPolicy.STUCK_DURATION_MS}",
+            )
+        }
+        if (observation.shouldTap) {
+            logDiagnostic(
+                "[STUCK_SEND_LIFE_CONFIRM] action=DUE context=$contextName " +
+                    "elapsedMs=${observation.elapsedMs} score=${format(match.score)} group=${group.name}",
+            )
+        }
+        return observation
+    }
     private fun handleStuckSendLifeConfirmPopup(
         confirm: TemplateMatch,
         frame: FrameSnapshot,
@@ -2670,7 +2717,6 @@ class BotController(
         sourceHeight: Int,
         trigger: FriendLifeTrigger,
     ): FriendLifeWorkflowResult {
-        resetStuckSendLifeConfirmForWorkflow("FRIEND_LIFE")
         val startedAt = SystemClock.elapsedRealtime()
         var lastProgressElapsedRealtime = startedAt
         fun recordFriendLifeProgress(event: String, sentCount: Int, traverseSwipeCount: Int) {
@@ -2693,6 +2739,10 @@ class BotController(
             ?: return friendLifeAbort("FIND_TOP", "initial_fresh_frame_timeout", topSwipeCount)
         val initialScan = scanFriendFrame(detector, initialFrame)
         initialScan.interrupt?.let { return friendLifeInterrupt(it, "FIND_TOP_INITIAL_CHECK") }
+        if (initialScan.stuckConfirmDue) {
+            logDiagnostic("[FRIEND_LIFE_INTERRUPT] reason=stuck_send_life_confirm_due phase=FIND_TOP_INITIAL_CHECK")
+            return FriendLifeWorkflowResult.INTERRUPTED
+        }
         logDiagnostic(
             "[FRIEND_LIFE_TOP_CHECK] phase=INITIAL score=${format(initialScan.top.score)} " +
                 "matched=${initialScan.top.matched} threshold=${format(FRIEND_LIFE_MATCH_THRESHOLD)} " +
@@ -2771,6 +2821,10 @@ class BotController(
             if (checkFrame == null) return friendLifeAbort("FIND_TOP", "batch_check_fresh_frame_timeout", topSwipeCount)
             val checkScan = scanFriendFrame(detector, checkFrame)
             checkScan.interrupt?.let { return friendLifeInterrupt(it, "FIND_TOP_BATCH_CHECK") }
+            if (checkScan.stuckConfirmDue) {
+                logDiagnostic("[FRIEND_LIFE_INTERRUPT] reason=stuck_send_life_confirm_due phase=FIND_TOP_BATCH_CHECK")
+                return FriendLifeWorkflowResult.INTERRUPTED
+            }
             logDiagnostic(
                 "[FRIEND_LIFE_TOP_CHECK] swipeCount=$topSwipeCount " +
                     "score=${format(checkScan.top.score)} matched=${checkScan.top.matched} " +
@@ -2802,6 +2856,10 @@ class BotController(
             val beforeScrollSample = FriendScrollVerifier.capture(snapshot.mat, FRIEND_SCROLL_VERIFY_REGION)
             val scan = scanFriendFrame(detector, snapshot)
             scan.interrupt?.let { return friendLifeInterrupt(it, "TRAVERSE") }
+            if (scan.stuckConfirmDue) {
+                logDiagnostic("[FRIEND_LIFE_INTERRUPT] reason=stuck_send_life_confirm_due phase=TRAVERSE")
+                return FriendLifeWorkflowResult.INTERRUPTED
+            }
             if (scan.send.matched) {
                 recordFriendLifeProgress("SEND_DETECTED", sentCount, traverseSwipeCount)
                 logFriendLifeMatch(
@@ -2953,6 +3011,11 @@ class BotController(
         warnIfFriendLifeRoiInvalid("BOTTOM", FRIEND_BOTTOM_REGION, FRIEND_BOTTOM_TEMPLATE_WIDTH, FRIEND_BOTTOM_TEMPLATE_HEIGHT)
         warnIfFriendLifeRoiInvalid("SEND", FRIEND_SEND_REGION, FRIEND_SEND_TEMPLATE_WIDTH, FRIEND_SEND_TEMPLATE_HEIGHT)
         val interrupt = detectFriendLifeInterrupt(detector, snapshot.mat)
+        val stuckObservation = observeWorkflowStuckSendLifeConfirm(
+            detector,
+            snapshot.mat,
+            "FRIEND_LIFE_SCAN",
+        )?.second
         FriendLifeFrameScan(
             interrupt = interrupt,
             top = detector.detectTemplate(
@@ -2964,6 +3027,7 @@ class BotController(
             send = detector.detectTemplate(
                 snapshot.mat, "FRIEND_SEND_LIFE_1.png", FRIEND_SEND_REGION, FRIEND_LIFE_MATCH_THRESHOLD,
             ),
+            stuckConfirmDue = stuckObservation?.shouldTap == true,
         )
     } finally { snapshot.mat.release() }
 
@@ -3136,6 +3200,10 @@ class BotController(
             true, interrupt, "", freshGeneration = frameGeneration, skipped = true,
         )
         val confirmation = requireNotNull(match)
+        observeWorkflowStuckSendLifeConfirmMatch(
+            confirmation,
+            "FRIEND_LIFE_$step",
+        )
         val center = FriendLifeConfirmPolicy.centerIfMatched(confirmation)
         logDiagnostic(
             "[FRIEND_LIFE_CONFIRM] step=$step scan=FULL_FRAME matched=${confirmation.matched} " +
@@ -3252,7 +3320,6 @@ class BotController(
     }
 
     private fun handleQuickLives(detector: StateDetector, sourceWidth: Int, sourceHeight: Int): Boolean {
-        resetStuckSendLifeConfirmForWorkflow("QUICK_LIVES")
         val mailContext = QuickLivesSafetyPolicy.MailContext()
         Log.i(CookieRunBotApplication.TAG, "[LIVES] Safe tap jitter=10 canonical")
         if (!revalidateMainMenu(detector, "BEFORE_MAIL_BOX")) return false
@@ -3298,10 +3365,20 @@ class BotController(
             lastGeneration = snapshot.generation
             val allDone: Boolean
             val confirm: Boolean
+            val stuckConfirmDue: Boolean
             try {
+                stuckConfirmDue = observeWorkflowStuckSendLifeConfirm(
+                    detector,
+                    snapshot.mat,
+                    "QUICK_LIVES",
+                )?.second?.shouldTap == true
                 allDone = detector.detectTemplate(snapshot.mat, "ALL_LIVES_RECEIVED_AND_SENT_1.png", Rect(396, 267, 486, 79)).matched
                 confirm = detector.detectTemplate(snapshot.mat, "CONFIRM_SEND_LIFE_1.png", Rect(640, 402, 304, 113)).matched
             } finally { snapshot.mat.release() }
+            if (stuckConfirmDue) {
+                abortQuickLives("stuck_send_life_confirm_due")
+                return false
+            }
             if (allDone) {
                 if (!performQuickLivesTap("ALL_LIVES_CONFIRM", AutomationConfig.ALL_LIVES_CONFIRM, sourceWidth, sourceHeight)) return false
                 delayOrStop(randomMs(800, 1400))
@@ -4463,4 +4540,5 @@ private data class FriendLifeFrameScan(
     val top: TemplateMatch,
     val bottom: TemplateMatch,
     val send: TemplateMatch,
+    val stuckConfirmDue: Boolean,
 )
