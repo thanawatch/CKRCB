@@ -149,6 +149,36 @@ class StuckSendLifeConfirmPolicyTest {
         )
     }
 
+    @Test fun followUpTreatsLargePositionChangeAsNewConfirm() {
+        val previous = LogicalPoint(793, 458)
+        val moved = LogicalPoint(640, 458)
+        assertTrue(StuckSendLifeFollowUpPolicy.movedToNewPosition(previous, moved))
+        assertEquals(
+            StuckSendLifeFollowUpPolicy.Decision.TAP_NEXT_CONFIRM,
+            StuckSendLifeFollowUpPolicy.decide(
+                StuckSendLifeFollowUpPolicy.Phase.WAIT_OLD_CONFIRM_DISAPPEAR,
+                500L,
+                confirmMatched = true,
+                confirmMovedToNewPosition = true,
+            ),
+        )
+    }
+
+    @Test fun followUpIgnoresSmallTemplatePositionNoise() {
+        val previous = LogicalPoint(793, 458)
+        val jittered = LogicalPoint(799, 463)
+        assertFalse(StuckSendLifeFollowUpPolicy.movedToNewPosition(previous, jittered))
+        assertEquals(
+            StuckSendLifeFollowUpPolicy.Decision.WAIT,
+            StuckSendLifeFollowUpPolicy.decide(
+                StuckSendLifeFollowUpPolicy.Phase.WAIT_OLD_CONFIRM_DISAPPEAR,
+                500L,
+                confirmMatched = true,
+                confirmMovedToNewPosition = false,
+            ),
+        )
+    }
+
     @Test fun followUpStopsIfOldConfirmNeverDisappears() {
         assertEquals(
             StuckSendLifeFollowUpPolicy.Decision.STOP_CHAIN,
