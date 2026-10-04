@@ -3640,6 +3640,12 @@ class BotController(
         }
         if (!isRunning()) return FriendLifeTapStepResult(false, null, "bot_stopped")
         friendSendTapProgressReason(step, gestureSucceeded = true)?.let {
+            val progressAt = SystemClock.elapsedRealtime()
+            if (friendLifeScheduler.markFirstSend(progressAt)) {
+                logDiagnostic(
+                    "[FRIEND_LIFE_BUDGET] action=start_on_first_send activeElapsedMs=0",
+                )
+            }
             GameProgressWatchdogManager.recordProgress(it)
         }
         val postGestureBaseline = LatestFrameProvider.currentGeneration()
