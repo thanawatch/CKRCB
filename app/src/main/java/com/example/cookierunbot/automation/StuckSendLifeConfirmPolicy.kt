@@ -69,7 +69,7 @@ internal class StuckSendLifeConfirmTracker {
 internal object StuckSendLifeFollowUpPolicy {
     const val OLD_CONFIRM_DISAPPEAR_TIMEOUT_MS = 3_000L
     const val NEXT_CONFIRM_WAIT_MS = 2_500L
-    const val NEW_CONFIRM_MIN_CENTER_SHIFT_LOGICAL = 24
+    const val NEW_CONFIRM_MIN_CENTER_SHIFT_LOGICAL = 48
 
     enum class Phase {
         INACTIVE,
