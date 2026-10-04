@@ -85,6 +85,31 @@ class StuckSendLifeConfirmPolicyTest {
         assertEquals(0L, restarted.elapsedMs)
     }
 
+
+    @Test fun changingEligibleGroupStartsANewMinute() {
+        val tracker = StuckSendLifeConfirmTracker()
+        tracker.observe(DetectionGroup.PRE_GAME, 1_000L, 0.99)
+        tracker.observe(DetectionGroup.PRE_GAME, 31_000L, 0.99)
+
+        val changed = tracker.observe(DetectionGroup.POST_GAME, 32_000L, 0.99)
+        assertTrue(changed.startedNewEpisode)
+        assertTrue(changed.continuityReset)
+        assertTrue(changed.groupChangedReset)
+        assertEquals(0L, changed.elapsedMs)
+        assertFalse(changed.shouldTap)
+    }
+
+    @Test fun explicitWorkflowResetStartsANewMinute() {
+        val tracker = StuckSendLifeConfirmTracker()
+        tracker.observe(DetectionGroup.POST_GAME, 1_000L, 0.99)
+        assertTrue(tracker.reset())
+
+        val restarted = tracker.observe(DetectionGroup.POST_GAME, 2_000L, 0.99)
+        assertTrue(restarted.startedNewEpisode)
+        assertEquals(0L, restarted.elapsedMs)
+        assertFalse(restarted.shouldTap)
+    }
+
     @Test fun centerUsesExactTemplateMatchCenter() {
         assertEquals(LogicalPoint(797, 458), StuckSendLifeConfirmPolicy.center(640, 402, 314, 113))
     }
