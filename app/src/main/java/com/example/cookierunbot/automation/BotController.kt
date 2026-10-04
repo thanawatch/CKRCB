@@ -1117,7 +1117,6 @@ class BotController(
                 lastDualSendLifeProbeAt = dualProbeNow
                 val pair = detector.detectGameCompleteSendLifePopup(frame.mat)
                 if (pair.matched) {
-                    stuckSendLifeConfirmTracker.reset()
                     logDiagnostic(
                         "[GAME_COMPLETE_SEND_LIFE] matched=true frameGeneration=${frame.generation} " +
                             "gameCompleteScore=${format(requireNotNull(pair.gameComplete).score)} " +
@@ -1143,7 +1142,7 @@ class BotController(
                 if (stuckConfirm.startedNewEpisode) {
                     logDiagnostic(
                         "[STUCK_SEND_LIFE_CONFIRM] action=START " +
-                            "reason=${if (stuckConfirm.groupChangedReset) "group_changed" else "high_confidence_match"} " +
+                            "reason=high_confidence_match " +
                             "group=${group.name} score=${format(pair.confirm.score)} " +
                             "threshold=${format(StuckSendLifeConfirmPolicy.MATCH_THRESHOLD)} " +
                             "requiredMs=${StuckSendLifeConfirmPolicy.STUCK_DURATION_MS}",
@@ -1725,7 +1724,7 @@ class BotController(
         if (observation.startedNewEpisode) {
             logDiagnostic(
                 "[STUCK_SEND_LIFE_CONFIRM] action=START " +
-                    "reason=${if (observation.groupChangedReset) "group_changed" else "high_confidence_match"} " +
+                    "reason=high_confidence_match " +
                     "context=$contextName group=${group.name} score=${format(match.score)} " +
                     "threshold=${format(StuckSendLifeConfirmPolicy.MATCH_THRESHOLD)} " +
                     "requiredMs=${StuckSendLifeConfirmPolicy.STUCK_DURATION_MS}",
@@ -1801,13 +1800,12 @@ class BotController(
             lastStage = null
             return@synchronized
         }
-        stuckSendLifeConfirmTracker.reset()
         val postCallbackBaseline = LatestFrameProvider.currentGeneration()
         minimumFreshFrameGeneration = postCallbackBaseline
         freshFrameGateWaitStartedAt = 0L
         lastStage = null
         logDiagnostic(
-            "[STUCK_SEND_LIFE_CONFIRM] action=RESET reason=gesture_success " +
+            "[STUCK_SEND_LIFE_CONFIRM] action=KEEP_TIMER reason=gesture_success " +
                 "postCallbackBaseline=$postCallbackBaseline action=REDETECT_FRESH_FRAME",
         )
     }
