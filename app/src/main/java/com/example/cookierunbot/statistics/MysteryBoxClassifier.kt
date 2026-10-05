@@ -331,8 +331,8 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
                 minOf(first.width, second.width) * POSITION_CLUSTER_X_FRACTION
             val maxCenterDy =
                 minOf(first.height, second.height) * POSITION_CLUSTER_Y_FRACTION
-            return kotlin.math.abs(firstCenterX - secondCenterX) <= maxCenterDx &&
-                kotlin.math.abs(firstCenterY - secondCenterY) <= maxCenterDy
+            return kotlin.math.abs(firstCenterX - secondCenterX) < maxCenterDx &&
+                kotlin.math.abs(firstCenterY - secondCenterY) < maxCenterDy
         }
 
         private fun overlapOverSmallerArea(first: Rect, second: Rect): Double {
