@@ -2884,7 +2884,10 @@ class BotController(
         }
         val callbackSuccess = outcome.first
         val callbackTimedOut = outcome.second
-        val phaseCommitted = callbackSuccess || callbackTimedOut
+        val phaseCommitted = MysteryBoxTapPolicy.shouldCommitAcceptedGesture(
+            callbackSuccess,
+            callbackTimedOut,
+        )
         val postGestureBaseline = LatestFrameProvider.currentGeneration()
         synchronized(lock) {
             if (!isCurrentWorkerRunLocked()) return
