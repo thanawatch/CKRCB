@@ -92,4 +92,31 @@ class MysteryBoxTapPolicyTest {
         assertTrue(MysteryBoxTapPolicy.shouldCommitAcceptedGesture(success = false, timedOut = true))
         assertFalse(MysteryBoxTapPolicy.shouldCommitAcceptedGesture(success = false, timedOut = false))
     }
+
+    @Test fun dispatchBoundaryAllowsOnlyCleanMysteryBoxFrame() {
+        assertTrue(
+            MysteryBoxTapPolicy.dispatchFrameAllowsTap(
+                mysteryBoxMatched = true,
+                mainMenuMatched = false,
+            ),
+        )
+        assertFalse(
+            MysteryBoxTapPolicy.dispatchFrameAllowsTap(
+                mysteryBoxMatched = true,
+                mainMenuMatched = true,
+            ),
+        )
+        assertFalse(
+            MysteryBoxTapPolicy.dispatchFrameAllowsTap(
+                mysteryBoxMatched = false,
+                mainMenuMatched = true,
+            ),
+        )
+        assertFalse(
+            MysteryBoxTapPolicy.dispatchFrameAllowsTap(
+                mysteryBoxMatched = false,
+                mainMenuMatched = false,
+            ),
+        )
+    }
 }
