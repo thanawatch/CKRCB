@@ -176,7 +176,7 @@ internal fun telegramCommandReply(command: String): String? = when (command) {
     "/help" -> "RobotRun commands\n\n/all - Screenshot, session totals, status and last round\n" +
         "/friend - Friend Life schedule and progress\n/health - Capture, accessibility and worker\n" +
         "/screen - Current normalized screenshot\n/watchdog - Watchdog and recovery state\n" +
-        "/rounds - Last five rounds\n/errors - Recent local error summary\n" +
+        "/rounds - Last ten rounds with box types\n/errors - Recent local error summary\n" +
         "/logs - Download private 10-hour diagnostic ZIP\n" +
         "/dashboard - Show the one-tap button dashboard\n/update - Check and send a verified newer APK\n" +
         "/status - Bot status\n/stats - Current session totals\n" +
