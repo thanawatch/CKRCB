@@ -2800,8 +2800,11 @@ class BotController(
         if (shouldClassifyBoxes) {
             logDiagnostic(
                 "[BOX_SCAN_DEFERRED] round=${roundNumber} phase=${phase} " +
-                    "reason=WAIT_FOR_REVALIDATED_FRAME detectedFrameGeneration=${detectedFrameGeneration}",
+                    "reason=WAIT_FOR_SETTLED_REVALIDATED_FRAME " +
+                    "settleMs=${MYSTERY_BOX_CLASSIFICATION_SETTLE_MS} " +
+                    "detectedFrameGeneration=${detectedFrameGeneration}",
             )
+            delayOrStop(MYSTERY_BOX_CLASSIFICATION_SETTLE_MS)
         } else {
             logDiagnostic(
                 "[BOX_SCAN_SKIPPED] round=${roundNumber} phase=${phase} " +
@@ -5064,6 +5067,7 @@ class BotController(
         private const val PREVIOUS_RESULTS_CONFIRM_OFFSET_X = 153
         private const val PREVIOUS_RESULTS_CONFIRM_OFFSET_Y = 236
         private const val MAINMENU_REVALIDATE_FRAME_TIMEOUT_MS = 1_000L
+        private const val MYSTERY_BOX_CLASSIFICATION_SETTLE_MS = 500L
         private const val QUICK_LIVES_FRAME_TIMEOUT_MS = 2_500L
         private const val QUICK_LIVES_GESTURE_TIMEOUT_MS = 3_000L
         private const val QUICK_LIVES_TIMEOUT_MS = 120_000L
