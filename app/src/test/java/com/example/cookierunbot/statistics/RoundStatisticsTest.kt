@@ -203,6 +203,16 @@ class RoundStatisticsTest {
         assertFalse(MysteryBoxPhasePolicy.shouldClassify(3))
     }
 
+    @Test fun mysteryBoxFastPathFallsBackOnlyWhenScaleOneFindsNothing() {
+        assertEquals(1.0, MysteryBoxScanPolicy.FAST_SCALE, 0.0)
+        assertTrue(MysteryBoxScanPolicy.shouldRunFallback(emptyList()))
+        assertFalse(
+            MysteryBoxScanPolicy.shouldRunFallback(
+                listOf(detection("gold", .91, 200)),
+            ),
+        )
+    }
+
     private fun detection(grade: String, score: Double, x: Int, size: Int = 100) =
         BoxDetection(grade, score, Rect(x, 20, size, size))
 
