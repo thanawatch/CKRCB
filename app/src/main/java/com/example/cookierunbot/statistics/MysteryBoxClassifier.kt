@@ -227,27 +227,46 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
         private val ROI = Rect(192, 144, 896, 396)
         private const val MAX_LOCAL_CANDIDATES_PER_SCALE = 8
         internal const val NMS_IOU_THRESHOLD = 0.30
+        internal const val NMS_SMALLER_OVERLAP_THRESHOLD = 0.30
         private const val MAX_BOXES = 4
 
         internal fun suppressOverlaps(candidates: List<BoxDetection>): List<BoxDetection> {
             val accepted = mutableListOf<BoxDetection>()
             candidates.sortedByDescending { it.score }.forEach { candidate ->
-                if (accepted.size < MAX_BOXES && accepted.none { iou(it.rect, candidate.rect) >= NMS_IOU_THRESHOLD }) {
+                if (accepted.size < MAX_BOXES &&
+                    accepted.none { samePhysicalBox(it.rect, candidate.rect) }
+                ) {
                     accepted += candidate
                 }
             }
             return accepted.sortedBy { it.rect.x }
         }
 
+        internal fun samePhysicalBox(first: Rect, second: Rect): Boolean =
+            iou(first, second) >= NMS_IOU_THRESHOLD ||
+                overlapOverSmallerArea(first, second) >= NMS_SMALLER_OVERLAP_THRESHOLD
+
+        private fun overlapOverSmallerArea(first: Rect, second: Rect): Double {
+            val intersection = intersectionArea(first, second)
+            if (intersection == 0) return 0.0
+            val smallerArea = minOf(first.width * first.height, second.width * second.height)
+            if (smallerArea <= 0) return 0.0
+            return intersection.toDouble() / smallerArea.toDouble()
+        }
+
         private fun iou(first: Rect, second: Rect): Double {
+            val intersection = intersectionArea(first, second)
+            if (intersection == 0) return 0.0
+            val union = first.width * first.height + second.width * second.height - intersection
+            return intersection.toDouble() / union.toDouble()
+        }
+
+        private fun intersectionArea(first: Rect, second: Rect): Int {
             val left = maxOf(first.x, second.x)
             val top = maxOf(first.y, second.y)
             val right = minOf(first.x + first.width, second.x + second.width)
             val bottom = minOf(first.y + first.height, second.y + second.height)
-            val intersection = (right - left).coerceAtLeast(0) * (bottom - top).coerceAtLeast(0)
-            if (intersection == 0) return 0.0
-            val union = first.width * first.height + second.width * second.height - intersection
-            return intersection.toDouble() / union.toDouble()
+            return (right - left).coerceAtLeast(0) * (bottom - top).coerceAtLeast(0)
         }
     }
 }
