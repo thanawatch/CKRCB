@@ -246,6 +246,27 @@ class RoundStatisticsTest {
         assertEquals(listOf("wood", "silver", "rainbow"), selected.map { it.grade })
     }
 
+    @Test fun realLogDuplicateBetweenTwoSilverBoxesIsCollapsed() {
+        val selected = MysteryBoxClassifier.suppressOverlaps(
+            listOf(
+                BoxDetection("wood", .8863, Rect(236, 270, 169, 152)),
+                BoxDetection("silver", .8410, Rect(545, 301, 169, 152)),
+                BoxDetection("silver", .6500, Rect(708, 353, 169, 152)),
+                BoxDetection("silver", .8426, Rect(876, 269, 169, 152)),
+            ),
+        )
+        assertEquals(listOf("wood", "silver", "silver"), selected.map { it.grade })
+    }
+
+    @Test fun twoRealSilverBoxesFromLogStaySeparate() {
+        assertFalse(
+            MysteryBoxClassifier.samePhysicalBox(
+                Rect(545, 301, 169, 152),
+                Rect(876, 269, 169, 152),
+            ),
+        )
+    }
+
     @Test fun nmsLimitsOutputToFourBoxes() {
         val selected = MysteryBoxClassifier.suppressOverlaps(
             (0..5).map { detection("wood", .99 - it * .01, it * 140) },
