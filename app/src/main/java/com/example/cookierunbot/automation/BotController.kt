@@ -1444,7 +1444,7 @@ class BotController(
                     },
                 )
             }
-            BotStage.MYSTERY_BOX -> handleMysteryBox(detector, sourceWidth, sourceHeight, frameGeneration)
+            BotStage.MYSTERY_BOX -> handleMysteryBox(detector, sourceWidth, sourceHeight, frame, frameGeneration)
             BotStage.CLOSE_BUTTON -> {
                 val center = LogicalPoint(
                     result.x + result.width / 2,
@@ -2779,6 +2779,7 @@ class BotController(
         detector: StateDetector,
         sourceWidth: Int,
         sourceHeight: Int,
+        detectedFrame: Mat,
         detectedFrameGeneration: Long,
     ) {
         val phase = synchronized(lock) {
@@ -2792,8 +2793,18 @@ class BotController(
                     "frameGeneration=${detectedFrameGeneration}",
             )
             updateGroup(DetectionGroup.POST_GAME)
-            // Keep lastStage=MYSTERY_BOX so a lingering final popup cannot dispatch again.
             return
+        }
+
+        // Preserve the original statistics behavior: phase 1 classification uses the
+        // same frame that produced the MYSTERY_BOX stage detection.
+        if (MysteryBoxPhasePolicy.shouldClassify(phase)) {
+            roundResultCollector.classifyMysteryBoxes(roundNumber, detectedFrame)
+        } else {
+            logDiagnostic(
+                "[BOX_SCAN_SKIPPED] round=${roundNumber} phase=${phase} " +
+                    "reason=OPENED_REWARD_PHASE",
+            )
         }
 
         if (phase == 2 && !mysteryBoxImageSaved) {
@@ -2806,25 +2817,16 @@ class BotController(
             lastStage = null
             return
         }
-        try {
-            if (MysteryBoxPhasePolicy.shouldClassify(phase)) {
-                roundResultCollector.classifyMysteryBoxes(roundNumber, verifiedFrame.mat)
-            } else {
-                logDiagnostic(
-                    "[BOX_SCAN_SKIPPED] round=${roundNumber} phase=${phase} " +
-                        "reason=OPENED_REWARD_PHASE",
-                )
-            }
-        } finally {
-            verifiedFrame.mat.release()
-        }
+        val verifiedGeneration = verifiedFrame.generation
+        verifiedFrame.mat.release()
 
-        val gestureSucceeded = java.util.concurrent.atomic.AtomicReference<Boolean?>(null)
+        val gestureOutcome =
+            java.util.concurrent.atomic.AtomicReference<Pair<Boolean, Boolean>?>(null)
         logBotActionRequest("MYSTERY_BOX_${phase}")
         val action = synchronized(lock) {
             if (!canDispatchActionLocked() ||
                 PopupFreshFramePolicy.blocks(
-                    verifiedFrame.generation,
+                    verifiedGeneration,
                     minimumFreshFrameGeneration,
                 )
             ) {
@@ -2836,14 +2838,16 @@ class BotController(
                     null,
                 )
             } else {
-                actionExecutor.tap(
-                    "MYSTERY_BOX_${phase}",
-                    AutomationConfig.MYSTERY_BOX_ACCEPT,
-                    sourceWidth,
-                    sourceHeight,
+                actionExecutor.tapManaged(
+                    actionName = "MYSTERY_BOX_${phase}",
+                    point = AutomationConfig.MYSTERY_BOX_ACCEPT,
+                    sourceWidth = sourceWidth,
+                    sourceHeight = sourceHeight,
                     jitter = MysteryBoxTapPolicy.jitterForPhase(phase),
-                    onGestureCompleted = { _, success -> gestureSucceeded.set(success) },
-                )
+                    callbackTimeoutMs = MysteryBoxTapPolicy.GESTURE_CALLBACK_TIMEOUT_MS,
+                ) { success, timedOut ->
+                    gestureOutcome.set(success to timedOut)
+                }
             }
         }
         reportActionResult(action)
@@ -2851,36 +2855,49 @@ class BotController(
             logDiagnostic(
                 "[MYSTERY_BOX_GESTURE] phase=${phase} dispatchAccepted=false action=REDETECT",
             )
-            minimumFreshFrameGeneration = LatestFrameProvider.currentGeneration()
-            freshFrameGateWaitStartedAt = 0L
-            lastStage = null
+            synchronized(lock) {
+                minimumFreshFrameGeneration =
+                    maxOf(minimumFreshFrameGeneration, LatestFrameProvider.currentGeneration())
+                freshFrameGateWaitStartedAt = 0L
+                lastStage = null
+            }
             return
         }
 
         val callbackDeadline =
-            SystemClock.elapsedRealtime() + MysteryBoxTapPolicy.GESTURE_CALLBACK_TIMEOUT_MS
+            SystemClock.elapsedRealtime() + MysteryBoxTapPolicy.GESTURE_CALLBACK_TIMEOUT_MS + 250L
         while (isRunning() &&
-            gestureSucceeded.get() == null &&
+            gestureOutcome.get() == null &&
             SystemClock.elapsedRealtime() < callbackDeadline
         ) {
             delayOrStop(25L)
         }
-        val callbackSuccess = gestureSucceeded.get() == true
+        val outcome = gestureOutcome.get() ?: run {
+            action.pendingGesture?.cancel()
+            false to true
+        }
+        val callbackSuccess = outcome.first
+        val callbackTimedOut = outcome.second
+        val phaseCommitted = callbackSuccess || callbackTimedOut
         val postGestureBaseline = LatestFrameProvider.currentGeneration()
         synchronized(lock) {
             if (!isCurrentWorkerRunLocked()) return
             minimumFreshFrameGeneration =
                 maxOf(minimumFreshFrameGeneration, postGestureBaseline)
             freshFrameGateWaitStartedAt = 0L
-            if (callbackSuccess) mysteryBoxCount = phase
+            if (phaseCommitted) mysteryBoxCount = phase
         }
         logDiagnostic(
             "[MYSTERY_BOX_GESTURE] phase=${phase} dispatchAccepted=true " +
-                "callbackSuccess=${callbackSuccess} jitter=${MysteryBoxTapPolicy.jitterForPhase(phase)} " +
+                "callbackSuccess=${callbackSuccess} timedOut=${callbackTimedOut} " +
+                "phaseCommitted=${phaseCommitted} " +
+                "jitter=${MysteryBoxTapPolicy.jitterForPhase(phase)} " +
                 "postGestureBaseline=${postGestureBaseline} count=${mysteryBoxCount}",
         )
-        if (!callbackSuccess) {
-            // Retry only after a new frame revalidates MYSTERY_BOX again.
+
+        if (!phaseCommitted) {
+            // Explicit cancellation means the system says the tap did not complete;
+            // retry only after a new positive MYSTERY_BOX frame.
             lastStage = null
             return
         }
@@ -2892,7 +2909,8 @@ class BotController(
         if (MysteryBoxTapPolicy.shouldRearmSameStageAfterSuccess(phase)) {
             lastStage = null
         }
-        // Phase 3 is terminal. Keep lastStage=MYSTERY_BOX until another stage appears.
+        // Phase 3 is terminal. A timeout is treated as consumed once dispatch was
+        // accepted so an uncertain late callback can never produce MYSTERY_BOX_4.
     }
 
     private fun revalidateMysteryBoxBeforeTap(
@@ -2900,8 +2918,11 @@ class BotController(
         phase: Int,
     ): FrameSnapshot? {
         var baseline = LatestFrameProvider.currentGeneration()
+        var acceptedFrames = 0
+        var ambiguousMainMenuFrames = 0
         var acceptedFrame: FrameSnapshot? = null
-        repeat(MysteryBoxTapPolicy.requiredFreshFrames(phase)) { index ->
+
+        while (acceptedFrames < MysteryBoxTapPolicy.requiredFreshFrames(phase)) {
             acceptedFrame?.mat?.release()
             acceptedFrame = null
             val fresh = LatestFrameProvider.awaitNextSnapshot(
@@ -2909,29 +2930,52 @@ class BotController(
                 MysteryBoxTapPolicy.REVALIDATE_FRAME_TIMEOUT_MS,
             ) ?: run {
                 logDiagnostic(
-                    "[MYSTERY_BOX_REVALIDATE] phase=${phase} freshIndex=${index + 1} " +
-                        "action=SKIP reason=fresh_frame_timeout baseline=${baseline}",
+                    "[MYSTERY_BOX_REVALIDATE] phase=${phase} action=SKIP " +
+                        "reason=fresh_frame_timeout baseline=${baseline}",
                 )
                 return null
             }
+            baseline = fresh.generation
             val mainMenu = detector.detect(BotStage.MAINMENU, fresh.mat)
             val mysteryBox = detector.detect(BotStage.MYSTERY_BOX, fresh.mat)
+            val decision = MysteryBoxTapPolicy.frameDecision(
+                mysteryBoxMatched = mysteryBox.matched,
+                mainMenuMatched = mainMenu.matched,
+                ambiguousMainMenuFrames = ambiguousMainMenuFrames,
+            )
             logDiagnostic(
-                "[MYSTERY_BOX_REVALIDATE] phase=${phase} freshIndex=${index + 1} " +
+                "[MYSTERY_BOX_REVALIDATE] phase=${phase} " +
                     "frameGeneration=${fresh.generation} mysteryMatched=${mysteryBox.matched} " +
                     "mysteryScore=${format(mysteryBox.score)} mainMenuMatched=${mainMenu.matched} " +
-                    "mainMenuScore=${format(mainMenu.score)}",
+                    "mainMenuScore=${format(mainMenu.score)} decision=${decision.name}",
             )
-            if (mainMenu.matched || !mysteryBox.matched) {
-                fresh.mat.release()
-                logDiagnostic(
-                    "[MYSTERY_BOX_REVALIDATE] phase=${phase} action=SKIP " +
-                        "reason=${if (mainMenu.matched) "mainmenu_visible" else "mystery_box_gone"}",
-                )
-                return null
+            when (decision) {
+                MysteryBoxTapPolicy.FrameDecision.ALLOW_TAP -> {
+                    acceptedFrames += 1
+                    ambiguousMainMenuFrames = 0
+                    acceptedFrame = fresh
+                }
+                MysteryBoxTapPolicy.FrameDecision.WAIT_FOR_UNAMBIGUOUS_FRAME -> {
+                    ambiguousMainMenuFrames += 1
+                    fresh.mat.release()
+                }
+                MysteryBoxTapPolicy.FrameDecision.STOP_MAINMENU_VISIBLE -> {
+                    fresh.mat.release()
+                    logDiagnostic(
+                        "[MYSTERY_BOX_REVALIDATE] phase=${phase} action=SKIP " +
+                            "reason=mainmenu_visible_or_transition_ambiguous",
+                    )
+                    return null
+                }
+                MysteryBoxTapPolicy.FrameDecision.DEFER_MYSTERY_BOX_GONE -> {
+                    fresh.mat.release()
+                    logDiagnostic(
+                        "[MYSTERY_BOX_REVALIDATE] phase=${phase} action=SKIP " +
+                            "reason=mystery_box_gone",
+                    )
+                    return null
+                }
             }
-            acceptedFrame = fresh
-            baseline = fresh.generation
         }
         return acceptedFrame
     }
