@@ -2822,9 +2822,13 @@ class BotController(
 
         val gestureOutcome =
             java.util.concurrent.atomic.AtomicReference<Pair<Boolean, Boolean>?>(null)
+        var newerFrameBeforeDispatch = false
         logBotActionRequest("MYSTERY_BOX_${phase}")
         val action = synchronized(lock) {
+            newerFrameBeforeDispatch =
+                LatestFrameProvider.currentGeneration() != verifiedGeneration
             if (!canDispatchActionLocked() ||
+                newerFrameBeforeDispatch ||
                 PopupFreshFramePolicy.blocks(
                     verifiedGeneration,
                     minimumFreshFrameGeneration,
@@ -2853,7 +2857,9 @@ class BotController(
         reportActionResult(action)
         if (!action.accepted) {
             logDiagnostic(
-                "[MYSTERY_BOX_GESTURE] phase=${phase} dispatchAccepted=false action=REDETECT",
+                "[MYSTERY_BOX_GESTURE] phase=${phase} dispatchAccepted=false " +
+                    "reason=${if (newerFrameBeforeDispatch) "newer_frame_before_dispatch" else "dispatch_rejected"} " +
+                    "action=REDETECT",
             )
             synchronized(lock) {
                 minimumFreshFrameGeneration =
@@ -2957,6 +2963,7 @@ class BotController(
                 }
                 MysteryBoxTapPolicy.FrameDecision.WAIT_FOR_UNAMBIGUOUS_FRAME -> {
                     ambiguousMainMenuFrames += 1
+                    acceptedFrames = 0
                     fresh.mat.release()
                 }
                 MysteryBoxTapPolicy.FrameDecision.STOP_MAINMENU_VISIBLE -> {
