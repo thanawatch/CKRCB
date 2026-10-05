@@ -12,46 +12,125 @@ import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
 
 data class BoxDetection(val grade: String, val score: Double, val rect: Rect)
-data class BoxScanResult(val candidateCount: Int, val detections: List<BoxDetection>)
+data class BoxScanResult(
+    val candidateCount: Int,
+    val detections: List<BoxDetection>,
+    val fastPathCandidateCount: Int = 0,
+    val fastPathAcceptedCount: Int = 0,
+    val usedFallback: Boolean = false,
+    val fastPathDurationMs: Double = 0.0,
+    val fallbackDurationMs: Double = 0.0,
+    val totalDurationMs: Double = 0.0,
+)
 internal object MysteryBoxPhasePolicy {
     fun shouldClassify(phase: Int): Boolean = phase == 1
 }
+internal object MysteryBoxScanPolicy {
+    const val FAST_SCALE = 1.0
+    fun shouldRunFallback(fastPathDetections: List<BoxDetection>): Boolean =
+        fastPathDetections.isEmpty()
+}
+
+private data class BoxTemplateVariant(
+    val grade: String,
+    val scale: Double,
+    val mat: Mat,
+)
 
 class MysteryBoxClassifier(context: Context) : AutoCloseable {
-    private val templates = buildMap {
+    private val templateVariants = mutableListOf<BoxTemplateVariant>().apply {
         listOf("wood", "silver", "gold", "rainbow").forEach { grade ->
             runCatching {
                 context.assets.open("templates/BOX_${grade.uppercase()}.png").use { input ->
                     val bitmap = requireNotNull(BitmapFactory.decodeStream(input))
-                    Mat().also { Utils.bitmapToMat(bitmap, it); bitmap.recycle() }
+                    val base = Mat()
+                    try {
+                        Utils.bitmapToMat(bitmap, base)
+                        SCALES.forEach { scale ->
+                            val variant = if (scale == MysteryBoxScanPolicy.FAST_SCALE) {
+                                base.clone()
+                            } else {
+                                Mat().also { scaled ->
+                                    Imgproc.resize(
+                                        base,
+                                        scaled,
+                                        Size(base.cols() * scale, base.rows() * scale),
+                                    )
+                                }
+                            }
+                            add(BoxTemplateVariant(grade, scale, variant))
+                        }
+                    } finally {
+                        base.release()
+                        bitmap.recycle()
+                    }
                 }
-            }.getOrNull()?.let { put(grade, it) }
+            }
         }
     }
+    private val fastPathVariants =
+        templateVariants.filter { it.scale == MysteryBoxScanPolicy.FAST_SCALE }
+    private val fallbackVariants =
+        templateVariants.filter { it.scale != MysteryBoxScanPolicy.FAST_SCALE }
 
     fun classifyAll(frame: Mat): List<BoxDetection> = scan(frame).detections
 
     fun scan(frame: Mat): BoxScanResult {
-        if (templates.isEmpty() || frame.cols() < ROI.x + ROI.width || frame.rows() < ROI.y + ROI.height) {
+        if (templateVariants.isEmpty() ||
+            frame.cols() < ROI.x + ROI.width ||
+            frame.rows() < ROI.y + ROI.height
+        ) {
             return BoxScanResult(0, emptyList())
         }
         val crop = frame.submat(ROI)
+        val totalStartedAt = System.nanoTime()
         return try {
             val candidates = mutableListOf<BoxDetection>()
-            templates.forEach { (grade, template) ->
-                SCALES.forEach { scale ->
-                    val candidate = Mat()
-                    try {
-                        Imgproc.resize(template, candidate, Size(template.cols() * scale, template.rows() * scale))
-                        if (candidate.cols() <= crop.cols() && candidate.rows() <= crop.rows()) {
-                            collectLocalCandidates(crop, candidate, grade, candidates)
-                        }
-                    } finally { candidate.release() }
-                }
+
+            val fastStartedAt = System.nanoTime()
+            collectVariants(crop, fastPathVariants, candidates)
+            val fastPathDurationMs = elapsedMs(fastStartedAt)
+            val fastPathCandidateCount = candidates.size
+            val fastPathDetections = suppressOverlaps(candidates)
+            val useFallback = MysteryBoxScanPolicy.shouldRunFallback(fastPathDetections)
+
+            var fallbackDurationMs = 0.0
+            val detections = if (useFallback) {
+                val fallbackStartedAt = System.nanoTime()
+                collectVariants(crop, fallbackVariants, candidates)
+                fallbackDurationMs = elapsedMs(fallbackStartedAt)
+                suppressOverlaps(candidates)
+            } else {
+                fastPathDetections
             }
-            BoxScanResult(candidates.size, suppressOverlaps(candidates))
+
+            BoxScanResult(
+                candidateCount = candidates.size,
+                detections = detections,
+                fastPathCandidateCount = fastPathCandidateCount,
+                fastPathAcceptedCount = fastPathDetections.size,
+                usedFallback = useFallback,
+                fastPathDurationMs = fastPathDurationMs,
+                fallbackDurationMs = fallbackDurationMs,
+                totalDurationMs = elapsedMs(totalStartedAt),
+            )
         } finally { crop.release() }
     }
+
+    private fun collectVariants(
+        crop: Mat,
+        variants: List<BoxTemplateVariant>,
+        output: MutableList<BoxDetection>,
+    ) {
+        variants.forEach { variant ->
+            if (variant.mat.cols() <= crop.cols() && variant.mat.rows() <= crop.rows()) {
+                collectLocalCandidates(crop, variant.mat, variant.grade, output)
+            }
+        }
+    }
+
+    private fun elapsedMs(startedAtNanos: Long): Double =
+        (System.nanoTime() - startedAtNanos) / 1_000_000.0
 
     private fun collectLocalCandidates(crop: Mat, template: Mat, grade: String, output: MutableList<BoxDetection>) {
         val result = Mat()
@@ -83,7 +162,7 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
         } finally { result.release() }
     }
 
-    override fun close() = templates.values.forEach(Mat::release)
+    override fun close() = templateVariants.forEach { it.mat.release() }
 
     companion object {
         internal const val MATCH_THRESHOLD = 0.60
