@@ -201,6 +201,39 @@ class RoundStatisticsTest {
         )
     }
 
+    @Test fun positionClusterCollapsesDuplicateEvenWhenOverlapIsTooSmall() {
+        val selected = MysteryBoxClassifier.suppressOverlaps(
+            listOf(
+                BoxDetection("silver", .96, Rect(200, 100, 169, 152)),
+                // Shifted 145 px: IoU and smaller-area overlap are both below 0.30,
+                // but this is still within one physical box-width cluster.
+                BoxDetection("silver", .88, Rect(345, 100, 169, 152)),
+                BoxDetection("rainbow", .95, Rect(600, 100, 175, 150)),
+            ),
+        )
+        assertEquals(listOf("silver", "rainbow"), selected.map { it.grade })
+    }
+
+    @Test fun positionClusterDoesNotMergeTwoRealSideBySideBoxes() {
+        assertFalse(
+            MysteryBoxClassifier.centersBelongToSamePositionCluster(
+                Rect(200, 100, 169, 152),
+                Rect(370, 100, 169, 152),
+            ),
+        )
+    }
+
+    @Test fun positionClusterWorksAcrossDifferentTemplateGrades() {
+        val selected = MysteryBoxClassifier.suppressOverlaps(
+            listOf(
+                BoxDetection("silver", .94, Rect(300, 100, 169, 152)),
+                BoxDetection("wood", .70, Rect(440, 105, 169, 152)),
+                BoxDetection("gold", .93, Rect(650, 100, 169, 152)),
+            ),
+        )
+        assertEquals(listOf("silver", "gold"), selected.map { it.grade })
+    }
+
     @Test fun nmsLimitsOutputToFourBoxes() {
         val selected = MysteryBoxClassifier.suppressOverlaps(
             (0..5).map { detection("wood", .99 - it * .01, it * 140) },
