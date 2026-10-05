@@ -122,6 +122,15 @@ class RoundResultCollector(context: Context) {
                     BoxScanResult(0, emptyList())
                 }
                 val detections = scan.detections
+                log(
+                    "[BOX_PERF] round=$round phase=1 " +
+                        "fastCandidates=${scan.fastPathCandidateCount} " +
+                        "fastAccepted=${scan.fastPathAcceptedCount} " +
+                        "usedFallback=${scan.usedFallback} " +
+                        "fastMs=${format(scan.fastPathDurationMs)} " +
+                        "fallbackMs=${format(scan.fallbackDurationMs)} " +
+                        "totalMs=${format(scan.totalDurationMs)}",
+                )
                 log("[BOX_SCAN] round=$round phase=1 candidateCount=${scan.candidateCount} acceptedCount=${detections.size}")
                 detections.forEachIndexed { index, detection ->
                     log(
