@@ -142,11 +142,14 @@ class RoundResultCollector(context: Context) {
                 log("[BOX_SCORE] round=$round phase=1 $scoreSummary")
                 scan.rawCandidates.take(MAX_BOX_CANDIDATE_LOGS).forEachIndexed { index, candidate ->
                     val selected = detections.contains(candidate)
+                    val bridge = if (selected) false else
+                        MysteryBoxClassifier.isBridgeCandidate(candidate, scan.rawCandidates)
                     val clusteredWith = if (selected) null else detections.firstOrNull {
                         MysteryBoxClassifier.samePhysicalBox(it.rect, candidate.rect)
                     }
                     val reason = when {
                         selected -> "SELECTED"
+                        bridge -> "BRIDGE"
                         clusteredWith != null -> "DEDUP"
                         else -> "LIMIT_OR_LOWER_PRIORITY"
                     }
