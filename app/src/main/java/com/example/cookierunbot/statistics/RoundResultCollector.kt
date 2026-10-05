@@ -131,6 +131,12 @@ class RoundResultCollector(context: Context) {
                         "fallbackMs=${format(scan.fallbackDurationMs)} " +
                         "totalMs=${format(scan.totalDurationMs)}",
                 )
+                val scoreSummary = listOf("wood", "silver", "gold", "rainbow").joinToString(" ") { grade ->
+                    val score = scan.bestScoreByGrade[grade]
+                    val scale = scan.bestScaleByGrade[grade]
+                    "$grade=${score?.let(::format) ?: "none"}@${scale?.let(::format) ?: "none"}"
+                }
+                log("[BOX_SCORE] round=$round phase=1 $scoreSummary")
                 log("[BOX_SCAN] round=$round phase=1 candidateCount=${scan.candidateCount} acceptedCount=${detections.size}")
                 detections.forEachIndexed { index, detection ->
                     log(
