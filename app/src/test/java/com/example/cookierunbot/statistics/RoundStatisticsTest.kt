@@ -267,6 +267,15 @@ class RoundStatisticsTest {
         )
     }
 
+    @Test fun exactlyOneBoxWidthApartStaysSeparate() {
+        assertFalse(
+            MysteryBoxClassifier.centersBelongToSamePositionCluster(
+                Rect(200, 100, 100, 100),
+                Rect(300, 100, 100, 100),
+            ),
+        )
+    }
+
     @Test fun verticalDuplicateGapFromLogIsCollapsed() {
         assertTrue(
             MysteryBoxClassifier.samePhysicalBox(
