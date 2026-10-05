@@ -3639,15 +3639,18 @@ class BotController(
             return FriendLifeTapStepResult(false, null, "${step.lowercase()}_gesture_failed")
         }
         if (!isRunning()) return FriendLifeTapStepResult(false, null, "bot_stopped")
-        friendSendTapProgressReason(step, gestureSucceeded = true)?.let {
-            val progressAt = SystemClock.elapsedRealtime()
-            if (friendLifeScheduler.markFirstSend(progressAt)) {
-                logDiagnostic(
-                    "[FRIEND_LIFE_BUDGET] action=start_on_first_send activeElapsedMs=0",
-                )
-            }
-            GameProgressWatchdogManager.recordProgress(it)
+        val progressUpdate = applyFriendSendTapProgress(
+            scheduler = friendLifeScheduler,
+            step = step,
+            gestureSucceeded = true,
+            nowMs = SystemClock.elapsedRealtime(),
+        )
+        if (progressUpdate.budgetStarted) {
+            logDiagnostic(
+                "[FRIEND_LIFE_BUDGET] action=start_on_first_send activeElapsedMs=0",
+            )
         }
+        progressUpdate.gameProgressReason?.let(GameProgressWatchdogManager::recordProgress)
         val postGestureBaseline = LatestFrameProvider.currentGeneration()
         if (pacingMs > 0L) delayOrStop(pacingMs)
         val fresh = LatestFrameProvider.awaitNextSnapshot(postGestureBaseline, FRIEND_RESCAN_TIMEOUT_MS)
@@ -4848,6 +4851,24 @@ internal fun friendSendTapProgressReason(
     GameProgressReason.FRIEND_SEND_LIFE_TAP
 } else {
     null
+}
+
+internal data class FriendSendTapProgressUpdate(
+    val gameProgressReason: GameProgressReason?,
+    val budgetStarted: Boolean,
+)
+
+internal fun applyFriendSendTapProgress(
+    scheduler: FriendLifeScheduler,
+    step: String,
+    gestureSucceeded: Boolean,
+    nowMs: Long,
+): FriendSendTapProgressUpdate {
+    val reason = friendSendTapProgressReason(step, gestureSucceeded)
+    return FriendSendTapProgressUpdate(
+        gameProgressReason = reason,
+        budgetStarted = reason != null && scheduler.markFirstSend(nowMs),
+    )
 }
 
 data class BotControllerDiagnostics(
