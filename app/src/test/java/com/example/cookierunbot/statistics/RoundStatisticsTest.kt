@@ -269,12 +269,97 @@ class RoundStatisticsTest {
         assertFalse(MysteryBoxPhasePolicy.shouldClassify(3))
     }
 
-    @Test fun mysteryBoxFastPathFallsBackOnlyWhenScaleOneFindsNothing() {
+    @Test fun mysteryBoxScaleFallbackUsesStagedPolicy() {
         assertEquals(1.0, MysteryBoxScanPolicy.FAST_SCALE, 0.0)
-        assertTrue(MysteryBoxScanPolicy.shouldRunFallback(emptyList()))
+
         assertFalse(
-            MysteryBoxScanPolicy.shouldRunFallback(
-                listOf(detection("gold", .91, 200)),
+            MysteryBoxScanPolicy.shouldRunNearFallback(
+                listOf(
+                    detection("wood", .95, 100),
+                    detection("silver", .94, 300),
+                    detection("gold", .93, 500),
+                    detection("rainbow", .92, 700),
+                ),
+            ),
+        )
+        assertTrue(
+            MysteryBoxScanPolicy.shouldRunNearFallback(
+                listOf(
+                    detection("wood", .95, 100),
+                    detection("silver", .94, 300),
+                    detection("rainbow", .92, 700),
+                ),
+            ),
+        )
+
+        assertFalse(
+            MysteryBoxScanPolicy.shouldRunFarProbe(
+                listOf(
+                    detection("wood", .95, 100),
+                    detection("silver", .94, 300),
+                    detection("gold", .93, 500),
+                    detection("rainbow", .92, 700),
+                ),
+            ),
+        )
+        assertTrue(
+            MysteryBoxScanPolicy.shouldRunFarProbe(
+                listOf(
+                    detection("wood", .95, 100),
+                    detection("silver", .94, 300),
+                    detection("rainbow", .92, 700),
+                ),
+            ),
+        )
+    }
+
+    @Test fun mysteryBoxExtremeFallbackOnlyRunsForSuspiciousFarProbeResult() {
+        val stableThree = listOf(
+            detection("wood", .95, 100),
+            detection("silver", .94, 300),
+            detection("rainbow", .92, 700),
+        )
+        assertFalse(
+            MysteryBoxScanPolicy.shouldRunExtremeFallback(
+                beforeFarProbeCount = 3,
+                farProbeDetections = stableThree,
+            ),
+        )
+
+        assertTrue(
+            MysteryBoxScanPolicy.shouldRunExtremeFallback(
+                beforeFarProbeCount = 2,
+                farProbeDetections = stableThree,
+            ),
+        )
+
+        assertTrue(
+            MysteryBoxScanPolicy.shouldRunExtremeFallback(
+                beforeFarProbeCount = 2,
+                farProbeDetections = stableThree.take(2),
+            ),
+        )
+
+        assertTrue(
+            MysteryBoxScanPolicy.shouldRunExtremeFallback(
+                beforeFarProbeCount = 3,
+                farProbeDetections = listOf(
+                    detection("wood", .95, 100),
+                    detection("silver", .70, 300),
+                    detection("rainbow", .92, 700),
+                ),
+            ),
+        )
+
+        assertFalse(
+            MysteryBoxScanPolicy.shouldRunExtremeFallback(
+                beforeFarProbeCount = 3,
+                farProbeDetections = listOf(
+                    detection("wood", .95, 100),
+                    detection("silver", .94, 300),
+                    detection("gold", .93, 500),
+                    detection("rainbow", .92, 700),
+                ),
             ),
         )
     }
