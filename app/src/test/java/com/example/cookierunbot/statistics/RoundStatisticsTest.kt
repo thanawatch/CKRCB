@@ -267,6 +267,42 @@ class RoundStatisticsTest {
         )
     }
 
+    @Test fun highScoringBridgeCannotSuppressTwoRealBoxes() {
+        val left = BoxDetection("silver", .84, Rect(545, 301, 169, 152))
+        val bridge = BoxDetection("silver", .92, Rect(708, 320, 169, 152))
+        val right = BoxDetection("silver", .83, Rect(876, 269, 169, 152))
+
+        assertTrue(
+            MysteryBoxClassifier.isBridgeCandidate(
+                bridge,
+                listOf(left, bridge, right),
+            ),
+        )
+
+        val selected = MysteryBoxClassifier.suppressOverlaps(
+            listOf(left, bridge, right),
+        )
+        assertEquals(listOf(left, right), selected)
+    }
+
+    @Test fun strongSingleCandidateDoesNotYieldToWeakFlankingNoise() {
+        val leftNoise = BoxDetection("silver", .70, Rect(545, 301, 169, 152))
+        val strong = BoxDetection("silver", .95, Rect(708, 320, 169, 152))
+        val rightNoise = BoxDetection("silver", .69, Rect(876, 269, 169, 152))
+
+        assertFalse(
+            MysteryBoxClassifier.isBridgeCandidate(
+                strong,
+                listOf(leftNoise, strong, rightNoise),
+            ),
+        )
+
+        val selected = MysteryBoxClassifier.suppressOverlaps(
+            listOf(leftNoise, strong, rightNoise),
+        )
+        assertEquals(listOf(strong), selected)
+    }
+
     @Test fun exactlyOneBoxWidthApartStaysSeparate() {
         assertFalse(
             MysteryBoxClassifier.centersBelongToSamePositionCluster(
