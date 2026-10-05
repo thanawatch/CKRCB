@@ -39,8 +39,11 @@ internal object MysteryBoxScanPolicy {
     private const val MAX_VISIBLE_BOXES = 4
     private const val EXTREME_WEAK_SCORE = 0.75
 
-    fun shouldRunNearFallback(fastPathDetections: List<BoxDetection>): Boolean =
-        fastPathDetections.size < MAX_VISIBLE_BOXES
+    fun shouldRunNearFallback(fastPathDetections: List<BoxDetection>): Boolean {
+        if (fastPathDetections.size <= 2) return true
+        if (fastPathDetections.size >= MAX_VISIBLE_BOXES) return false
+        return fastPathDetections.minOfOrNull { it.score }?.let { it < EXTREME_WEAK_SCORE } ?: true
+    }
 
     fun shouldRunFarProbe(nearDetections: List<BoxDetection>): Boolean =
         nearDetections.size < MAX_VISIBLE_BOXES
