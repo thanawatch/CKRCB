@@ -180,6 +180,27 @@ class RoundStatisticsTest {
         assertEquals(.91, selected.single().score, .0001)
     }
 
+    @Test fun nmsCollapsesShiftedDuplicateOfSamePhysicalBox() {
+        val selected = MysteryBoxClassifier.suppressOverlaps(
+            listOf(
+                BoxDetection("wood", .96, Rect(200, 100, 169, 152)),
+                BoxDetection("wood", .90, Rect(305, 100, 169, 152)),
+                BoxDetection("gold", .94, Rect(430, 100, 169, 152)),
+                BoxDetection("silver", .93, Rect(650, 100, 169, 152)),
+            ),
+        )
+        assertEquals(listOf("wood", "gold", "silver"), selected.map { it.grade })
+    }
+
+    @Test fun overlapDedupDoesNotMergeSeparateAdjacentBoxes() {
+        assertFalse(
+            MysteryBoxClassifier.samePhysicalBox(
+                Rect(200, 100, 169, 152),
+                Rect(380, 100, 169, 152),
+            ),
+        )
+    }
+
     @Test fun nmsLimitsOutputToFourBoxes() {
         val selected = MysteryBoxClassifier.suppressOverlaps(
             (0..5).map { detection("wood", .99 - it * .01, it * 140) },
