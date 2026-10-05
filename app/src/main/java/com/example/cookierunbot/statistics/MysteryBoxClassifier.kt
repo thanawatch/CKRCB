@@ -45,8 +45,11 @@ internal object MysteryBoxScanPolicy {
         return fastPathDetections.minOfOrNull { it.score }?.let { it < EXTREME_WEAK_SCORE } ?: true
     }
 
-    fun shouldRunFarProbe(nearDetections: List<BoxDetection>): Boolean =
-        nearDetections.size < MAX_VISIBLE_BOXES
+    fun shouldRunFarProbe(nearDetections: List<BoxDetection>): Boolean {
+        if (nearDetections.size <= 2) return true
+        if (nearDetections.size >= MAX_VISIBLE_BOXES) return false
+        return nearDetections.minOfOrNull { it.score }?.let { it < EXTREME_WEAK_SCORE } ?: true
+    }
 
     fun shouldRunExtremeFallback(
         beforeFarProbeCount: Int,
@@ -154,7 +157,8 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
             }
 
             val beforeFarProbeCount = detections.size
-            val useFarProbe = MysteryBoxScanPolicy.shouldRunFarProbe(detections)
+            val useFarProbe =
+                useNearFallback && MysteryBoxScanPolicy.shouldRunFarProbe(detections)
             if (useFarProbe) {
                 val startedAt = System.nanoTime()
                 collectVariants(cropBgr, farProbeVariants, candidates, bestScores, bestScales)
@@ -289,9 +293,9 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
         internal const val NMS_IOU_THRESHOLD = 0.30
         internal const val NMS_SMALLER_OVERLAP_THRESHOLD = 0.30
         internal const val POSITION_CLUSTER_X_FRACTION = 1.00
-        internal const val POSITION_CLUSTER_Y_FRACTION = 0.75
+        internal const val POSITION_CLUSTER_Y_FRACTION = 0.80
         private const val LOCAL_PEAK_SUPPRESSION_X_FRACTION = 1.00
-        private const val LOCAL_PEAK_SUPPRESSION_Y_FRACTION = 0.75
+        private const val LOCAL_PEAK_SUPPRESSION_Y_FRACTION = 0.80
         private const val MAX_BOXES = 4
 
         internal fun suppressOverlaps(candidates: List<BoxDetection>): List<BoxDetection> {
