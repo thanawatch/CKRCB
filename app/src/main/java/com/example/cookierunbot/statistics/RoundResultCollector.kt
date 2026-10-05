@@ -127,6 +127,9 @@ class RoundResultCollector(context: Context) {
                         "fastCandidates=${scan.fastPathCandidateCount} " +
                         "fastAccepted=${scan.fastPathAcceptedCount} " +
                         "usedFallback=${scan.usedFallback} " +
+                        "near=${scan.usedNearFallback} " +
+                        "farProbe=${scan.usedFarProbe} " +
+                        "extreme=${scan.usedExtremeFallback} " +
                         "fastMs=${format(scan.fastPathDurationMs)} " +
                         "fallbackMs=${format(scan.fallbackDurationMs)} " +
                         "totalMs=${format(scan.totalDurationMs)}",
@@ -137,6 +140,34 @@ class RoundResultCollector(context: Context) {
                     "$grade=${score?.let(::format) ?: "none"}@${scale?.let(::format) ?: "none"}"
                 }
                 log("[BOX_SCORE] round=$round phase=1 $scoreSummary")
+                scan.rawCandidates.take(MAX_BOX_CANDIDATE_LOGS).forEachIndexed { index, candidate ->
+                    val selected = detections.contains(candidate)
+                    val clusteredWith = if (selected) null else detections.firstOrNull {
+                        MysteryBoxClassifier.samePhysicalBox(it.rect, candidate.rect)
+                    }
+                    val reason = when {
+                        selected -> "SELECTED"
+                        clusteredWith != null -> "DEDUP"
+                        else -> "LIMIT_OR_LOWER_PRIORITY"
+                    }
+                    log(
+                        "[BOX_CANDIDATE] round=$round rawIndex=${index + 1} " +
+                            "grade=${candidate.grade} score=${format(candidate.score)} " +
+                            "x=${candidate.rect.x} y=${candidate.rect.y} " +
+                            "width=${candidate.rect.width} height=${candidate.rect.height} " +
+                            "selected=$selected reason=$reason" +
+                            (clusteredWith?.let {
+                                " keptGrade=${it.grade} keptScore=${format(it.score)} " +
+                                    "keptX=${it.rect.x} keptY=${it.rect.y}"
+                            } ?: ""),
+                    )
+                }
+                if (scan.rawCandidates.size > MAX_BOX_CANDIDATE_LOGS) {
+                    log(
+                        "[BOX_CANDIDATE] round=$round truncated=true " +
+                            "logged=$MAX_BOX_CANDIDATE_LOGS total=${scan.rawCandidates.size}",
+                    )
+                }
                 log("[BOX_SCAN] round=$round phase=1 candidateCount=${scan.candidateCount} acceptedCount=${detections.size}")
                 detections.forEachIndexed { index, detection ->
                     log(
@@ -189,4 +220,8 @@ class RoundResultCollector(context: Context) {
     }
 
     private fun format(value: Double) = String.format(java.util.Locale.US, "%.4f", value)
+
+    companion object {
+        private const val MAX_BOX_CANDIDATE_LOGS = 32
+    }
 }
