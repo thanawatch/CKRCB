@@ -285,9 +285,9 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
         private const val MAX_LOCAL_CANDIDATES_PER_SCALE = 8
         internal const val NMS_IOU_THRESHOLD = 0.30
         internal const val NMS_SMALLER_OVERLAP_THRESHOLD = 0.30
-        internal const val POSITION_CLUSTER_X_FRACTION = 0.95
+        internal const val POSITION_CLUSTER_X_FRACTION = 1.00
         internal const val POSITION_CLUSTER_Y_FRACTION = 0.75
-        private const val LOCAL_PEAK_SUPPRESSION_X_FRACTION = 0.95
+        private const val LOCAL_PEAK_SUPPRESSION_X_FRACTION = 1.00
         private const val LOCAL_PEAK_SUPPRESSION_Y_FRACTION = 0.75
         private const val MAX_BOXES = 4
 
