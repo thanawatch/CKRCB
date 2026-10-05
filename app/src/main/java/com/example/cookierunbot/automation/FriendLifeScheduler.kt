@@ -123,7 +123,13 @@ class FriendLifeScheduler(private var intervalMs: Long = FRIEND_LIFE_INTERVAL_MS
         inProgress = false
         activeRunStartedAt = 0L
         testPending = false
-        if (scheduledPending) retryNotBefore = nowMs + retryDelayMs
+        if (scheduledPending) {
+            retryNotBefore = nowMs + retryDelayMs
+        } else {
+            retryNotBefore = 0L
+            activeAccumulatedMs = 0L
+            activeBudgetStarted = false
+        }
     }
 
     @Synchronized fun exhaust(trigger: FriendLifeTrigger, endedAtMs: Long) {
