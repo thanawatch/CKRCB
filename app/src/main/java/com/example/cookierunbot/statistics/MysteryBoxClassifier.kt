@@ -296,11 +296,16 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
         internal const val POSITION_CLUSTER_Y_FRACTION = 0.80
         private const val LOCAL_PEAK_SUPPRESSION_X_FRACTION = 1.00
         private const val LOCAL_PEAK_SUPPRESSION_Y_FRACTION = 0.80
+        private const val BRIDGE_SUPPORT_MIN_SCORE = 0.75
+        private const val BRIDGE_SUPPORT_MIN_RELATIVE_SCORE = 0.85
         private const val MAX_BOXES = 4
 
         internal fun suppressOverlaps(candidates: List<BoxDetection>): List<BoxDetection> {
+            val nonBridgeCandidates = candidates.filterNot { candidate ->
+                isBridgeCandidate(candidate, candidates)
+            }
             val accepted = mutableListOf<BoxDetection>()
-            candidates.sortedByDescending { it.score }.forEach { candidate ->
+            nonBridgeCandidates.sortedByDescending { it.score }.forEach { candidate ->
                 if (accepted.size < MAX_BOXES &&
                     accepted.none { samePhysicalBox(it.rect, candidate.rect) }
                 ) {
@@ -309,6 +314,41 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
             }
             return accepted.sortedBy { it.rect.x }
         }
+
+        /**
+         * A shifted peak can land between two real boxes and overlap/cluster with both.
+         * Greedy score-first NMS would let a high-scoring bridge suppress both real boxes.
+         * Reject that bridge only when it has strong support on both horizontal sides and
+         * those two supporting candidates are themselves clearly separate boxes.
+         */
+        internal fun isBridgeCandidate(
+            candidate: BoxDetection,
+            candidates: List<BoxDetection>,
+        ): Boolean {
+            val candidateCenterX = centerX(candidate.rect)
+            val minimumSupportScore = maxOf(
+                BRIDGE_SUPPORT_MIN_SCORE,
+                candidate.score * BRIDGE_SUPPORT_MIN_RELATIVE_SCORE,
+            )
+            val leftSupport = candidates.asSequence()
+                .filter { it !== candidate }
+                .filter { it.score >= minimumSupportScore }
+                .filter { centerX(it.rect) < candidateCenterX }
+                .filter { samePhysicalBox(it.rect, candidate.rect) }
+                .maxByOrNull { it.score }
+            val rightSupport = candidates.asSequence()
+                .filter { it !== candidate }
+                .filter { it.score >= minimumSupportScore }
+                .filter { centerX(it.rect) > candidateCenterX }
+                .filter { samePhysicalBox(it.rect, candidate.rect) }
+                .maxByOrNull { it.score }
+
+            return leftSupport != null &&
+                rightSupport != null &&
+                !samePhysicalBox(leftSupport.rect, rightSupport.rect)
+        }
+
+        private fun centerX(rect: Rect): Double = rect.x + rect.width / 2.0
 
         internal fun samePhysicalBox(first: Rect, second: Rect): Boolean =
             iou(first, second) >= NMS_IOU_THRESHOLD ||
