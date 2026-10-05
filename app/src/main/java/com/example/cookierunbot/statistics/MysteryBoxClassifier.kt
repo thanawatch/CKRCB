@@ -21,6 +21,8 @@ data class BoxScanResult(
     val fastPathDurationMs: Double = 0.0,
     val fallbackDurationMs: Double = 0.0,
     val totalDurationMs: Double = 0.0,
+    val bestScoreByGrade: Map<String, Double> = emptyMap(),
+    val bestScaleByGrade: Map<String, Double> = emptyMap(),
 )
 internal object MysteryBoxPhasePolicy {
     fun shouldClassify(phase: Int): Boolean = phase == 1
@@ -34,7 +36,8 @@ internal object MysteryBoxScanPolicy {
 private data class BoxTemplateVariant(
     val grade: String,
     val scale: Double,
-    val mat: Mat,
+    val bgr: Mat,
+    val alphaMask: Mat,
 )
 
 class MysteryBoxClassifier(context: Context) : AutoCloseable {
@@ -43,25 +46,37 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
             runCatching {
                 context.assets.open("templates/BOX_${grade.uppercase()}.png").use { input ->
                     val bitmap = requireNotNull(BitmapFactory.decodeStream(input))
-                    val base = Mat()
+                    val rgba = Mat()
+                    val baseBgr = Mat()
+                    val baseMask = Mat()
                     try {
-                        Utils.bitmapToMat(bitmap, base)
+                        Utils.bitmapToMat(bitmap, rgba)
+                        Imgproc.cvtColor(rgba, baseBgr, Imgproc.COLOR_RGBA2BGR)
+                        Core.extractChannel(rgba, baseMask, 3)
+                        Imgproc.threshold(baseMask, baseMask, 1.0, 255.0, Imgproc.THRESH_BINARY)
+                        check(Core.countNonZero(baseMask) > 0) {
+                            "Mystery Box alpha mask is empty for grade=$grade"
+                        }
+
                         SCALES.forEach { scale ->
-                            val variant = if (scale == MysteryBoxScanPolicy.FAST_SCALE) {
-                                base.clone()
+                            val variantBgr: Mat
+                            val variantMask: Mat
+                            if (scale == MysteryBoxScanPolicy.FAST_SCALE) {
+                                variantBgr = baseBgr.clone()
+                                variantMask = baseMask.clone()
                             } else {
-                                Mat().also { scaled ->
-                                    Imgproc.resize(
-                                        base,
-                                        scaled,
-                                        Size(base.cols() * scale, base.rows() * scale),
-                                    )
-                                }
+                                variantBgr = Mat()
+                                variantMask = Mat()
+                                val size = Size(baseBgr.cols() * scale, baseBgr.rows() * scale)
+                                Imgproc.resize(baseBgr, variantBgr, size, 0.0, 0.0, Imgproc.INTER_LINEAR)
+                                Imgproc.resize(baseMask, variantMask, size, 0.0, 0.0, Imgproc.INTER_NEAREST)
                             }
-                            add(BoxTemplateVariant(grade, scale, variant))
+                            add(BoxTemplateVariant(grade, scale, variantBgr, variantMask))
                         }
                     } finally {
-                        base.release()
+                        baseMask.release()
+                        baseBgr.release()
+                        rgba.release()
                         bitmap.recycle()
                     }
                 }
@@ -82,13 +97,17 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
         ) {
             return BoxScanResult(0, emptyList())
         }
-        val crop = frame.submat(ROI)
+        val cropRgba = frame.submat(ROI)
+        val cropBgr = Mat()
+        Imgproc.cvtColor(cropRgba, cropBgr, Imgproc.COLOR_RGBA2BGR)
         val totalStartedAt = System.nanoTime()
         return try {
             val candidates = mutableListOf<BoxDetection>()
+            val bestScores = mutableMapOf<String, Double>()
+            val bestScales = mutableMapOf<String, Double>()
 
             val fastStartedAt = System.nanoTime()
-            collectVariants(crop, fastPathVariants, candidates)
+            collectVariants(cropBgr, fastPathVariants, candidates, bestScores, bestScales)
             val fastPathDurationMs = elapsedMs(fastStartedAt)
             val fastPathCandidateCount = candidates.size
             val fastPathDetections = suppressOverlaps(candidates)
@@ -97,7 +116,7 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
             var fallbackDurationMs = 0.0
             val detections = if (useFallback) {
                 val fallbackStartedAt = System.nanoTime()
-                collectVariants(crop, fallbackVariants, candidates)
+                collectVariants(cropBgr, fallbackVariants, candidates, bestScores, bestScales)
                 fallbackDurationMs = elapsedMs(fallbackStartedAt)
                 suppressOverlaps(candidates)
             } else {
@@ -113,18 +132,35 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
                 fastPathDurationMs = fastPathDurationMs,
                 fallbackDurationMs = fallbackDurationMs,
                 totalDurationMs = elapsedMs(totalStartedAt),
+                bestScoreByGrade = bestScores.toMap(),
+                bestScaleByGrade = bestScales.toMap(),
             )
-        } finally { crop.release() }
+        } finally {
+            cropBgr.release()
+            cropRgba.release()
+        }
     }
 
     private fun collectVariants(
-        crop: Mat,
+        cropBgr: Mat,
         variants: List<BoxTemplateVariant>,
         output: MutableList<BoxDetection>,
+        bestScores: MutableMap<String, Double>,
+        bestScales: MutableMap<String, Double>,
     ) {
         variants.forEach { variant ->
-            if (variant.mat.cols() <= crop.cols() && variant.mat.rows() <= crop.rows()) {
-                collectLocalCandidates(crop, variant.mat, variant.grade, output)
+            if (variant.bgr.cols() <= cropBgr.cols() && variant.bgr.rows() <= cropBgr.rows()) {
+                val bestScore = collectLocalCandidates(
+                    cropBgr,
+                    variant.bgr,
+                    variant.alphaMask,
+                    variant.grade,
+                    output,
+                )
+                if (bestScore > (bestScores[variant.grade] ?: Double.NEGATIVE_INFINITY)) {
+                    bestScores[variant.grade] = bestScore
+                    bestScales[variant.grade] = variant.scale
+                }
             }
         }
     }
@@ -132,22 +168,39 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
     private fun elapsedMs(startedAtNanos: Long): Double =
         (System.nanoTime() - startedAtNanos) / 1_000_000.0
 
-    private fun collectLocalCandidates(crop: Mat, template: Mat, grade: String, output: MutableList<BoxDetection>) {
+    private fun collectLocalCandidates(
+        cropBgr: Mat,
+        templateBgr: Mat,
+        alphaMask: Mat,
+        grade: String,
+        output: MutableList<BoxDetection>,
+    ): Double {
         val result = Mat()
+        var bestScore = Double.NEGATIVE_INFINITY
         try {
-            Imgproc.matchTemplate(crop, template, result, Imgproc.TM_CCOEFF_NORMED)
+            Imgproc.matchTemplate(
+                cropBgr,
+                templateBgr,
+                result,
+                Imgproc.TM_SQDIFF_NORMED,
+                alphaMask,
+            )
             repeat(MAX_LOCAL_CANDIDATES_PER_SCALE) {
-                val maximum = Core.minMaxLoc(result)
-                if (maximum.maxVal < MATCH_THRESHOLD) return
-                val x = maximum.maxLoc.x.toInt()
-                val y = maximum.maxLoc.y.toInt()
+                val minimum = Core.minMaxLoc(result)
+                if (!minimum.minVal.isFinite()) return bestScore
+                val score = 1.0 - minimum.minVal.coerceIn(0.0, 1.0)
+                bestScore = maxOf(bestScore, score)
+                if (score < MATCH_THRESHOLD) return bestScore
+
+                val x = minimum.minLoc.x.toInt()
+                val y = minimum.minLoc.y.toInt()
                 output += BoxDetection(
                     grade,
-                    maximum.maxVal,
-                    Rect(ROI.x + x, ROI.y + y, template.cols(), template.rows()),
+                    score,
+                    Rect(ROI.x + x, ROI.y + y, templateBgr.cols(), templateBgr.rows()),
                 )
-                val radiusX = (template.cols() / 2).coerceAtLeast(1)
-                val radiusY = (template.rows() / 2).coerceAtLeast(1)
+                val radiusX = (templateBgr.cols() / 2).coerceAtLeast(1)
+                val radiusY = (templateBgr.rows() / 2).coerceAtLeast(1)
                 Imgproc.rectangle(
                     result,
                     Point((x - radiusX).coerceAtLeast(0).toDouble(), (y - radiusY).coerceAtLeast(0).toDouble()),
@@ -155,14 +208,18 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
                         (x + radiusX).coerceAtMost(result.cols() - 1).toDouble(),
                         (y + radiusY).coerceAtMost(result.rows() - 1).toDouble(),
                     ),
-                    Scalar(-1.0),
+                    Scalar(1.0),
                     Imgproc.FILLED,
                 )
             }
+            return bestScore
         } finally { result.release() }
     }
 
-    override fun close() = templateVariants.forEach { it.mat.release() }
+    override fun close() = templateVariants.forEach {
+        it.alphaMask.release()
+        it.bgr.release()
+    }
 
     companion object {
         internal const val MATCH_THRESHOLD = 0.60
