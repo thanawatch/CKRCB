@@ -86,13 +86,18 @@ internal fun latestRecoverySummary(logText: String): String? =
         ?.take(180)
 
 internal fun formatRoundsReply(stats: SessionStatistics): String {
-    val recent = stats.history.take(5)
+    val recent = stats.history.take(10)
     if (recent.isEmpty()) return "🎮 Recent Rounds\n\nNo completed rounds in this session yet."
     return "🎮 Recent Rounds (latest ${recent.size})\n\n" +
         recent.joinToString("\n\n") { round ->
+            val boxTypes = when {
+                round.boxes.isNotEmpty() -> round.boxes.joinToString()
+                round.boxCount > 0 -> "unknown"
+                else -> "none"
+            }
             "#${round.round}: Coins ${round.coins?.toString() ?: "unknown"}, " +
                 "XP ${round.xp?.toString() ?: "unknown"}\n" +
-                "Boxes ${round.boxCount}, Duration " +
+                "Boxes: ${round.boxCount} | Types: $boxTypes | Duration: " +
                 (round.durationMs?.let(::formatDuration) ?: "unknown")
         }
 }
