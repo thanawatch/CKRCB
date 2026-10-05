@@ -37,6 +37,76 @@ class ActionExecutor(private val context: Context? = null) {
         onGestureCompleted,
     )
 
+    fun tapManaged(
+        actionName: String,
+        point: LogicalPoint,
+        sourceWidth: Int,
+        sourceHeight: Int,
+        jitter: Int,
+        callbackTimeoutMs: Long,
+        onGestureCompleted: (success: Boolean, timedOut: Boolean) -> Unit,
+    ): ActionResult {
+        val logicalX = point.x + Random.nextInt(-jitter, jitter + 1)
+        val logicalY = point.y + Random.nextInt(-jitter, jitter + 1)
+        val actionRequestedAtNanos = SystemClock.elapsedRealtimeNanos()
+        Log.i(CookieRunBotApplication.TAG, "[ACTION] ${actionName} action started (managed)")
+        Log.i(CookieRunBotApplication.TAG, "[ACTION] base=(${point.x},${point.y}) jitter=±${jitter}")
+        if (!logActionReadiness(actionName)) {
+            return ActionResult(
+                actionName,
+                false,
+                logicalX,
+                logicalY,
+                null,
+                actionRequestedAtNanos,
+                SystemClock.elapsedRealtimeNanos(),
+            )
+        }
+        val lease = GestureArbiter.acquire(GesturePriority.NORMAL)
+            ?: return ActionResult(
+                actionName,
+                false,
+                logicalX,
+                logicalY,
+                null,
+                actionRequestedAtNanos,
+                SystemClock.elapsedRealtimeNanos(),
+            )
+        val completion = GestureCompletionContext(
+            lease,
+            callbackTimeoutMs,
+        ) { _, success, timedOut -> onGestureCompleted(success, timedOut) }
+        completion.armTimeout(actionName)
+        val dispatch = try {
+            BotAccessibilityService.dispatchLogicalTap(
+                logicalX = logicalX,
+                logicalY = logicalY,
+                sourceWidth = sourceWidth,
+                sourceHeight = sourceHeight,
+                logPrefix = "[ACTION]",
+                calibratedCoordinates = false,
+                onCompleted = { completedAtNanos, success ->
+                    completion.complete(completedAtNanos, success)
+                },
+            ).also {
+                if (!it.accepted) completion.cancel()
+            }
+        } catch (error: Exception) {
+            completion.cancel()
+            throw error
+        }
+        return ActionResult(
+            actionName = actionName,
+            accepted = dispatch.accepted,
+            logicalX = logicalX,
+            logicalY = logicalY,
+            physical = dispatch.physical,
+            actionRequestedAtNanos = actionRequestedAtNanos,
+            gestureDispatchedAtNanos = dispatch.dispatchedAtNanos,
+            pendingGesture = completion,
+        )
+    }
+
     fun swipeLogical(
         actionName: String,
         start: LogicalPoint,
