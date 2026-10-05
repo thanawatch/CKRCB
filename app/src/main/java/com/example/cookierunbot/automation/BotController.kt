@@ -2796,10 +2796,12 @@ class BotController(
             return
         }
 
-        // Preserve the original statistics behavior: phase 1 classification uses the
-        // same frame that produced the MYSTERY_BOX stage detection.
-        if (MysteryBoxPhasePolicy.shouldClassify(phase)) {
-            roundResultCollector.classifyMysteryBoxes(roundNumber, detectedFrame)
+        val shouldClassifyBoxes = MysteryBoxPhasePolicy.shouldClassify(phase)
+        if (shouldClassifyBoxes) {
+            logDiagnostic(
+                "[BOX_SCAN_DEFERRED] round=${roundNumber} phase=${phase} " +
+                    "reason=WAIT_FOR_REVALIDATED_FRAME detectedFrameGeneration=${detectedFrameGeneration}",
+            )
         } else {
             logDiagnostic(
                 "[BOX_SCAN_SKIPPED] round=${roundNumber} phase=${phase} " +
@@ -2818,7 +2820,17 @@ class BotController(
             return
         }
         val verifiedGeneration = verifiedFrame.generation
-        verifiedFrame.mat.release()
+        try {
+            if (shouldClassifyBoxes) {
+                logDiagnostic(
+                    "[BOX_SCAN_FRAME] round=${roundNumber} phase=${phase} " +
+                        "source=REVALIDATED frameGeneration=${verifiedGeneration}",
+                )
+                roundResultCollector.classifyMysteryBoxes(roundNumber, verifiedFrame.mat)
+            }
+        } finally {
+            verifiedFrame.mat.release()
+        }
         val dispatchGeneration = refreshMysteryBoxDispatchGeneration(
             detector,
             phase,
