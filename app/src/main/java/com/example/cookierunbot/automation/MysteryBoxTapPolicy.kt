@@ -26,6 +26,9 @@ internal object MysteryBoxTapPolicy {
     fun requiredFreshFrames(phase: Int): Int =
         if (phase == MAX_PHASE) FINAL_PHASE_REQUIRED_FRESH_FRAMES else 1
 
+    fun shouldCommitAcceptedGesture(success: Boolean, timedOut: Boolean): Boolean =
+        success || timedOut
+
     fun frameDecision(
         mysteryBoxMatched: Boolean,
         mainMenuMatched: Boolean,
