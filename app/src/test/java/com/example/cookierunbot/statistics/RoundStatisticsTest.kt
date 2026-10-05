@@ -303,12 +303,29 @@ class RoundStatisticsTest {
                 ),
             ),
         )
-        assertTrue(
+        assertFalse(
             MysteryBoxScanPolicy.shouldRunNearFallback(
                 listOf(
                     detection("wood", .95, 100),
                     detection("silver", .94, 300),
                     detection("rainbow", .92, 700),
+                ),
+            ),
+        )
+        assertTrue(
+            MysteryBoxScanPolicy.shouldRunNearFallback(
+                listOf(
+                    detection("wood", .95, 100),
+                    detection("silver", .70, 300),
+                    detection("rainbow", .92, 700),
+                ),
+            ),
+        )
+        assertTrue(
+            MysteryBoxScanPolicy.shouldRunNearFallback(
+                listOf(
+                    detection("wood", .95, 100),
+                    detection("silver", .94, 300),
                 ),
             ),
         )
