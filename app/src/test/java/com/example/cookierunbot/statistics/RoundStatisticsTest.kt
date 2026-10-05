@@ -234,6 +234,18 @@ class RoundStatisticsTest {
         assertEquals(listOf("silver", "gold"), selected.map { it.grade })
     }
 
+    @Test fun threePhysicalBoxesIgnoreDuplicateMiddlePeak() {
+        val selected = MysteryBoxClassifier.suppressOverlaps(
+            listOf(
+                BoxDetection("wood", .96, Rect(235, 280, 169, 152)),
+                BoxDetection("silver", .95, Rect(550, 310, 169, 152)),
+                BoxDetection("silver", .82, Rect(695, 310, 169, 152)),
+                BoxDetection("rainbow", .94, Rect(875, 280, 175, 150)),
+            ),
+        )
+        assertEquals(listOf("wood", "silver", "rainbow"), selected.map { it.grade })
+    }
+
     @Test fun nmsLimitsOutputToFourBoxes() {
         val selected = MysteryBoxClassifier.suppressOverlaps(
             (0..5).map { detection("wood", .99 - it * .01, it * 140) },
