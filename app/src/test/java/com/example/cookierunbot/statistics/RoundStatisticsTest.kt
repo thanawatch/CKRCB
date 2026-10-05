@@ -267,6 +267,15 @@ class RoundStatisticsTest {
         )
     }
 
+    @Test fun verticalDuplicateGapFromLogIsCollapsed() {
+        assertTrue(
+            MysteryBoxClassifier.samePhysicalBox(
+                Rect(564, 358, 169, 152),
+                Rect(566, 243, 169, 152),
+            ),
+        )
+    }
+
     @Test fun nmsLimitsOutputToFourBoxes() {
         val selected = MysteryBoxClassifier.suppressOverlaps(
             (0..5).map { detection("wood", .99 - it * .01, it * 140) },
@@ -340,11 +349,20 @@ class RoundStatisticsTest {
                 ),
             ),
         )
-        assertTrue(
+        assertFalse(
             MysteryBoxScanPolicy.shouldRunFarProbe(
                 listOf(
                     detection("wood", .95, 100),
                     detection("silver", .94, 300),
+                    detection("rainbow", .92, 700),
+                ),
+            ),
+        )
+        assertTrue(
+            MysteryBoxScanPolicy.shouldRunFarProbe(
+                listOf(
+                    detection("wood", .95, 100),
+                    detection("silver", .70, 300),
                     detection("rainbow", .92, 700),
                 ),
             ),
