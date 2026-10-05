@@ -29,6 +29,11 @@ internal object MysteryBoxTapPolicy {
     fun shouldCommitAcceptedGesture(success: Boolean, timedOut: Boolean): Boolean =
         success || timedOut
 
+    fun dispatchFrameAllowsTap(
+        mysteryBoxMatched: Boolean,
+        mainMenuMatched: Boolean,
+    ): Boolean = mysteryBoxMatched && !mainMenuMatched
+
     fun frameDecision(
         mysteryBoxMatched: Boolean,
         mainMenuMatched: Boolean,
