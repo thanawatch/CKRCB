@@ -119,13 +119,26 @@ class TelegramDashboardTest {
         assertTrue(reply.contains("Last progress: none"))
     }
 
-    @Test fun roundsKeepsOnlyLatestFiveAndPreservesUnknownValues() {
-        val rounds = (1..6).reversed().map { number ->
-            RoundResult(number, 0L, 5_000L, coins = if (number == 6) null else 10,
-                xp = 20, boxCount = 1)
+    @Test fun roundsKeepsLatestTenAndShowsBoxTypesWithoutInventingMissingTypes() {
+        val rounds = (1..11).reversed().map { number ->
+            RoundResult(
+                number, 0L, 5_000L,
+                coins = if (number == 11) null else 10,
+                xp = 20,
+                boxes = when (number) {
+                    11 -> listOf("wood", "silver")
+                    10 -> emptyList()
+                    else -> listOf("gold")
+                },
+                boxCount = if (number == 11) 2 else 1,
+            )
         }
         val reply = formatRoundsReply(stats(rounds))
-        assertTrue(reply.contains("#6: Coins unknown"))
+        assertTrue(reply.contains("Recent Rounds (latest 10)"))
+        assertTrue(reply.contains("#11: Coins unknown"))
+        assertTrue(reply.contains("Boxes: 2 | Types: wood, silver"))
+        assertTrue(reply.contains("#10: Coins 10"))
+        assertTrue(reply.contains("Boxes: 1 | Types: unknown"))
         assertTrue(reply.contains("#2:"))
         assertFalse(reply.contains("#1:"))
         assertTrue(formatRoundsReply(stats(emptyList())).contains("No completed rounds"))
