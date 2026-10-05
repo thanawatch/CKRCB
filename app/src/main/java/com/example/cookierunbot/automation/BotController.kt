@@ -2819,18 +2819,22 @@ class BotController(
         }
         val verifiedGeneration = verifiedFrame.generation
         verifiedFrame.mat.release()
+        val dispatchGeneration = refreshMysteryBoxDispatchGeneration(
+            detector,
+            phase,
+            verifiedGeneration,
+        ) ?: run {
+            lastStage = null
+            return
+        }
 
         val gestureOutcome =
             java.util.concurrent.atomic.AtomicReference<Pair<Boolean, Boolean>?>(null)
-        var newerFrameBeforeDispatch = false
         logBotActionRequest("MYSTERY_BOX_${phase}")
         val action = synchronized(lock) {
-            newerFrameBeforeDispatch =
-                LatestFrameProvider.currentGeneration() != verifiedGeneration
             if (!canDispatchActionLocked() ||
-                newerFrameBeforeDispatch ||
                 PopupFreshFramePolicy.blocks(
-                    verifiedGeneration,
+                    dispatchGeneration,
                     minimumFreshFrameGeneration,
                 )
             ) {
@@ -2858,8 +2862,7 @@ class BotController(
         if (!action.accepted) {
             logDiagnostic(
                 "[MYSTERY_BOX_GESTURE] phase=${phase} dispatchAccepted=false " +
-                    "reason=${if (newerFrameBeforeDispatch) "newer_frame_before_dispatch" else "dispatch_rejected"} " +
-                    "action=REDETECT",
+                    "reason=dispatch_rejected action=REDETECT",
             )
             synchronized(lock) {
                 minimumFreshFrameGeneration =
@@ -2920,6 +2923,43 @@ class BotController(
         }
         // Phase 3 is terminal. A timeout is treated as consumed once dispatch was
         // accepted so an uncertain late callback can never produce MYSTERY_BOX_4.
+    }
+
+    private fun refreshMysteryBoxDispatchGeneration(
+        detector: StateDetector,
+        phase: Int,
+        verifiedGeneration: Long,
+    ): Long? {
+        var acceptedGeneration = verifiedGeneration
+        repeat(2) {
+            val latest = LatestFrameProvider.snapshot() ?: return acceptedGeneration
+            try {
+                if (latest.generation <= acceptedGeneration) return acceptedGeneration
+                val mainMenu = detector.detect(BotStage.MAINMENU, latest.mat)
+                val mysteryBox = detector.detect(BotStage.MYSTERY_BOX, latest.mat)
+                val allowed = MysteryBoxTapPolicy.dispatchFrameAllowsTap(
+                    mysteryBoxMatched = mysteryBox.matched,
+                    mainMenuMatched = mainMenu.matched,
+                )
+                logDiagnostic(
+                    "[MYSTERY_BOX_DISPATCH_GATE] phase=${phase} " +
+                        "frameGeneration=${latest.generation} mysteryMatched=${mysteryBox.matched} " +
+                        "mysteryScore=${format(mysteryBox.score)} mainMenuMatched=${mainMenu.matched} " +
+                        "mainMenuScore=${format(mainMenu.score)} allowed=${allowed}",
+                )
+                if (!allowed) {
+                    logDiagnostic(
+                        "[MYSTERY_BOX_DISPATCH_GATE] phase=${phase} action=SKIP " +
+                            "reason=latest_frame_not_safe",
+                    )
+                    return null
+                }
+                acceptedGeneration = latest.generation
+            } finally {
+                latest.mat.release()
+            }
+        }
+        return acceptedGeneration
     }
 
     private fun revalidateMysteryBoxBeforeTap(
