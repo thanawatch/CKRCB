@@ -199,8 +199,13 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
                     score,
                     Rect(ROI.x + x, ROI.y + y, templateBgr.cols(), templateBgr.rows()),
                 )
-                val radiusX = (templateBgr.cols() / 2).coerceAtLeast(1)
-                val radiusY = (templateBgr.rows() / 2).coerceAtLeast(1)
+                // Suppress almost one whole box around the winning peak. The masked matcher
+                // can produce secondary peaks from the same physical box well beyond half a
+                // template width, especially on cloud-rendered frames.
+                val radiusX =
+                    (templateBgr.cols() * LOCAL_PEAK_SUPPRESSION_X_FRACTION).toInt().coerceAtLeast(1)
+                val radiusY =
+                    (templateBgr.rows() * LOCAL_PEAK_SUPPRESSION_Y_FRACTION).toInt().coerceAtLeast(1)
                 Imgproc.rectangle(
                     result,
                     Point((x - radiusX).coerceAtLeast(0).toDouble(), (y - radiusY).coerceAtLeast(0).toDouble()),
@@ -228,6 +233,10 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
         private const val MAX_LOCAL_CANDIDATES_PER_SCALE = 8
         internal const val NMS_IOU_THRESHOLD = 0.30
         internal const val NMS_SMALLER_OVERLAP_THRESHOLD = 0.30
+        internal const val POSITION_CLUSTER_X_FRACTION = 0.95
+        internal const val POSITION_CLUSTER_Y_FRACTION = 0.75
+        private const val LOCAL_PEAK_SUPPRESSION_X_FRACTION = 0.95
+        private const val LOCAL_PEAK_SUPPRESSION_Y_FRACTION = 0.75
         private const val MAX_BOXES = 4
 
         internal fun suppressOverlaps(candidates: List<BoxDetection>): List<BoxDetection> {
@@ -244,7 +253,28 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
 
         internal fun samePhysicalBox(first: Rect, second: Rect): Boolean =
             iou(first, second) >= NMS_IOU_THRESHOLD ||
-                overlapOverSmallerArea(first, second) >= NMS_SMALLER_OVERLAP_THRESHOLD
+                overlapOverSmallerArea(first, second) >= NMS_SMALLER_OVERLAP_THRESHOLD ||
+                centersBelongToSamePositionCluster(first, second)
+
+        /**
+         * Position-aware de-duplication for shifted peaks from one physical box.
+         * Thresholds are relative to the smaller candidate so the rule stays stable
+         * across the existing 0.95..1.15 scale variants. Two distinct non-overlapping
+         * boxes remain separate because their centers are at least roughly one box
+         * width apart.
+         */
+        internal fun centersBelongToSamePositionCluster(first: Rect, second: Rect): Boolean {
+            val firstCenterX = first.x + first.width / 2.0
+            val firstCenterY = first.y + first.height / 2.0
+            val secondCenterX = second.x + second.width / 2.0
+            val secondCenterY = second.y + second.height / 2.0
+            val maxCenterDx =
+                minOf(first.width, second.width) * POSITION_CLUSTER_X_FRACTION
+            val maxCenterDy =
+                minOf(first.height, second.height) * POSITION_CLUSTER_Y_FRACTION
+            return kotlin.math.abs(firstCenterX - secondCenterX) <= maxCenterDx &&
+                kotlin.math.abs(firstCenterY - secondCenterY) <= maxCenterDy
+        }
 
         private fun overlapOverSmallerArea(first: Rect, second: Rect): Double {
             val intersection = intersectionArea(first, second)
