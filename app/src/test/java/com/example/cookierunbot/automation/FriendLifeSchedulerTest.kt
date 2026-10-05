@@ -215,6 +215,75 @@ class FriendLifeSchedulerTest {
         )
     }
 
+    @Test fun testOnlyFailureAfterSendClearsBudgetBeforeNextManualTest() {
+        val scheduler = FriendLifeScheduler()
+        scheduler.start(false, 0L)
+        assertEquals(FriendLifeTestRequest.QUEUED, scheduler.requestTest(true))
+
+        val firstStart = 1_000L
+        assertEquals(FriendLifeTrigger.TEST, scheduler.beginIfReady(firstStart))
+        assertTrue(scheduler.markFirstSend(firstStart + 2_000L))
+        val failedAt = firstStart + 12_000L
+        assertEquals(10_000L, scheduler.activeElapsedMs(failedAt))
+        scheduler.fail(failedAt, 5 * 60_000L)
+
+        assertEquals(0L, scheduler.activeElapsedMs(failedAt + 60_000L))
+        assertFalse(scheduler.testPending())
+        assertEquals(FriendLifeTestRequest.QUEUED, scheduler.requestTest(true))
+
+        val secondStart = failedAt + 60_000L
+        assertEquals(FriendLifeTrigger.TEST, scheduler.beginIfReady(secondStart))
+        assertEquals(0L, scheduler.activeElapsedMs(secondStart + 20_000L))
+        assertTrue(scheduler.markFirstSend(secondStart + 20_000L))
+        assertEquals(0L, scheduler.activeElapsedMs(secondStart + 20_000L))
+    }
+
+    @Test fun successfulSendGestureStartsBudgetAndWatchdogProgressTogether() {
+        val scheduler = FriendLifeScheduler()
+        scheduler.start(false, 0L)
+        assertEquals(FriendLifeTestRequest.QUEUED, scheduler.requestTest(true))
+        assertEquals(FriendLifeTrigger.TEST, scheduler.beginIfReady(1_000L))
+
+        val update = applyFriendSendTapProgress(
+            scheduler = scheduler,
+            step = "SEND_BUTTON",
+            gestureSucceeded = true,
+            nowMs = 5_000L,
+        )
+
+        assertEquals(GameProgressReason.FRIEND_SEND_LIFE_TAP, update.gameProgressReason)
+        assertTrue(update.budgetStarted)
+        assertEquals(0L, scheduler.activeElapsedMs(5_000L))
+        assertEquals(1_000L, scheduler.activeElapsedMs(6_000L))
+    }
+
+    @Test fun failedOrNonSendGestureDoesNotStartBudgetOrWatchdogProgress() {
+        val scheduler = FriendLifeScheduler()
+        scheduler.start(false, 0L)
+        assertEquals(FriendLifeTestRequest.QUEUED, scheduler.requestTest(true))
+        assertEquals(FriendLifeTrigger.TEST, scheduler.beginIfReady(1_000L))
+
+        val failedSend = applyFriendSendTapProgress(
+            scheduler = scheduler,
+            step = "SEND_BUTTON",
+            gestureSucceeded = false,
+            nowMs = 5_000L,
+        )
+        assertNull(failedSend.gameProgressReason)
+        assertFalse(failedSend.budgetStarted)
+        assertEquals(0L, scheduler.activeElapsedMs(10_000L))
+
+        val confirm = applyFriendSendTapProgress(
+            scheduler = scheduler,
+            step = "CONFIRM_1",
+            gestureSucceeded = true,
+            nowMs = 10_000L,
+        )
+        assertNull(confirm.gameProgressReason)
+        assertFalse(confirm.budgetStarted)
+        assertEquals(0L, scheduler.activeElapsedMs(20_000L))
+    }
+
     @Test fun traversalDoesNotFinishUntilBottomIsVisible() {
         assertEquals(
             FriendLifeTraversalDecision.SCROLL_DOWN,
