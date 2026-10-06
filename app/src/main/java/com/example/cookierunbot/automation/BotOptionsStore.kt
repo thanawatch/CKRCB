@@ -97,10 +97,20 @@ object BotOptionsStore {
     }
 
     /** Image settings can be changed in the overlay without restarting the bot. */
-    fun saveImageOptions(context: Context, saveDebugImages: Boolean, saveResultImages: Boolean) {
+    fun saveImageOptions(
+        context: Context,
+        saveDebugImages: Boolean,
+        saveResultImages: Boolean,
+        saveAndSendAntiBotImages: Boolean? = null,
+    ) {
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit()
             .putBoolean("save_debug_images", saveDebugImages)
             .putBoolean("save_result_images", saveResultImages)
+            .apply {
+                saveAndSendAntiBotImages?.let {
+                    putBoolean("anti_bot_image_telegram", it)
+                }
+            }
             .apply()
     }
 
@@ -111,6 +121,10 @@ object BotOptionsStore {
     fun shouldSaveResultImages(context: Context): Boolean =
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
             .getBoolean("save_result_images", true)
+
+    fun shouldSaveAndSendAntiBotImages(context: Context): Boolean =
+        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+            .getBoolean("anti_bot_image_telegram", false)
 
     private inline fun <reified T : Enum<T>> enumValueOrDefault(value: String?, default: T): T =
         value?.let { runCatching { enumValueOf<T>(it) }.getOrNull() } ?: default
