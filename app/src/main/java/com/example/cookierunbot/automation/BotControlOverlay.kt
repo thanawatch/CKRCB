@@ -278,10 +278,16 @@ class BotControlOverlay(private val context: Context) {
             options.saveAndSendAntiBotImages,
         )
         val saveImageOptions = android.widget.CompoundButton.OnCheckedChangeListener { _, _ ->
-            BotOptionsStore.saveImageOptions(context, saveDebugImages.isChecked, saveResultImages.isChecked)
+            BotOptionsStore.saveImageOptions(
+                context,
+                saveDebugImages.isChecked,
+                saveResultImages.isChecked,
+                antiBotTelegramImages.isChecked,
+            )
         }
         saveDebugImages.setOnCheckedChangeListener(saveImageOptions)
         saveResultImages.setOnCheckedChangeListener(saveImageOptions)
+        antiBotTelegramImages.setOnCheckedChangeListener(saveImageOptions)
 
         panel.addView(TextView(context).apply {
             text = "Jump mode (both off = no jump)"
