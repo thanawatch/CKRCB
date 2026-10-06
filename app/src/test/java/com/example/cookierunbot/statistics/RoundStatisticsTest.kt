@@ -132,19 +132,88 @@ class RoundStatisticsTest {
         val generation = RoundResultStore.startNewSession()
         assertTrue(RoundResultStore.recordAntiBotDetected(generation, 31, listOf(2, 6), 1_000L))
         val detected = RoundResultStore.snapshot()
+        assertEquals(1, detected.antiBotChallengeCount)
         assertEquals(1, detected.antiBotDetectedCount)
         assertEquals(2, detected.antiBotSelectedTapCount)
+        assertEquals(1, detected.antiBotHistory.single().challengeIndex)
+        assertEquals(1, detected.antiBotHistory.single().testIndexInChallenge)
         assertEquals(listOf(2, 6), detected.antiBotHistory.single().selectedCards)
 
         assertTrue(RoundResultStore.recordAntiBotSuccessfulTap(generation, 1, 2))
         assertTrue(RoundResultStore.recordAntiBotSuccessfulTap(generation, 1, 6))
         val completed = RoundResultStore.snapshot()
         assertEquals(2, completed.antiBotSuccessfulTapCount)
+        assertEquals(1, completed.antiBotCompletedTestCount)
         assertEquals(listOf(2, 6), completed.antiBotHistory.single().successfulCards)
 
         // A duplicate callback for the same card is ignored.
         assertTrue(RoundResultStore.recordAntiBotSuccessfulTap(generation, 1, 6))
         assertEquals(2, RoundResultStore.snapshot().antiBotSuccessfulTapCount)
+    }
+
+    @Test fun antiBotChallengeGroupingUsesThreeTestsAndTimeGap() {
+        val generation = RoundResultStore.startNewSession()
+        RoundResultStore.recordAntiBotDetected(generation, 31, listOf(1, 2), 1_000L)
+        RoundResultStore.recordAntiBotDetected(generation, 31, listOf(3, 4), 31_000L)
+        RoundResultStore.recordAntiBotDetected(generation, 31, listOf(5, 6), 61_000L)
+        RoundResultStore.recordAntiBotDetected(generation, 32, listOf(1, 4), 91_000L)
+        val grouped = RoundResultStore.snapshot()
+        assertEquals(2, grouped.antiBotChallengeCount)
+        assertEquals(listOf(2, 1, 1, 1), grouped.antiBotHistory.map { it.challengeIndex })
+        assertEquals(listOf(1, 3, 2, 1), grouped.antiBotHistory.map { it.testIndexInChallenge })
+
+        RoundResultStore.startNewSession()
+        val second = RoundResultStore.currentGeneration()
+        RoundResultStore.recordAntiBotDetected(second, 40, listOf(1, 2), 1_000L)
+        RoundResultStore.recordAntiBotDetected(second, 40, listOf(3, 4), 122_001L)
+        val gap = RoundResultStore.snapshot()
+        assertEquals(2, gap.antiBotChallengeCount)
+        assertEquals(listOf(2, 1), gap.antiBotHistory.map { it.challengeIndex })
+    }
+
+    @Test fun antiBotChallengeCompletesOnlyAfterAllThreeTestsComplete() {
+        val generation = RoundResultStore.startNewSession()
+        (1..3).forEach { test ->
+            RoundResultStore.recordAntiBotDetected(
+                generation,
+                round = 31,
+                selectedCards = listOf(1, 2),
+                detectedAt = test * 30_000L,
+            )
+            val detection = RoundResultStore.snapshot().antiBotHistory.first().detectionIndex
+            RoundResultStore.recordAntiBotSuccessfulTap(generation, detection, 1)
+            RoundResultStore.recordAntiBotSuccessfulTap(generation, detection, 2)
+        }
+        val snapshot = RoundResultStore.snapshot()
+        assertEquals(1, snapshot.antiBotChallengeCount)
+        assertEquals(1, snapshot.antiBotCompletedChallengeCount)
+        assertEquals(3, snapshot.antiBotCompletedTestCount)
+    }
+
+    @Test fun antiBotEvidenceIsGenerationScopedAndResetsWithSession() {
+        val first = RoundResultStore.startNewSession()
+        assertTrue(
+            RoundResultStore.recordAntiBotEvidence(
+                first, 1, AntiBotEvidenceStatus.SENT, attempt = 2,
+            ),
+        )
+        assertEquals(AntiBotEvidenceStatus.SENT, RoundResultStore.snapshot().antiBotLatestEvidence?.status)
+        val second = RoundResultStore.startNewSession()
+        assertNull(RoundResultStore.snapshot().antiBotLatestEvidence)
+        assertFalse(
+            RoundResultStore.recordAntiBotEvidence(
+                first, 1, AntiBotEvidenceStatus.SEND_FAILED, attempt = 3,
+            ),
+        )
+        assertTrue(
+            RoundResultStore.recordAntiBotEvidence(
+                second, 1, AntiBotEvidenceStatus.ENCODE_FAILED,
+            ),
+        )
+        assertEquals(
+            AntiBotEvidenceStatus.ENCODE_FAILED,
+            RoundResultStore.snapshot().antiBotLatestEvidence?.status,
+        )
     }
 
     @Test fun antiBotHistoryKeepsLatestThirtyButTotalsCoverWholeSession() {
@@ -153,6 +222,7 @@ class RoundStatisticsTest {
             RoundResultStore.recordAntiBotDetected(generation, round, listOf(1, 4), round.toLong())
         }
         val snapshot = RoundResultStore.snapshot()
+        assertEquals(12, snapshot.antiBotChallengeCount)
         assertEquals(35, snapshot.antiBotDetectedCount)
         assertEquals(70, snapshot.antiBotSelectedTapCount)
         assertEquals(30, snapshot.antiBotHistory.size)
