@@ -244,7 +244,9 @@ internal fun formatStatsReply(stats: com.example.cookierunbot.statistics.Session
     return "📊 RobotRun Session\n\nRuntime: ${formatDuration(stats.sessionRuntimeMs)}\nRounds: ${stats.rounds}\n\n" +
         "Coins: ${stats.totalCoins.formatNumber()}\nXP: ${stats.totalXp.formatNumber()}\n\n" +
         "Mystery Boxes: ${stats.totalBoxes}\nWood: ${stats.woodBoxes}\nSilver: ${stats.silverBoxes}\n" +
-        "Gold: ${stats.goldBoxes}\nRainbow: ${stats.rainbowBoxes}"
+        "Gold: ${stats.goldBoxes}\nRainbow: ${stats.rainbowBoxes}\n\n" +
+        "Anti-bot detected: ${stats.antiBotDetectedCount}\n" +
+        "Anti-bot successful taps: ${stats.antiBotSuccessfulTapCount}"
 }
 
 internal fun formatLastRoundReply(result: RoundResult?): String {
