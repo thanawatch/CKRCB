@@ -235,8 +235,8 @@ class RoundStatisticsTest {
 
     @Test fun antiBotHistoryKeepsLatestThirtyButTotalsCoverWholeSession() {
         val generation = RoundResultStore.startNewSession()
-        (1..35).forEach { round ->
-            RoundResultStore.recordAntiBotDetected(generation, round, listOf(1, 4), round.toLong())
+        (1..35).forEach { index ->
+            RoundResultStore.recordAntiBotDetected(generation, 31, listOf(1, 4), index.toLong())
         }
         val snapshot = RoundResultStore.snapshot()
         assertEquals(12, snapshot.antiBotChallengeCount)
