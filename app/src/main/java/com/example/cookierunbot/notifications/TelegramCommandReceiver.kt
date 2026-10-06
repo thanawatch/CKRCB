@@ -206,9 +206,8 @@ internal fun telegramCommandReply(command: String): String? = when (command) {
     "/antibot" -> formatAntiBotReply(
         RoundResultStore.snapshot(),
         TelegramCommandReceiver.commandContext()?.let {
-            BotOptionsStore.shouldSaveAndSendAntiBotImages(it)
+            BotOptionsStore.shouldSendAntiBotImagesToTelegram(it)
         } == true,
-        latestAntiBotEvidenceStatus(DebugLogStore.snapshot().text),
     )
     "/dashboard" -> "🤖 RobotRun Dashboard\n\nTap a button below. 📊 All shows stats, status and last round; 🤖 Anti Bot shows Anti-bot totals and recent card history; 📥 Download Logs sends a private ZIP; 📦 Update App checks the feed and sends a verified newer APK."
     else -> null
@@ -255,7 +254,8 @@ internal fun formatStatsReply(stats: com.example.cookierunbot.statistics.Session
         "Coins: ${stats.totalCoins.formatNumber()}\nXP: ${stats.totalXp.formatNumber()}\n\n" +
         "Mystery Boxes: ${stats.totalBoxes}\nWood: ${stats.woodBoxes}\nSilver: ${stats.silverBoxes}\n" +
         "Gold: ${stats.goldBoxes}\nRainbow: ${stats.rainbowBoxes}\n\n" +
-        "Anti-bot detected: ${stats.antiBotDetectedCount}\n" +
+        "Anti-bot challenges: ${stats.antiBotChallengeCount}\n" +
+        "Anti-bot tests: ${stats.antiBotDetectedCount}\n" +
         "Anti-bot successful taps: ${stats.antiBotSuccessfulTapCount}"
 }
 
