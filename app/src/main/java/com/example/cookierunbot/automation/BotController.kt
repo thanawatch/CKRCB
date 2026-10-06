@@ -38,6 +38,8 @@ private const val PROGRESS_RECOVERY_GESTURE_TIMEOUT_MS = 3_000L
 private const val PROGRESS_RECOVERY_FRAME_TIMEOUT_MS = 2_500L
 private const val PROGRESS_RECOVERY_MAINMENU_LOG_INTERVAL_MS = 5_000L
 private const val FAST_START_GESTURE_CALLBACK_WAIT_MS = 500L
+private const val FAST_START_GESTURE_RELEASE_WAIT_MS = 250L
+private const val FAST_START_GESTURE_RELEASE_POLL_MS = 10L
 
 enum class DetectionGroup { PRE_GAME, IN_GAME, POST_GAME }
 
@@ -2634,9 +2636,13 @@ class BotController(
             )
             if (!accepted) return
             // Start jumping as soon as the Fast Start tap releases the gesture lease.
-            // The bounded fallback preserves the previous dispatch-accepted behavior
-            // if Android never delivers a gesture callback.
-            completion.await(FAST_START_GESTURE_CALLBACK_WAIT_MS, TimeUnit.MILLISECONDS)
+            // If Android drops the callback, actively observe the arbiter so its stale
+            // lease can expire before the first BACKGROUND jump is attempted.
+            if (!awaitFastStartGestureRelease(completion)) {
+                logDiagnostic(
+                    "[FAST_START] callbackTimeout=true gestureBusy=true action=DEFER_AUTO_JUMP",
+                )
+            }
         }
         synchronized(lock) {
             if (!canDispatchActionLocked()) return
@@ -2644,9 +2650,26 @@ class BotController(
             gameStartDetectedForRound = true
             fastStartPollDeadlineNanos = 0L
             Log.i(CookieRunBotApplication.TAG, "[AUTO TAP] Trigger: GAME_START")
-            autoTapper.start()
+            if (!actionExecutor.isActionInProgress()) {
+                autoTapper.start()
+            } else {
+                logDiagnostic("[AUTO TAP] Deferred: critical gesture still active")
+            }
         }
         updateGroup(DetectionGroup.IN_GAME)
+    }
+
+    private fun awaitFastStartGestureRelease(completion: CountDownLatch): Boolean {
+        if (completion.await(FAST_START_GESTURE_CALLBACK_WAIT_MS, TimeUnit.MILLISECONDS)) {
+            return !actionExecutor.isActionInProgress()
+        }
+        val deadline = SystemClock.elapsedRealtime() + FAST_START_GESTURE_RELEASE_WAIT_MS
+        while (actionExecutor.isActionInProgress()) {
+            if (!isRunning()) throw InterruptedException()
+            if (SystemClock.elapsedRealtime() >= deadline) return false
+            Thread.sleep(FAST_START_GESTURE_RELEASE_POLL_MS)
+        }
+        return true
     }
 
     private fun handleGameRelay(
