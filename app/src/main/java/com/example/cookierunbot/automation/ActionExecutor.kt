@@ -200,6 +200,7 @@ class ActionExecutor(private val context: Context? = null) {
         point: LogicalPoint,
         sourceWidth: Int,
         sourceHeight: Int,
+        onGestureCompleted: ((completedAtNanos: Long, success: Boolean) -> Unit)? = null,
     ): ActionResult = executeTap(
         actionName,
         point.x,
@@ -209,7 +210,7 @@ class ActionExecutor(private val context: Context? = null) {
         sourceHeight,
         actionName,
         GesturePriority.NORMAL,
-        null,
+        onGestureCompleted,
         calibratedCoordinates = false,
     )
 
