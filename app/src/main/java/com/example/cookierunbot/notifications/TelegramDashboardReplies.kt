@@ -109,6 +109,7 @@ internal fun formatAntiBotReply(
             AntiBotEvidenceStatus.QUEUE_FAILED -> "Telegram queue FAILED"
             AntiBotEvidenceStatus.SEND_FAILED -> "Telegram FAILED"
             AntiBotEvidenceStatus.CONFIG_CHANGED -> "cancelled: Telegram config changed"
+            AntiBotEvidenceStatus.DELIVERY_DISABLED -> "cancelled: image toggle off"
             AntiBotEvidenceStatus.TELEGRAM_DISABLED -> "Telegram disabled"
             AntiBotEvidenceStatus.INVALID_CONFIG -> "Telegram config invalid"
         }
