@@ -6,6 +6,7 @@ import com.example.cookierunbot.automation.GameProgressStatus
 import com.example.cookierunbot.automation.formatDuration
 import com.example.cookierunbot.capture.Diagnostics
 import com.example.cookierunbot.statistics.SessionStatistics
+import com.example.cookierunbot.statistics.AntiBotEvidenceStatus
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -90,7 +91,6 @@ internal fun latestRecoverySummary(logText: String): String? =
 internal fun formatAntiBotReply(
     stats: SessionStatistics,
     imageDeliveryEnabled: Boolean,
-    latestEvidenceStatus: String? = null,
 ): String {
     val selected = stats.antiBotSelectedTapCount
     val successful = stats.antiBotSuccessfulTapCount
@@ -100,6 +100,22 @@ internal fun formatAntiBotReply(
     } else {
         String.format(Locale.US, "%.1f%%", successful * 100.0 / selected)
     }
+    val evidence = stats.antiBotLatestEvidence?.let { item ->
+        val label = when (item.status) {
+            AntiBotEvidenceStatus.QUEUED -> "queued"
+            AntiBotEvidenceStatus.RETRYING -> "retrying"
+            AntiBotEvidenceStatus.SENT -> "Telegram sent"
+            AntiBotEvidenceStatus.ENCODE_FAILED -> "PNG encode FAILED"
+            AntiBotEvidenceStatus.QUEUE_FAILED -> "Telegram queue FAILED"
+            AntiBotEvidenceStatus.SEND_FAILED -> "Telegram FAILED"
+            AntiBotEvidenceStatus.CONFIG_CHANGED -> "cancelled: Telegram config changed"
+            AntiBotEvidenceStatus.TELEGRAM_DISABLED -> "Telegram disabled"
+            AntiBotEvidenceStatus.INVALID_CONFIG -> "Telegram config invalid"
+        }
+        val attempt = item.attempt.takeIf { it > 0 }?.let { " (attempt $it)" }.orEmpty()
+        "#${item.detectionIndex}: $label$attempt"
+    } ?: "none yet"
+
     val recent = stats.antiBotHistory.take(10)
     val history = if (recent.isEmpty()) {
         "No Anti-bot detections in this session yet."
@@ -109,34 +125,26 @@ internal fun formatAntiBotReply(
             val cards = event.selectedCards.joinToString(", ").ifBlank { "none" }
             val successfulCards = event.successfulCards.sorted()
             val successfulText = successfulCards.joinToString(", ").ifBlank { "none" }
-            "#${event.detectionIndex} • Round ${event.round} • " +
+            "#${event.detectionIndex} • Challenge ${event.challengeIndex} " +
+                "Test ${event.testIndexInChallenge}/3 • Round ${event.round} • " +
                 timeFormat.format(Date(event.detectedAt)) + "\n" +
                 "Cards: $cards | Successful: ${successfulCards.size}/${event.selectedCards.size} " +
                 "($successfulText)"
         }
     }
     return "🤖 Anti Bot\n\n" +
-        "Detected screens: ${stats.antiBotDetectedCount}\n" +
+        "Challenges: ${stats.antiBotChallengeCount}\n" +
+        "Challenges completed: ${stats.antiBotCompletedChallengeCount}\n" +
+        "Tests detected: ${stats.antiBotDetectedCount}\n" +
+        "Tests completed: ${stats.antiBotCompletedTestCount}\n" +
         "Selected card taps: $selected\n" +
         "Successful taps: $successful/$selected\n" +
         "Failed/pending taps: $unresolved\n" +
         "Success rate: $successRate\n" +
         "Telegram image delivery: ${if (imageDeliveryEnabled) "ON" else "OFF"}\n" +
-        "Latest evidence: ${latestEvidenceStatus ?: "none yet"}\n\n" +
+        "Latest evidence: $evidence\n\n" +
         "Recent history (latest ${recent.size}, up to 30 retained):\n$history"
 }
-
-internal fun latestAntiBotEvidenceStatus(logText: String): String? =
-    logText.lineSequence()
-        .lastOrNull { "[TELEGRAM_ANTI_BOT]" in it }
-        ?.let { line ->
-            when {
-                "success=true" in line -> "Telegram sent"
-                "success=false" in line -> "Telegram FAILED"
-                "queued=false" in line -> "Telegram not queued"
-                else -> null
-            }
-        }
 
 internal fun formatRoundsReply(stats: SessionStatistics): String {
     val recent = stats.history.take(10)
