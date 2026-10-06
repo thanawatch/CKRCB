@@ -21,6 +21,8 @@ import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.statistics.RoundResultCollector
 import com.example.cookierunbot.statistics.RoundResultStore
 import com.example.cookierunbot.statistics.MysteryBoxPhasePolicy
+import com.example.cookierunbot.notifications.TelegramNotifier
+import com.example.cookierunbot.notifications.TelegramScreenshotEncoder
 import org.opencv.core.Mat
 import org.opencv.core.Rect
 import org.opencv.imgproc.Imgproc
@@ -64,6 +66,7 @@ class BotController(
     private val autoTapper = GameAutoTapper(actionExecutor)
     private val autoSlider = GameAutoSlider(actionExecutor)
     private val resultSaver = ResultImageSaver(context.applicationContext)
+    private val telegramNotifier = TelegramNotifier(context.applicationContext)
     private val noMatchDebugFrameSaver = NoMatchDebugFrameSaver(context.applicationContext)
     private val noMatchWatchdog = NoMatchWatchdog()
     private val diagnosticExecutor = Executors.newSingleThreadExecutor { runnable ->
@@ -3125,7 +3128,13 @@ class BotController(
             LogicalPoint(346, 435), LogicalPoint(542, 435), LogicalPoint(738, 435),
         )
         val odd = detector.detectAntiBotOddCards(frame)
-        Log.i(CookieRunBotApplication.TAG, "[RECOVERY] Anti-bot odd cards=${odd.map { it + 1 }}")
+        val selectedCards = odd.map { it + 1 }
+        Log.i(CookieRunBotApplication.TAG, "[RECOVERY] Anti-bot odd cards=$selectedCards")
+        enqueueAntiBotEvidence(
+            frame,
+            selectedCards,
+            RoundResultStore.snapshot().antiBotDetectedCount,
+        )
         for (index in odd) {
             val origin = cards[index]
             val target = LogicalPoint(
@@ -3150,6 +3159,61 @@ class BotController(
         }
         delayOrStop(randomMs(800, 1400))
         lastStage = null
+    }
+
+    private fun enqueueAntiBotEvidence(
+        frame: Mat,
+        selectedCards: List<Int>,
+        detectionCount: Int,
+    ) {
+        if (!options.saveAndSendAntiBotImages) return
+        val ownedFrame = frame.clone()
+        val capturedRound = roundNumber
+        val filename = "anti_bot_round_${capturedRound.toString().padStart(4, '0')}_detection_$detectionCount.png"
+        val caption = "🤖 Anti-bot detected\n" +
+            "Round: $capturedRound\n" +
+            "Detection: $detectionCount\n" +
+            "Cards selected: ${selectedCards.joinToString(", ")}"
+        try {
+            diagnosticExecutor.execute {
+                try {
+                    val savedPath = runCatching {
+                        resultSaver.save(ownedFrame, capturedRound, "anti_bot")
+                    }.onFailure { error ->
+                        logDiagnostic(
+                            "[ANTI_BOT_EVIDENCE] saveSuccess=false " +
+                                "type=${error.javaClass.simpleName}",
+                        )
+                    }.getOrNull()
+
+                    val png = runCatching {
+                        TelegramScreenshotEncoder.encodeNormalizedPng(ownedFrame)
+                    }.onFailure { error ->
+                        logDiagnostic(
+                            "[ANTI_BOT_EVIDENCE] encodeSuccess=false " +
+                                "type=${error.javaClass.simpleName}",
+                        )
+                    }.getOrNull()
+
+                    val telegramQueued = png?.let {
+                        telegramNotifier.notifyAntiBotImage(it, filename, caption)
+                    } ?: false
+                    logDiagnostic(
+                        "[ANTI_BOT_EVIDENCE] saveSuccess=${savedPath != null} " +
+                            "telegramQueued=$telegramQueued round=$capturedRound " +
+                            "detection=$detectionCount cards=$selectedCards " +
+                            "savedPath=${savedPath ?: "none"}",
+                    )
+                } finally {
+                    ownedFrame.release()
+                }
+            }
+        } catch (error: Exception) {
+            ownedFrame.release()
+            logDiagnostic(
+                "[ANTI_BOT_EVIDENCE] queueSuccess=false type=${error.javaClass.simpleName}",
+            )
+        }
     }
 
     private fun handleMainMenuFriendLife(
