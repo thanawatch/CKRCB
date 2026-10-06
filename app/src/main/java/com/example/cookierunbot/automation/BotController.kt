@@ -3244,6 +3244,9 @@ class BotController(
                         png,
                         filename,
                         caption,
+                        isStillEnabled = {
+                            BotOptionsStore.shouldSendAntiBotImagesToTelegram(context)
+                        },
                         onRetry = { nextAttempt ->
                             RoundResultStore.recordAntiBotEvidence(
                                 statisticsGeneration,
@@ -3256,6 +3259,7 @@ class BotController(
                         val status = when {
                             result.success -> AntiBotEvidenceStatus.SENT
                             result.reason == "config_changed" -> AntiBotEvidenceStatus.CONFIG_CHANGED
+                            result.reason == "feature_disabled" -> AntiBotEvidenceStatus.DELIVERY_DISABLED
                             result.reason == "telegram_disabled" -> AntiBotEvidenceStatus.TELEGRAM_DISABLED
                             result.reason == "invalid_config" -> AntiBotEvidenceStatus.INVALID_CONFIG
                             result.reason.startsWith("queue_rejected:") -> AntiBotEvidenceStatus.QUEUE_FAILED
