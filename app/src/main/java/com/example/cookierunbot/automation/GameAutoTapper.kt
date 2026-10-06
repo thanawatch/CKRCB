@@ -74,7 +74,7 @@ class GameAutoTapper(private val actionExecutor: ActionExecutor) {
                 Log.i(CookieRunBotApplication.TAG, "[AUTO TAP] Jump by Count started")
                 repeat(local.fixedJumpCount) {
                     if (stopRequested.get()) return
-                    tapRandomJump()
+                    tapRandomJumpUntilAccepted(local.tapIntervalMs.toLong())
                     sleepCancellable(local.tapIntervalMs.toLong())
                 }
                 synchronized(lock) { finishedForRound = true }
@@ -83,7 +83,7 @@ class GameAutoTapper(private val actionExecutor: ActionExecutor) {
             } else {
                 Log.i(CookieRunBotApplication.TAG, "[AUTO TAP] Auto Jump started")
                 while (!stopRequested.get()) {
-                    tapRandomJump()
+                    tapRandomJumpUntilAccepted(local.tapIntervalMs.toLong())
                     sleepCancellable(local.tapIntervalMs.toLong())
                 }
             }
@@ -98,9 +98,21 @@ class GameAutoTapper(private val actionExecutor: ActionExecutor) {
         }
     }
 
-    private fun tapRandomJump() {
+    private fun tapRandomJumpUntilAccepted(notReadyRetryMs: Long) {
+        while (!stopRequested.get()) {
+            if (tapRandomJump()) return
+            val retryMs = if (BotAccessibilityService.isConnected()) {
+                AUTO_ACTION_BUSY_RETRY_MS
+            } else {
+                notReadyRetryMs
+            }
+            sleepCancellable(retryMs)
+        }
+    }
+
+    private fun tapRandomJump(): Boolean {
         val (width, height) = synchronized(lock) { sourceWidth to sourceHeight }
-        if (width <= 0 || height <= 0 || !BotAccessibilityService.isConnected()) return
+        if (width <= 0 || height <= 0 || !BotAccessibilityService.isConnected()) return false
         val cropScale = com.example.cookierunbot.capture.FrameNormalizer
             .cropRect(width, height).width.toDouble() /
             com.example.cookierunbot.capture.FrameNormalizer.LOGICAL_WIDTH
@@ -113,17 +125,21 @@ class GameAutoTapper(private val actionExecutor: ActionExecutor) {
         )
         // Background jumps never wait in front of a state-transition gesture.
         // If a critical GAME_START/GAME_RELAY action is pending, this tap is skipped.
-        actionExecutor.tapCalibrated(
+        return actionExecutor.tapCalibrated(
             "AUTO_JUMP",
             point,
             width,
             height,
             priority = GesturePriority.BACKGROUND,
-        )
+        ).accepted
     }
 
     private fun sleepCancellable(ms: Long) {
         if (stopRequested.get()) throw InterruptedException()
         Thread.sleep(ms)
+    }
+
+    companion object {
+        private const val AUTO_ACTION_BUSY_RETRY_MS = 25L
     }
 }
