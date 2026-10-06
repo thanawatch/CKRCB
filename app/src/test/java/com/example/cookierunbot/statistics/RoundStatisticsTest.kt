@@ -184,10 +184,16 @@ class RoundStatisticsTest {
             RoundResultStore.recordAntiBotSuccessfulTap(generation, detection, 1)
             RoundResultStore.recordAntiBotSuccessfulTap(generation, detection, 2)
         }
-        val snapshot = RoundResultStore.snapshot()
-        assertEquals(1, snapshot.antiBotChallengeCount)
-        assertEquals(1, snapshot.antiBotCompletedChallengeCount)
-        assertEquals(3, snapshot.antiBotCompletedTestCount)
+        val beforeExit = RoundResultStore.snapshot()
+        assertEquals(1, beforeExit.antiBotChallengeCount)
+        assertEquals(0, beforeExit.antiBotCompletedChallengeCount)
+        assertEquals(3, beforeExit.antiBotCompletedTestCount)
+
+        assertTrue(RoundResultStore.recordAntiBotExited(generation))
+        val afterExit = RoundResultStore.snapshot()
+        assertEquals(1, afterExit.antiBotCompletedChallengeCount)
+        assertFalse(RoundResultStore.recordAntiBotExited(generation))
+        assertEquals(1, RoundResultStore.snapshot().antiBotCompletedChallengeCount)
     }
 
     @Test fun antiBotEvidenceIsGenerationScopedAndResetsWithSession() {
