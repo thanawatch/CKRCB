@@ -531,6 +531,7 @@ class TelegramNotifier(context: Context) {
         normalizedPng: ByteArray,
         filename: String,
         caption: String,
+        isStillEnabled: () -> Boolean = { true },
         onRetry: (nextAttempt: Int) -> Unit = {},
         callback: (TelegramSendResult) -> Unit = {},
     ): Boolean {
@@ -555,6 +556,7 @@ class TelegramNotifier(context: Context) {
             caption = caption,
             attempt = 1,
             delayMs = 0L,
+            isStillEnabled = isStillEnabled,
             onRetry = onRetry,
             callback = callback,
         )
@@ -567,11 +569,21 @@ class TelegramNotifier(context: Context) {
         caption: String,
         attempt: Int,
         delayMs: Long,
+        isStillEnabled: () -> Boolean,
         onRetry: (nextAttempt: Int) -> Unit,
         callback: (TelegramSendResult) -> Unit,
     ): Boolean {
         return try {
             executor.schedule({
+                if (!runCatching { isStillEnabled() }.getOrDefault(false)) {
+                    val result = TelegramSendResult(false, "feature_disabled", attempt = attempt)
+                    log(
+                        "[TELEGRAM_ANTI_BOT] success=false reason=feature_disabled " +
+                            "attempt=$attempt/$TELEGRAM_ANTI_BOT_MAX_ATTEMPTS",
+                    )
+                    runCatching { callback(result) }
+                    return@schedule
+                }
                 val currentConfig = TelegramConfigStore.load(appContext)
                 if (!target.matches(currentConfig)) {
                     val result = TelegramSendResult(false, "config_changed", attempt = attempt)
@@ -608,6 +620,7 @@ class TelegramNotifier(context: Context) {
                         caption,
                         retryDecision.nextAttempt,
                         retryDecision.delayMs,
+                        isStillEnabled,
                         onRetry,
                         callback,
                     )
