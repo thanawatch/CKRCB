@@ -121,22 +121,13 @@ internal fun formatAntiBotReply(
         "Successful taps: $successful/$selected\n" +
         "Failed/pending taps: $unresolved\n" +
         "Success rate: $successRate\n" +
-        "Evidence image + Telegram: ${if (imageDeliveryEnabled) "ON" else "OFF"}\n" +
+        "Telegram image delivery: ${if (imageDeliveryEnabled) "ON" else "OFF"}\n" +
         "Latest evidence: ${latestEvidenceStatus ?: "none yet"}\n\n" +
         "Recent history (latest ${recent.size}, up to 30 retained):\n$history"
 }
 
-internal fun latestAntiBotEvidenceStatus(logText: String): String? {
-    val local = logText.lineSequence()
-        .lastOrNull { "[ANTI_BOT_EVIDENCE]" in it && "saveSuccess=" in it }
-        ?.let { line ->
-            when {
-                "saveSuccess=true" in line -> "local save OK"
-                "saveSuccess=false" in line -> "local save FAILED"
-                else -> null
-            }
-        }
-    val telegram = logText.lineSequence()
+internal fun latestAntiBotEvidenceStatus(logText: String): String? =
+    logText.lineSequence()
         .lastOrNull { "[TELEGRAM_ANTI_BOT]" in it }
         ?.let { line ->
             when {
@@ -146,8 +137,6 @@ internal fun latestAntiBotEvidenceStatus(logText: String): String? {
                 else -> null
             }
         }
-    return listOfNotNull(local, telegram).takeIf { it.isNotEmpty() }?.joinToString(" | ")
-}
 
 internal fun formatRoundsReply(stats: SessionStatistics): String {
     val recent = stats.history.take(10)
