@@ -61,6 +61,7 @@ class BotController(
     private val progressRecoveryGate = ProgressRecoveryGate()
     private val actionExecutor = ActionExecutor(context.applicationContext)
     private val autoTapper = GameAutoTapper(actionExecutor)
+    private val autoSlider = GameAutoSlider(actionExecutor)
     private val resultSaver = ResultImageSaver(context.applicationContext)
     private val noMatchDebugFrameSaver = NoMatchDebugFrameSaver(context.applicationContext)
     private val noMatchWatchdog = NoMatchWatchdog()
@@ -362,6 +363,7 @@ class BotController(
         stoppedStuckSendLifeGesture?.cancel()
         stoppedRecoveryGesture?.cancel()
         autoTapper.stop("BOT_EXIT")
+        autoSlider.stop("BOT_EXIT")
         friendLifeScheduler.stop()
         GameProgressWatchdogManager.stop(stoppedRun.generation)
         if (friendLifeWorkflowActive) {
@@ -719,6 +721,7 @@ class BotController(
         postGestureDelayMs: Long = 0L,
     ): ProgressRecoveryFreshFrame? {
         autoTapper.stop(actionName)
+        autoSlider.stop(actionName)
         val completion = CountDownLatch(1)
         val gestureSucceeded = AtomicBoolean(false)
         val action = dispatchProgressRecoveryTap(
@@ -1080,6 +1083,7 @@ class BotController(
                 currentHandler = "DETECTION"
             }
             autoTapper.updateDisplay(frame.sourceWidth, frame.sourceHeight)
+            autoSlider.updateDisplay(frame.sourceWidth, frame.sourceHeight)
             logDetectorFrame(frame)
             if (synchronized(lock) { progressRecoveryGate.isActive() }) return
             if (handleStuckSendLifeFollowUpCheck(detector, frame)) return
@@ -1266,6 +1270,7 @@ class BotController(
                     synchronized(lock) {
                         if (!progressRecoveryGate.isActive() && !actionExecutor.isActionInProgress()) {
                             autoTapper.start()
+                            autoSlider.start()
                         }
                     }
                 }
@@ -2514,6 +2519,7 @@ class BotController(
                 mysteryBoxImageSaved = false
                 mysteryBoxCount = 0
                 autoTapper.resetForRound(options, sourceWidth, sourceHeight)
+                autoSlider.resetForRound(options, sourceWidth, sourceHeight)
                 roundResultCollector.beginRound(roundNumber)
                 if (options.useFastStart) {
                     // Preserve the short GAME_START priority window after Play.
@@ -2654,8 +2660,9 @@ class BotController(
             Log.i(CookieRunBotApplication.TAG, "[AUTO TAP] Trigger: GAME_START")
             if (!actionExecutor.isActionInProgress()) {
                 autoTapper.start()
+                autoSlider.start()
             } else {
-                logDiagnostic("[AUTO TAP] Deferred: critical gesture still active")
+                logDiagnostic("[AUTO INPUT] Deferred: critical gesture still active")
             }
         }
         updateGroup(DetectionGroup.IN_GAME)
@@ -2753,6 +2760,7 @@ class BotController(
     ) {
         flushFastStartAttemptMetrics("ROUND_ENDED")
         autoTapper.stop("GAME_COMPLETE")
+        autoSlider.stop("GAME_COMPLETE")
         Log.i(CookieRunBotApplication.TAG, "[RESULT] GAME_COMPLETE detected")
         if (!gameCompleteImageSaved) {
             val waitMs = randomMs(9000, 11000)
@@ -3090,6 +3098,7 @@ class BotController(
 
     private fun handleConnectionLost(sourceWidth: Int, sourceHeight: Int) {
         autoTapper.stop("CONNECTION_LOST")
+        autoSlider.stop("CONNECTION_LOST")
         performTap("CONNECTION_LOST_RELOAD", AutomationConfig.RELOAD, sourceWidth, sourceHeight)
         delayOrStop(randomMs(3000, 5000))
         lastStage = null
