@@ -47,7 +47,7 @@ data class BotOptions(
         require(quickLivesIntervalMinutes in QUICK_LIVES_MIN_INTERVAL_MINUTES..QUICK_LIVES_MAX_INTERVAL_MINUTES) {
             "Receive/Send Lives interval must be 1-1440 minutes"
         }
-        require(tapIntervalMs in 100..1000) { "Jump interval must be 100-1000 ms" }
+        require(tapIntervalMs in 100..1000) { "Tap interval must be 100-1000 ms" }
         require(jumpMode != JumpMode.FIXED_COUNT || fixedJumpCount > 0) {
             "Fixed jump count must be positive"
         }
