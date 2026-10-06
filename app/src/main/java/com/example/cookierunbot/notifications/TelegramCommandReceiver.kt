@@ -6,6 +6,7 @@ import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.automation.BotRuntime
 import com.example.cookierunbot.automation.BotAccessibilityService
 import com.example.cookierunbot.automation.GameProgressWatchdogManager
+import com.example.cookierunbot.automation.BotOptionsStore
 import com.example.cookierunbot.automation.formatDuration
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.capture.LatestFrameProvider
@@ -151,7 +152,8 @@ internal fun parseTelegramCommand(text: String): String? {
     if (command == "/start" || command == "/menu") return "/dashboard"
     return command.takeIf {
         it in setOf("/help", "/status", "/stats", "/last", "/boxes", "/all",
-            "/friend", "/health", "/screen", "/watchdog", "/rounds", "/errors", "/dashboard", "/update", "/logs")
+            "/friend", "/health", "/screen", "/watchdog", "/rounds", "/errors", "/antibot",
+            "/dashboard", "/update", "/logs")
     }
 }
 
@@ -177,6 +179,7 @@ internal fun telegramCommandReply(command: String): String? = when (command) {
         "/friend - Friend Life schedule and progress\n/health - Capture, accessibility and worker\n" +
         "/screen - Current normalized screenshot\n/watchdog - Watchdog and recovery state\n" +
         "/rounds - Last ten rounds with box types\n/errors - Recent local error summary\n" +
+        "/antibot - Anti-bot totals, success and recent card history\n" +
         "/logs - Download private 10-hour diagnostic ZIP\n" +
         "/dashboard - Show the one-tap button dashboard\n/update - Check and send a verified newer APK\n" +
         "/status - Bot status\n/stats - Current session totals\n" +
@@ -200,7 +203,13 @@ internal fun telegramCommandReply(command: String): String? = when (command) {
     )
     "/rounds" -> formatRoundsReply(RoundResultStore.snapshot())
     "/errors" -> formatErrorsReply(DebugLogStore.snapshot().text)
-    "/dashboard" -> "🤖 RobotRun Dashboard\n\nTap a button below. 📊 All shows stats, status and last round; 📥 Download Logs sends a private ZIP; 📦 Update App checks the feed and sends a verified newer APK."
+    "/antibot" -> formatAntiBotReply(
+        RoundResultStore.snapshot(),
+        TelegramCommandReceiver.commandContext()?.let {
+            BotOptionsStore.shouldSaveAndSendAntiBotImages(it)
+        } == true,
+    )
+    "/dashboard" -> "🤖 RobotRun Dashboard\n\nTap a button below. 📊 All shows stats, status and last round; 🤖 Anti Bot shows Anti-bot totals and recent card history; 📥 Download Logs sends a private ZIP; 📦 Update App checks the feed and sends a verified newer APK."
     else -> null
 }
 
