@@ -1429,6 +1429,17 @@ class BotController(
         ) return
         detectionActionFrameGeneration.set(frameGeneration)
         try {
+        if (result.state != BotStage.ANTI_BOT) {
+            val generation = RoundResultStore.currentGeneration()
+            if (RoundResultStore.recordAntiBotExited(generation)) {
+                val stats = RoundResultStore.snapshot()
+                logDiagnostic(
+                    "[ANTI_BOT_STATS] challengeExitConfirmed=true " +
+                        "completedChallenges=${stats.antiBotCompletedChallengeCount} " +
+                        "nextState=${result.state.name}",
+                )
+            }
+        }
         when (result.state) {
             BotStage.MAINMENU -> handleMainMenu(detector, sourceWidth, sourceHeight)
             BotStage.PURCHASE_ITEM -> handlePurchaseItem(detector, sourceWidth, sourceHeight)
