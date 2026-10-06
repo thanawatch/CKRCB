@@ -217,6 +217,19 @@ class TelegramDashboardTest {
             imageDeliveryEnabled = true,
         )
         assertTrue(changed.contains("cancelled: Telegram config changed"))
+
+        val toggleOff = formatAntiBotReply(
+            stats(emptyList()).copy(
+                antiBotLatestEvidence = com.example.cookierunbot.statistics.AntiBotEvidence(
+                    3,
+                    com.example.cookierunbot.statistics.AntiBotEvidenceStatus.DELIVERY_DISABLED,
+                    attempt = 2,
+                ),
+            ),
+            imageDeliveryEnabled = false,
+        )
+        assertTrue(toggleOff.contains("Telegram image delivery: OFF"))
+        assertTrue(toggleOff.contains("cancelled: image toggle off"))
     }
 
     @Test fun errorSummaryOnlyReturnsWhitelistedEventsAndAtMostFive() {
