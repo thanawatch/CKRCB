@@ -113,21 +113,27 @@ class GameAutoSlider(private val actionExecutor: ActionExecutor) {
     private fun tapRandomSlide(): Boolean {
         val (width, height) = synchronized(lock) { sourceWidth to sourceHeight }
         if (width <= 0 || height <= 0 || !BotAccessibilityService.isConnected()) return false
-        val cropScale = com.example.cookierunbot.capture.FrameNormalizer
-            .cropRect(width, height).width.toDouble() /
+        val contentRect = com.example.cookierunbot.capture.ContentGeometryRegistry
+            .current(width, height)
+            ?.contentRect
+            ?: com.example.cookierunbot.capture.FrameNormalizer
+                .contentTransform(width, height)
+                .contentRect
+        val contentScale = contentRect.width.toDouble() /
             com.example.cookierunbot.capture.FrameNormalizer.LOGICAL_WIDTH
-        val canonicalRadius = AutomationConfig.AUTO_SLIDE_PHONE_RADIUS / cropScale
+        val canonicalRadius = AutomationConfig.AUTO_SLIDE_PHONE_RADIUS / contentScale
         val angle = Random.nextDouble(0.0, 2.0 * PI)
         val distance = canonicalRadius * sqrt(Random.nextDouble())
         val point = LogicalPoint(
             AutomationConfig.AUTO_SLIDE.x + (distance * cos(angle)).roundToInt(),
             AutomationConfig.AUTO_SLIDE.y + (distance * sin(angle)).roundToInt(),
         )
-        return actionExecutor.tapCalibrated(
+        return actionExecutor.tap(
             "AUTO_SLIDE",
             point,
             width,
             height,
+            jitter = 0,
             priority = GesturePriority.BACKGROUND,
         ).accepted
     }
