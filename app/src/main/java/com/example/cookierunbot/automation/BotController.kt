@@ -3196,15 +3196,6 @@ class BotController(
         try {
             diagnosticExecutor.execute {
                 try {
-                    val savedPath = runCatching {
-                        resultSaver.save(ownedFrame, capturedRound, "anti_bot")
-                    }.onFailure { error ->
-                        logDiagnostic(
-                            "[ANTI_BOT_EVIDENCE] saveSuccess=false " +
-                                "type=${error.javaClass.simpleName}",
-                        )
-                    }.getOrNull()
-
                     val png = runCatching {
                         TelegramScreenshotEncoder.encodeNormalizedPng(ownedFrame)
                     }.onFailure { error ->
@@ -3218,10 +3209,9 @@ class BotController(
                         telegramNotifier.notifyAntiBotImage(it, filename, caption)
                     } ?: false
                     logDiagnostic(
-                        "[ANTI_BOT_EVIDENCE] saveSuccess=${savedPath != null} " +
-                            "telegramQueued=$telegramQueued round=$capturedRound " +
-                            "detection=$detectionCount cards=$selectedCards " +
-                            "savedPath=${savedPath ?: "none"}",
+                        "[ANTI_BOT_EVIDENCE] telegramQueued=$telegramQueued " +
+                            "round=$capturedRound detection=$detectionCount " +
+                            "cards=$selectedCards localSave=false",
                     )
                 } finally {
                     ownedFrame.release()
