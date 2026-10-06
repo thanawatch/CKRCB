@@ -20,6 +20,7 @@ import com.example.cookierunbot.diagnostics.PersistentTrace
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.statistics.RoundResultCollector
 import com.example.cookierunbot.statistics.RoundResultStore
+import com.example.cookierunbot.statistics.AntiBotEvidenceStatus
 import com.example.cookierunbot.statistics.MysteryBoxPhasePolicy
 import com.example.cookierunbot.notifications.TelegramNotifier
 import com.example.cookierunbot.notifications.TelegramScreenshotEncoder
@@ -3128,22 +3129,28 @@ class BotController(
             selectedCards = selectedCards,
         )
         val statsAfterDetection = RoundResultStore.snapshot()
-        val detectionIndex = if (detectionRecorded) {
-            statsAfterDetection.antiBotHistory.firstOrNull()?.detectionIndex
-                ?: statsAfterDetection.antiBotDetectedCount
-        } else {
-            0
-        }
-        if (detectionRecorded) {
+        val event = if (detectionRecorded) statsAfterDetection.antiBotHistory.firstOrNull() else null
+        val detectionIndex = event?.detectionIndex ?: 0
+        if (event != null) {
             logDiagnostic(
-                "[ANTI_BOT_STATS] detected=${statsAfterDetection.antiBotDetectedCount} " +
+                "[ANTI_BOT_STATS] challenges=${statsAfterDetection.antiBotChallengeCount} " +
+                    "completedChallenges=${statsAfterDetection.antiBotCompletedChallengeCount} " +
+                    "tests=${statsAfterDetection.antiBotDetectedCount} " +
+                    "completedTests=${statsAfterDetection.antiBotCompletedTestCount} " +
                     "selectedTaps=${statsAfterDetection.antiBotSelectedTapCount} " +
                     "successfulTaps=${statsAfterDetection.antiBotSuccessfulTapCount}",
             )
         }
         Log.i(CookieRunBotApplication.TAG, "[RECOVERY] Anti-bot odd cards=$selectedCards")
-        if (detectionRecorded) {
-            enqueueAntiBotEvidence(frame, selectedCards, detectionIndex)
+        if (event != null) {
+            enqueueAntiBotEvidence(
+                frame = frame,
+                selectedCards = selectedCards,
+                detectionIndex = event.detectionIndex,
+                challengeIndex = event.challengeIndex,
+                testIndexInChallenge = event.testIndexInChallenge,
+                statisticsGeneration = statisticsGeneration,
+            )
         }
         for (index in odd) {
             val cardNumber = index + 1
@@ -3168,7 +3175,10 @@ class BotController(
                 ) {
                     val stats = RoundResultStore.snapshot()
                     logDiagnostic(
-                        "[ANTI_BOT_STATS] detected=${stats.antiBotDetectedCount} " +
+                        "[ANTI_BOT_STATS] challenges=${stats.antiBotChallengeCount} " +
+                            "completedChallenges=${stats.antiBotCompletedChallengeCount} " +
+                            "tests=${stats.antiBotDetectedCount} " +
+                            "completedTests=${stats.antiBotCompletedTestCount} " +
                             "selectedTaps=${stats.antiBotSelectedTapCount} " +
                             "successfulTaps=${stats.antiBotSuccessfulTapCount}",
                     )
@@ -3183,15 +3193,19 @@ class BotController(
     private fun enqueueAntiBotEvidence(
         frame: Mat,
         selectedCards: List<Int>,
-        detectionCount: Int,
+        detectionIndex: Int,
+        challengeIndex: Int,
+        testIndexInChallenge: Int,
+        statisticsGeneration: Long,
     ) {
-        if (!BotOptionsStore.shouldSaveAndSendAntiBotImages(context)) return
+        if (!BotOptionsStore.shouldSendAntiBotImagesToTelegram(context)) return
         val ownedFrame = frame.clone()
         val capturedRound = roundNumber
-        val filename = "anti_bot_round_${capturedRound.toString().padStart(4, '0')}_detection_$detectionCount.png"
+        val filename = "anti_bot_round_${capturedRound.toString().padStart(4, '0')}_detection_$detectionIndex.png"
         val caption = "🤖 Anti-bot detected\n" +
             "Round: $capturedRound\n" +
-            "Detection: $detectionCount\n" +
+            "Challenge: $challengeIndex | Test: $testIndexInChallenge/3\n" +
+            "Detection: $detectionIndex\n" +
             "Cards selected: ${selectedCards.joinToString(", ")}"
         try {
             diagnosticExecutor.execute {
@@ -3199,18 +3213,46 @@ class BotController(
                     val png = runCatching {
                         TelegramScreenshotEncoder.encodeNormalizedPng(ownedFrame)
                     }.onFailure { error ->
+                        RoundResultStore.recordAntiBotEvidence(
+                            statisticsGeneration,
+                            detectionIndex,
+                            AntiBotEvidenceStatus.ENCODE_FAILED,
+                        )
                         logDiagnostic(
                             "[ANTI_BOT_EVIDENCE] encodeSuccess=false " +
-                                "type=${error.javaClass.simpleName}",
+                                "detection=$detectionIndex type=${error.javaClass.simpleName}",
                         )
-                    }.getOrNull()
+                    }.getOrNull() ?: return@execute
 
-                    val telegramQueued = png?.let {
-                        telegramNotifier.notifyAntiBotImage(it, filename, caption)
-                    } ?: false
+                    RoundResultStore.recordAntiBotEvidence(
+                        statisticsGeneration,
+                        detectionIndex,
+                        AntiBotEvidenceStatus.QUEUED,
+                    )
+                    val telegramQueued = telegramNotifier.notifyAntiBotImage(
+                        png,
+                        filename,
+                        caption,
+                    ) { result ->
+                        val status = when {
+                            result.success -> AntiBotEvidenceStatus.SENT
+                            result.reason == "config_changed" -> AntiBotEvidenceStatus.CONFIG_CHANGED
+                            result.reason == "telegram_disabled" -> AntiBotEvidenceStatus.TELEGRAM_DISABLED
+                            result.reason == "invalid_config" -> AntiBotEvidenceStatus.INVALID_CONFIG
+                            result.reason.startsWith("queue_rejected:") -> AntiBotEvidenceStatus.QUEUE_FAILED
+                            else -> AntiBotEvidenceStatus.SEND_FAILED
+                        }
+                        RoundResultStore.recordAntiBotEvidence(
+                            statisticsGeneration,
+                            detectionIndex,
+                            status,
+                            attempt = result.attempt,
+                        )
+                    }
                     logDiagnostic(
                         "[ANTI_BOT_EVIDENCE] telegramQueued=$telegramQueued " +
-                            "round=$capturedRound detection=$detectionCount " +
+                            "round=$capturedRound challenge=$challengeIndex " +
+                            "test=$testIndexInChallenge detection=$detectionIndex " +
                             "cards=$selectedCards localSave=false",
                     )
                 } finally {
@@ -3219,8 +3261,14 @@ class BotController(
             }
         } catch (error: Exception) {
             ownedFrame.release()
+            RoundResultStore.recordAntiBotEvidence(
+                statisticsGeneration,
+                detectionIndex,
+                AntiBotEvidenceStatus.QUEUE_FAILED,
+            )
             logDiagnostic(
-                "[ANTI_BOT_EVIDENCE] queueSuccess=false type=${error.javaClass.simpleName}",
+                "[ANTI_BOT_EVIDENCE] queueSuccess=false detection=$detectionIndex " +
+                    "type=${error.javaClass.simpleName}",
             )
         }
     }
