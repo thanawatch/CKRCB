@@ -275,7 +275,7 @@ class BotControlOverlay(private val context: Context) {
         addSwitch(
             antiBotTelegramImages,
             "Send Anti-bot image to Telegram",
-            options.saveAndSendAntiBotImages,
+            options.sendAntiBotImagesToTelegram,
         )
         val saveImageOptions = android.widget.CompoundButton.OnCheckedChangeListener { _, _ ->
             BotOptionsStore.saveImageOptions(
@@ -467,7 +467,7 @@ class BotControlOverlay(private val context: Context) {
             slideMode = slideMode,
             fixedSlideCount = if (slideMode == SlideMode.FIXED_COUNT) slideCount else 0,
             slideIntervalMs = if (slideMode == SlideMode.NONE) 250 else slideTapInterval,
-            saveAndSendAntiBotImages = antiBotTelegramImages.isChecked,
+            sendAntiBotImagesToTelegram = antiBotTelegramImages.isChecked,
         )
     }
 
