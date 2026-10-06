@@ -124,7 +124,7 @@ class GameAutoTapper(private val actionExecutor: ActionExecutor) {
             AutomationConfig.AUTO_JUMP.y + (distance * sin(angle)).roundToInt(),
         )
         // Background jumps never wait in front of a state-transition gesture.
-        // If a critical GAME_START/GAME_RELAY action is pending, this tap is skipped.
+        // A rejected attempt is retried by the worker and never consumes Fixed Count.
         return actionExecutor.tapCalibrated(
             "AUTO_JUMP",
             point,
