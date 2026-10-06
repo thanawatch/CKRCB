@@ -10,12 +10,32 @@ class BotOptionsTest {
         val fixed = BotOptions(jumpMode = JumpMode.FIXED_COUNT, fixedJumpCount = 10)
         assertEquals(JumpMode.FIXED_COUNT, fixed.jumpMode)
         assertEquals(10, fixed.fixedJumpCount)
+
+        val slide = BotOptions(slideMode = SlideMode.FIXED_COUNT, fixedSlideCount = 7)
+        assertEquals(SlideMode.FIXED_COUNT, slide.slideMode)
+        assertEquals(7, slide.fixedSlideCount)
     }
 
     @Test
     fun invalidTapIntervalIsRejected() {
         assertThrows(IllegalArgumentException::class.java) {
             BotOptions(jumpMode = JumpMode.CONTINUOUS, tapIntervalMs = 99)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            BotOptions(slideMode = SlideMode.CONTINUOUS, slideIntervalMs = 99)
+        }
+    }
+
+    @Test
+    fun slideTargetMatchesNormalizedSlideButtonLabel() {
+        assertEquals(LogicalPoint(1128, 625), AutomationConfig.AUTO_SLIDE)
+        assertEquals(100.0, AutomationConfig.AUTO_SLIDE_PHONE_RADIUS, 0.0)
+    }
+
+    @Test
+    fun fixedSlideRequiresPositiveCount() {
+        assertThrows(IllegalArgumentException::class.java) {
+            BotOptions(slideMode = SlideMode.FIXED_COUNT, fixedSlideCount = 0)
         }
     }
 
