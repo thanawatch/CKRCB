@@ -23,6 +23,9 @@ object BotOptionsStore {
             .putString("jump_mode", options.jumpMode.name)
             .putInt("fixed_jump_count", options.fixedJumpCount)
             .putInt("tap_interval_ms", options.tapIntervalMs)
+            .putString("slide_mode", options.slideMode.name)
+            .putInt("fixed_slide_count", options.fixedSlideCount)
+            .putInt("slide_interval_ms", options.slideIntervalMs)
             .apply()
     }
 
@@ -35,6 +38,10 @@ object BotOptionsStore {
         val jumpMode = enumValueOrDefault(
             preferences.getString("jump_mode", null),
             JumpMode.NONE,
+        )
+        val slideMode = enumValueOrDefault(
+            preferences.getString("slide_mode", null),
+            SlideMode.NONE,
         )
         val cookieRelay = preferences.getBoolean("cookie_relay", false)
         return runCatching {
@@ -68,6 +75,17 @@ object BotOptionsStore {
                     250
                 } else {
                     preferences.getInt("tap_interval_ms", 250)
+                },
+                slideMode = slideMode,
+                fixedSlideCount = if (slideMode == SlideMode.FIXED_COUNT) {
+                    preferences.getInt("fixed_slide_count", 10)
+                } else {
+                    0
+                },
+                slideIntervalMs = if (slideMode == SlideMode.NONE) {
+                    250
+                } else {
+                    preferences.getInt("slide_interval_ms", 250)
                 },
             )
         }.getOrDefault(BotOptions())
