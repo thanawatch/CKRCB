@@ -33,6 +33,21 @@ class CoordinateMapperTest {
     }
 
     @Test
+    fun slideTargetUsesNormalizedContentRectInsteadOfLegacyPhoneCalibration() {
+        ContentGeometryRegistry.update(
+            FrameNormalizer.contentTransform(2400, 1080, ContentInsets(left = 111)),
+        )
+        val slide = CoordinateMapper.logicalToPhysical(
+            AutomationConfig.AUTO_SLIDE.x,
+            AutomationConfig.AUTO_SLIDE.y,
+            2400,
+            1080,
+        )
+        assertEquals(1968, slide.x)
+        assertEquals(929, slide.y)
+    }
+
+    @Test
     fun detectorPointUsesRightCutoutContentRect() {
         ContentGeometryRegistry.update(
             FrameNormalizer.contentTransform(2400, 1080, ContentInsets(right = 111)),
