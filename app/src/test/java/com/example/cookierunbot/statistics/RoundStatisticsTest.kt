@@ -128,6 +128,38 @@ class RoundStatisticsTest {
         assertEquals(1, RoundResultStore.snapshot().antiBotDetectedCount)
     }
 
+    @Test fun antiBotHistoryTracksCardsAndSuccessfulCallbacks() {
+        val generation = RoundResultStore.startNewSession()
+        assertTrue(RoundResultStore.recordAntiBotDetected(generation, 31, listOf(2, 6), 1_000L))
+        val detected = RoundResultStore.snapshot()
+        assertEquals(1, detected.antiBotDetectedCount)
+        assertEquals(2, detected.antiBotSelectedTapCount)
+        assertEquals(listOf(2, 6), detected.antiBotHistory.single().selectedCards)
+
+        assertTrue(RoundResultStore.recordAntiBotSuccessfulTap(generation, 1, 2))
+        assertTrue(RoundResultStore.recordAntiBotSuccessfulTap(generation, 1, 6))
+        val completed = RoundResultStore.snapshot()
+        assertEquals(2, completed.antiBotSuccessfulTapCount)
+        assertEquals(listOf(2, 6), completed.antiBotHistory.single().successfulCards)
+
+        // A duplicate callback for the same card is ignored.
+        assertTrue(RoundResultStore.recordAntiBotSuccessfulTap(generation, 1, 6))
+        assertEquals(2, RoundResultStore.snapshot().antiBotSuccessfulTapCount)
+    }
+
+    @Test fun antiBotHistoryKeepsLatestThirtyButTotalsCoverWholeSession() {
+        val generation = RoundResultStore.startNewSession()
+        (1..35).forEach { round ->
+            RoundResultStore.recordAntiBotDetected(generation, round, listOf(1, 4), round.toLong())
+        }
+        val snapshot = RoundResultStore.snapshot()
+        assertEquals(35, snapshot.antiBotDetectedCount)
+        assertEquals(70, snapshot.antiBotSelectedTapCount)
+        assertEquals(30, snapshot.antiBotHistory.size)
+        assertEquals(35, snapshot.antiBotHistory.first().detectionIndex)
+        assertEquals(6, snapshot.antiBotHistory.last().detectionIndex)
+    }
+
     @Test fun staleResultGenerationIsRejected() {
         val stale = RoundResultStore.startNewSession()
         val current = RoundResultStore.startNewSession()
