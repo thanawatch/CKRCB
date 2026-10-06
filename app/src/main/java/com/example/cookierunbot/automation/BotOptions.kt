@@ -1,6 +1,7 @@
 package com.example.cookierunbot.automation
 
 enum class JumpMode { NONE, FIXED_COUNT, CONTINUOUS }
+enum class SlideMode { NONE, FIXED_COUNT, CONTINUOUS }
 
 enum class PerformanceProfile { LEGACY, REDFINGER_OPTIMIZED }
 
@@ -34,6 +35,9 @@ data class BotOptions(
     val jumpMode: JumpMode = JumpMode.NONE,
     val fixedJumpCount: Int = 0,
     val tapIntervalMs: Int = 250,
+    val slideMode: SlideMode = SlideMode.NONE,
+    val fixedSlideCount: Int = 0,
+    val slideIntervalMs: Int = 250,
     val quickLivesIntervalMinutes: Int = QUICK_LIVES_DEFAULT_INTERVAL_MINUTES,
 ) {
     init {
@@ -43,9 +47,13 @@ data class BotOptions(
         require(quickLivesIntervalMinutes in QUICK_LIVES_MIN_INTERVAL_MINUTES..QUICK_LIVES_MAX_INTERVAL_MINUTES) {
             "Receive/Send Lives interval must be 1-1440 minutes"
         }
-        require(tapIntervalMs in 100..1000) { "Tap interval must be 100-1000 ms" }
+        require(tapIntervalMs in 100..1000) { "Jump interval must be 100-1000 ms" }
         require(jumpMode != JumpMode.FIXED_COUNT || fixedJumpCount > 0) {
             "Fixed jump count must be positive"
+        }
+        require(slideIntervalMs in 100..1000) { "Slide interval must be 100-1000 ms" }
+        require(slideMode != SlideMode.FIXED_COUNT || fixedSlideCount > 0) {
+            "Fixed slide count must be positive"
         }
         require(useCookieRelay || !postCookieRelaySequence) {
             "Post Cookie Relay sequence requires Cookie Relay"
