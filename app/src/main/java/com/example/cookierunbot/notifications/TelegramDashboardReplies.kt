@@ -6,6 +6,8 @@ import com.example.cookierunbot.automation.GameProgressStatus
 import com.example.cookierunbot.automation.formatDuration
 import com.example.cookierunbot.capture.Diagnostics
 import com.example.cookierunbot.statistics.SessionStatistics
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 internal fun formatFriendReply(status: FriendLifeDashboardStatus?): String {
@@ -84,6 +86,43 @@ internal fun latestRecoverySummary(logText: String): String? =
         ?.substringAfter("[GAME_PROGRESS_RECOVERY]")
         ?.trim()
         ?.take(180)
+
+internal fun formatAntiBotReply(
+    stats: SessionStatistics,
+    imageDeliveryEnabled: Boolean,
+): String {
+    val selected = stats.antiBotSelectedTapCount
+    val successful = stats.antiBotSuccessfulTapCount
+    val unresolved = (selected - successful).coerceAtLeast(0)
+    val successRate = if (selected == 0) {
+        "n/a"
+    } else {
+        String.format(Locale.US, "%.1f%%", successful * 100.0 / selected)
+    }
+    val recent = stats.antiBotHistory.take(10)
+    val history = if (recent.isEmpty()) {
+        "No Anti-bot detections in this session yet."
+    } else {
+        val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.US)
+        recent.joinToString("\n\n") { event ->
+            val cards = event.selectedCards.joinToString(", ").ifBlank { "none" }
+            val successfulCards = event.successfulCards.sorted()
+            val successfulText = successfulCards.joinToString(", ").ifBlank { "none" }
+            "#${event.detectionIndex} • Round ${event.round} • " +
+                timeFormat.format(Date(event.detectedAt)) + "\n" +
+                "Cards: $cards | Successful: ${successfulCards.size}/${event.selectedCards.size} " +
+                "($successfulText)"
+        }
+    }
+    return "🤖 Anti Bot\n\n" +
+        "Detected screens: ${stats.antiBotDetectedCount}\n" +
+        "Selected card taps: $selected\n" +
+        "Successful taps: $successful/$selected\n" +
+        "Failed/pending taps: $unresolved\n" +
+        "Success rate: $successRate\n" +
+        "Evidence image + Telegram: ${if (imageDeliveryEnabled) "ON" else "OFF"}\n\n" +
+        "Recent history (latest ${recent.size}, up to 30 retained):\n$history"
+}
 
 internal fun formatRoundsReply(stats: SessionStatistics): String {
     val recent = stats.history.take(10)
