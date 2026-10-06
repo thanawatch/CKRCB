@@ -106,6 +106,38 @@ internal fun isTransientTelegramFailure(result: TelegramSendResult): Boolean = w
     else -> false
 }
 
+internal data class TelegramAntiBotRetryDecision(
+    val retry: Boolean,
+    val delayMs: Long = 0L,
+    val nextAttempt: Int = 0,
+)
+
+internal fun telegramAntiBotRetryDecision(
+    attempt: Int,
+    result: TelegramSendResult,
+): TelegramAntiBotRetryDecision {
+    if (
+        result.success ||
+        attempt >= TELEGRAM_ANTI_BOT_MAX_ATTEMPTS ||
+        !isTransientTelegramFailure(result)
+    ) {
+        return TelegramAntiBotRetryDecision(retry = false)
+    }
+    val fallback = if (attempt == 1) {
+        TELEGRAM_ANTI_BOT_RETRY_1_MS
+    } else {
+        TELEGRAM_ANTI_BOT_RETRY_2_MS
+    }
+    val telegramDelay = result.retryAfterSeconds
+        ?.coerceAtLeast(0L)
+        ?.let(::secondsToMillisSafely)
+    return TelegramAntiBotRetryDecision(
+        retry = true,
+        delayMs = telegramDelay ?: fallback,
+        nextAttempt = attempt + 1,
+    )
+}
+
 internal fun parseTelegramRetryAfterSeconds(body: String): Long? =
     RETRY_AFTER_PATTERN.find(body)?.groupValues?.getOrNull(1)?.toLongOrNull()?.takeIf { it > 0L }
 
@@ -499,6 +531,7 @@ class TelegramNotifier(context: Context) {
         normalizedPng: ByteArray,
         filename: String,
         caption: String,
+        onRetry: (nextAttempt: Int) -> Unit = {},
         callback: (TelegramSendResult) -> Unit = {},
     ): Boolean {
         val config = TelegramConfigStore.load(appContext)
@@ -522,6 +555,7 @@ class TelegramNotifier(context: Context) {
             caption = caption,
             attempt = 1,
             delayMs = 0L,
+            onRetry = onRetry,
             callback = callback,
         )
     }
@@ -533,6 +567,7 @@ class TelegramNotifier(context: Context) {
         caption: String,
         attempt: Int,
         delayMs: Long,
+        onRetry: (nextAttempt: Int) -> Unit,
         callback: (TelegramSendResult) -> Unit,
     ): Boolean {
         return try {
@@ -558,32 +593,22 @@ class TelegramNotifier(context: Context) {
                     TelegramSendResult(false, "exception:${error.javaClass.simpleName}")
                 }.copy(attempt = attempt)
 
-                if (
-                    !result.success &&
-                    attempt < TELEGRAM_ANTI_BOT_MAX_ATTEMPTS &&
-                    isTransientTelegramFailure(result)
-                ) {
-                    val fallback = if (attempt == 1) {
-                        TELEGRAM_ANTI_BOT_RETRY_1_MS
-                    } else {
-                        TELEGRAM_ANTI_BOT_RETRY_2_MS
-                    }
-                    val retryDelayMs = result.retryAfterSeconds
-                        ?.coerceAtLeast(0L)
-                        ?.let(::secondsToMillisSafely)
-                        ?: fallback
+                val retryDecision = telegramAntiBotRetryDecision(attempt, result)
+                if (retryDecision.retry) {
                     log(
                         "[TELEGRAM_ANTI_BOT] success=false attempt=$attempt/" +
-                            "$TELEGRAM_ANTI_BOT_MAX_ATTEMPTS retryInMs=$retryDelayMs " +
+                            "$TELEGRAM_ANTI_BOT_MAX_ATTEMPTS retryInMs=${retryDecision.delayMs} " +
                             "code=${result.httpCode ?: "none"} reason=${result.reason}",
                     )
+                    runCatching { onRetry(retryDecision.nextAttempt) }
                     scheduleAntiBotImage(
                         target,
                         normalizedPng,
                         filename,
                         caption,
-                        attempt + 1,
-                        retryDelayMs,
+                        retryDecision.nextAttempt,
+                        retryDecision.delayMs,
+                        onRetry,
                         callback,
                     )
                     return@schedule
