@@ -14,9 +14,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TelegramDashboardTest {
-    @Test fun dashboardAllButtonAndRefreshUseExistingAllCommand() {
+    @Test fun dashboardAntiBotReplacesRefresh() {
         assertEquals("/all", parseTelegramCommand(TelegramDashboardPolicy.ALL))
-        assertEquals("/all", parseTelegramCommand(TelegramDashboardPolicy.REFRESH))
+        assertEquals("/antibot", parseTelegramCommand(TelegramDashboardPolicy.ANTI_BOT))
         assertEquals("/screen", parseTelegramCommand(TelegramDashboardPolicy.SCREEN))
         assertEquals("/friend", parseTelegramCommand(TelegramDashboardPolicy.FRIEND))
         assertEquals("/health", parseTelegramCommand(TelegramDashboardPolicy.HEALTH))
@@ -49,11 +49,14 @@ class TelegramDashboardTest {
         assertTrue(markup.contains("📸 Screen"))
         assertTrue(markup.contains("📦 Update App"))
         assertTrue(markup.contains("📥 Download Logs"))
+        assertTrue(markup.contains("🤖 Anti Bot"))
+        assertFalse(markup.contains("🔄 Refresh"))
         assertTrue(requireNotNull(telegramCommandReply("/help")).contains("/all"))
         assertTrue(requireNotNull(telegramCommandReply("/help")).contains("/friend"))
         assertTrue(requireNotNull(telegramCommandReply("/help")).contains("/screen"))
         assertTrue(requireNotNull(telegramCommandReply("/help")).contains("/update"))
         assertTrue(requireNotNull(telegramCommandReply("/help")).contains("/logs"))
+        assertTrue(requireNotNull(telegramCommandReply("/help")).contains("/antibot"))
         assertTrue(requireNotNull(telegramCommandReply("/dashboard")).contains("Tap a button below"))
     }
 
@@ -142,6 +145,37 @@ class TelegramDashboardTest {
         assertTrue(reply.contains("#2:"))
         assertFalse(reply.contains("#1:"))
         assertTrue(formatRoundsReply(stats(emptyList())).contains("No completed rounds"))
+    }
+
+    @Test fun antiBotReplyShowsTotalsToggleAndRecentCardHistory() {
+        val stats = stats(emptyList()).copy(
+            antiBotDetectedCount = 2,
+            antiBotSelectedTapCount = 4,
+            antiBotSuccessfulTapCount = 3,
+            antiBotHistory = listOf(
+                com.example.cookierunbot.statistics.AntiBotEvent(
+                    detectionIndex = 2,
+                    round = 31,
+                    detectedAt = 1_000L,
+                    selectedCards = listOf(2, 6),
+                    successfulCards = listOf(2),
+                ),
+                com.example.cookierunbot.statistics.AntiBotEvent(
+                    detectionIndex = 1,
+                    round = 30,
+                    detectedAt = 500L,
+                    selectedCards = listOf(3, 4),
+                    successfulCards = listOf(3, 4),
+                ),
+            ),
+        )
+        val reply = formatAntiBotReply(stats, imageDeliveryEnabled = true)
+        assertTrue(reply.contains("Detected screens: 2"))
+        assertTrue(reply.contains("Successful taps: 3/4"))
+        assertTrue(reply.contains("Success rate: 75.0%"))
+        assertTrue(reply.contains("Evidence image + Telegram: ON"))
+        assertTrue(reply.contains("#2 • Round 31"))
+        assertTrue(reply.contains("Cards: 2, 6 | Successful: 1/2 (2)"))
     }
 
     @Test fun errorSummaryOnlyReturnsWhitelistedEventsAndAtMostFive() {
