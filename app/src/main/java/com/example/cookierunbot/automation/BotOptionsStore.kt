@@ -26,7 +26,7 @@ object BotOptionsStore {
             .putString("slide_mode", options.slideMode.name)
             .putInt("fixed_slide_count", options.fixedSlideCount)
             .putInt("slide_interval_ms", options.slideIntervalMs)
-            .putBoolean("anti_bot_image_telegram", options.saveAndSendAntiBotImages)
+            .putBoolean("anti_bot_image_telegram", options.sendAntiBotImagesToTelegram)
             .apply()
     }
 
@@ -88,7 +88,7 @@ object BotOptionsStore {
                 } else {
                     preferences.getInt("slide_interval_ms", 250)
                 },
-                saveAndSendAntiBotImages = preferences.getBoolean(
+                sendAntiBotImagesToTelegram = preferences.getBoolean(
                     "anti_bot_image_telegram",
                     false,
                 ),
@@ -101,13 +101,13 @@ object BotOptionsStore {
         context: Context,
         saveDebugImages: Boolean,
         saveResultImages: Boolean,
-        saveAndSendAntiBotImages: Boolean? = null,
+        sendAntiBotImagesToTelegram: Boolean? = null,
     ) {
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit()
             .putBoolean("save_debug_images", saveDebugImages)
             .putBoolean("save_result_images", saveResultImages)
             .apply {
-                saveAndSendAntiBotImages?.let {
+                sendAntiBotImagesToTelegram?.let {
                     putBoolean("anti_bot_image_telegram", it)
                 }
             }
@@ -122,7 +122,7 @@ object BotOptionsStore {
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
             .getBoolean("save_result_images", true)
 
-    fun shouldSaveAndSendAntiBotImages(context: Context): Boolean =
+    fun shouldSendAntiBotImagesToTelegram(context: Context): Boolean =
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
             .getBoolean("anti_bot_image_telegram", false)
 
