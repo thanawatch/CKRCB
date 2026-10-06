@@ -65,7 +65,7 @@ class GameAutoSlider(private val actionExecutor: ActionExecutor) {
             val local = synchronized(lock) { options }
             Log.i(CookieRunBotApplication.TAG, "[AUTO SLIDE] Started")
             Log.i(CookieRunBotApplication.TAG, "[AUTO SLIDE] Mode: ${local.slideMode}")
-            Log.i(CookieRunBotApplication.TAG, "[AUTO SLIDE] Base=(1128,625)")
+            Log.i(CookieRunBotApplication.TAG, "[AUTO SLIDE] Base=(1115,619)")
             Log.i(CookieRunBotApplication.TAG, "[AUTO SLIDE] Interval=${local.slideIntervalMs}ms")
             Log.i(CookieRunBotApplication.TAG, "[AUTO SLIDE] Radius=100 phone px")
 
