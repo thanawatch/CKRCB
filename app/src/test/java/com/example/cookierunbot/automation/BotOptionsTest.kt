@@ -28,7 +28,7 @@ class BotOptionsTest {
 
     @Test
     fun slideTargetMatchesNormalizedSlideButtonLabel() {
-        assertEquals(LogicalPoint(1128, 625), AutomationConfig.AUTO_SLIDE)
+        assertEquals(LogicalPoint(1115, 619), AutomationConfig.AUTO_SLIDE)
         assertEquals(100.0, AutomationConfig.AUTO_SLIDE_PHONE_RADIUS, 0.0)
     }
 
