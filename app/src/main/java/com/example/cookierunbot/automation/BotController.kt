@@ -37,6 +37,7 @@ private const val PREVIOUS_RESULTS_CALLBACK_TIMEOUT_MS = 3_000L
 private const val PROGRESS_RECOVERY_GESTURE_TIMEOUT_MS = 3_000L
 private const val PROGRESS_RECOVERY_FRAME_TIMEOUT_MS = 2_500L
 private const val PROGRESS_RECOVERY_MAINMENU_LOG_INTERVAL_MS = 5_000L
+private const val FAST_START_GESTURE_CALLBACK_WAIT_MS = 500L
 
 enum class DetectionGroup { PRE_GAME, IN_GAME, POST_GAME }
 
@@ -2621,6 +2622,7 @@ class BotController(
         timing: FastPathTiming,
     ) {
         if (options.useFastStart) {
+            val completion = CountDownLatch(1)
             val accepted = performCriticalTap(
                 BotStage.GAME_START,
                 "USE_FAST_START",
@@ -2628,9 +2630,13 @@ class BotController(
                 sourceWidth,
                 sourceHeight,
                 timing,
+                onGestureCompleted = { completion.countDown() },
             )
             if (!accepted) return
-            delayOrStop(randomMs(800, 1200))
+            // Start jumping as soon as the Fast Start tap releases the gesture lease.
+            // The bounded fallback preserves the previous dispatch-accepted behavior
+            // if Android never delivers a gesture callback.
+            completion.await(FAST_START_GESTURE_CALLBACK_WAIT_MS, TimeUnit.MILLISECONDS)
         }
         synchronized(lock) {
             if (!canDispatchActionLocked()) return
@@ -4538,6 +4544,7 @@ class BotController(
         sourceWidth: Int,
         sourceHeight: Int,
         timing: FastPathTiming,
+        onGestureCompleted: ((success: Boolean) -> Unit)? = null,
     ): Boolean {
         logBotActionRequest(name)
         val actionRequestedAtNanos = SystemClock.elapsedRealtimeNanos()
@@ -4558,6 +4565,7 @@ class BotController(
                     if (RedfingerPerformancePolicy.profilingEnabled(options.performanceProfile)) {
                         DebugLogStore.log(callbackMessage)
                     }
+                    onGestureCompleted?.invoke(success)
                 },
             )
         }
