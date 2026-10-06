@@ -33,6 +33,7 @@ enum class AntiBotEvidenceStatus {
     QUEUE_FAILED,
     SEND_FAILED,
     CONFIG_CHANGED,
+    DELIVERY_DISABLED,
     TELEGRAM_DISABLED,
     INVALID_CONFIG,
 }
