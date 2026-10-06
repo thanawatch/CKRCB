@@ -39,6 +39,7 @@ data class BotOptions(
     val slideMode: SlideMode = SlideMode.NONE,
     val fixedSlideCount: Int = 0,
     val slideIntervalMs: Int = 250,
+    val saveAndSendAntiBotImages: Boolean = false,
 ) {
     init {
         require(friendLifeIntervalMinutes in FRIEND_LIFE_MIN_INTERVAL_MINUTES..FRIEND_LIFE_MAX_INTERVAL_MINUTES) {
