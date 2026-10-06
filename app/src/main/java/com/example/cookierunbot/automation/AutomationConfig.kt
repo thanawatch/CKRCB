@@ -52,7 +52,7 @@ object AutomationConfig {
     val AUTO_JUMP = LogicalPoint(108, 600)
     const val AUTO_JUMP_PHONE_RADIUS = 100.0
     // Center of the visible "Slide" label in the normalized 1280x720 game frame.
-    val AUTO_SLIDE = LogicalPoint(1128, 625)
+    val AUTO_SLIDE = LogicalPoint(1115, 619)
     const val AUTO_SLIDE_PHONE_RADIUS = 100.0
     val MAIL_BOX = LogicalPoint(686, 677)
     val MAIL_LIVES_TAB = LogicalPoint(630, 148)
