@@ -112,19 +112,19 @@ class RoundStatisticsTest {
 
     @Test fun antiBotSessionCountersTrackOnlyCurrentGenerationAndReset() {
         val first = RoundResultStore.startNewSession()
-        assertTrue(RoundResultStore.recordAntiBotDetected(first))
-        assertTrue(RoundResultStore.recordAntiBotSuccessfulTap(first))
-        assertTrue(RoundResultStore.recordAntiBotSuccessfulTap(first))
+        assertTrue(RoundResultStore.recordAntiBotDetected(first, 1, listOf(2, 6)))
+        assertTrue(RoundResultStore.recordAntiBotSuccessfulTap(first, 1, 2))
+        assertTrue(RoundResultStore.recordAntiBotSuccessfulTap(first, 1, 6))
         assertEquals(1, RoundResultStore.snapshot().antiBotDetectedCount)
         assertEquals(2, RoundResultStore.snapshot().antiBotSuccessfulTapCount)
 
         val second = RoundResultStore.startNewSession()
-        assertFalse(RoundResultStore.recordAntiBotDetected(first))
-        assertFalse(RoundResultStore.recordAntiBotSuccessfulTap(first))
+        assertFalse(RoundResultStore.recordAntiBotDetected(first, 1, listOf(2, 6)))
+        assertFalse(RoundResultStore.recordAntiBotSuccessfulTap(first, 1, 2))
         assertEquals(0, RoundResultStore.snapshot().antiBotDetectedCount)
         assertEquals(0, RoundResultStore.snapshot().antiBotSuccessfulTapCount)
 
-        assertTrue(RoundResultStore.recordAntiBotDetected(second))
+        assertTrue(RoundResultStore.recordAntiBotDetected(second, 1, listOf(3, 5)))
         assertEquals(1, RoundResultStore.snapshot().antiBotDetectedCount)
     }
 
