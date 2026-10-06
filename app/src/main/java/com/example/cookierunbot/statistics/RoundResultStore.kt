@@ -53,6 +53,7 @@ object RoundResultStore {
         val previous = antiBotHistory.firstOrNull()
         val startsNewChallenge = previous == null ||
             previous.testIndexInChallenge >= ANTI_BOT_TESTS_PER_CHALLENGE ||
+            (previous.round > 0 && round > 0 && previous.round != round) ||
             detectedAt - previous.detectedAt > ANTI_BOT_CHALLENGE_GAP_MS ||
             detectedAt < previous.detectedAt
         val challengeIndex = if (startsNewChallenge) {
