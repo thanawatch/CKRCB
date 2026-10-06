@@ -3115,42 +3115,61 @@ class BotController(
     }
 
     private fun handleAntiBot(detector: StateDetector, frame: Mat, sourceWidth: Int, sourceHeight: Int) {
-        val statisticsGeneration = RoundResultStore.currentGeneration()
-        if (RoundResultStore.recordAntiBotDetected(statisticsGeneration)) {
-            val stats = RoundResultStore.snapshot()
-            logDiagnostic(
-                "[ANTI_BOT_STATS] detected=${stats.antiBotDetectedCount} " +
-                    "successfulTaps=${stats.antiBotSuccessfulTapCount}",
-            )
-        }
         val cards = listOf(
             LogicalPoint(346, 179), LogicalPoint(542, 179), LogicalPoint(738, 179),
             LogicalPoint(346, 435), LogicalPoint(542, 435), LogicalPoint(738, 435),
         )
         val odd = detector.detectAntiBotOddCards(frame)
         val selectedCards = odd.map { it + 1 }
-        Log.i(CookieRunBotApplication.TAG, "[RECOVERY] Anti-bot odd cards=$selectedCards")
-        enqueueAntiBotEvidence(
-            frame,
-            selectedCards,
-            RoundResultStore.snapshot().antiBotDetectedCount,
+        val statisticsGeneration = RoundResultStore.currentGeneration()
+        val detectionRecorded = RoundResultStore.recordAntiBotDetected(
+            statisticsGeneration,
+            round = roundNumber,
+            selectedCards = selectedCards,
         )
+        val statsAfterDetection = RoundResultStore.snapshot()
+        val detectionIndex = if (detectionRecorded) {
+            statsAfterDetection.antiBotHistory.firstOrNull()?.detectionIndex
+                ?: statsAfterDetection.antiBotDetectedCount
+        } else {
+            0
+        }
+        if (detectionRecorded) {
+            logDiagnostic(
+                "[ANTI_BOT_STATS] detected=${statsAfterDetection.antiBotDetectedCount} " +
+                    "selectedTaps=${statsAfterDetection.antiBotSelectedTapCount} " +
+                    "successfulTaps=${statsAfterDetection.antiBotSuccessfulTapCount}",
+            )
+        }
+        Log.i(CookieRunBotApplication.TAG, "[RECOVERY] Anti-bot odd cards=$selectedCards")
+        if (detectionRecorded) {
+            enqueueAntiBotEvidence(frame, selectedCards, detectionIndex)
+        }
         for (index in odd) {
+            val cardNumber = index + 1
             val origin = cards[index]
             val target = LogicalPoint(
                 Random.nextInt(origin.x + 20, origin.x + 163),
                 Random.nextInt(origin.y + 20, origin.y + 221),
             )
             performDetectedTap(
-                "ANTI_BOT_CARD_${index + 1}",
+                "ANTI_BOT_CARD_$cardNumber",
                 target,
                 sourceWidth,
                 sourceHeight,
             ) { success ->
-                if (success && RoundResultStore.recordAntiBotSuccessfulTap(statisticsGeneration)) {
+                if (
+                    success &&
+                    RoundResultStore.recordAntiBotSuccessfulTap(
+                        statisticsGeneration,
+                        detectionIndex = detectionIndex.takeIf { it > 0 },
+                        card = cardNumber,
+                    )
+                ) {
                     val stats = RoundResultStore.snapshot()
                     logDiagnostic(
                         "[ANTI_BOT_STATS] detected=${stats.antiBotDetectedCount} " +
+                            "selectedTaps=${stats.antiBotSelectedTapCount} " +
                             "successfulTaps=${stats.antiBotSuccessfulTapCount}",
                     )
                 }
