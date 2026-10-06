@@ -24,4 +24,6 @@ data class SessionStatistics(
     val lastRound: RoundResult?,
     val history: List<RoundResult>,
     val sessionRuntimeMs: Long,
+    val antiBotDetectedCount: Int = 0,
+    val antiBotSuccessfulTapCount: Int = 0,
 )
