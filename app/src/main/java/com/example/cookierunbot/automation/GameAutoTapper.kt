@@ -70,8 +70,6 @@ class GameAutoTapper(private val actionExecutor: ActionExecutor) {
             Log.i(CookieRunBotApplication.TAG, "[AUTO TAP] Radius=100 phone px")
 
             if (local.jumpMode == JumpMode.FIXED_COUNT) {
-                Log.i(CookieRunBotApplication.TAG, "[AUTO TAP] Waiting 1.7 seconds")
-                sleepCancellable(AutomationConfig.FIXED_JUMP_DELAY_MS)
                 Log.i(CookieRunBotApplication.TAG, "[AUTO TAP] Jump by Count=${local.fixedJumpCount}")
                 Log.i(CookieRunBotApplication.TAG, "[AUTO TAP] Jump by Count started")
                 repeat(local.fixedJumpCount) {
