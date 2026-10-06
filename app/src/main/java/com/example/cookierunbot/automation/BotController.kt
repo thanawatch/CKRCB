@@ -19,6 +19,7 @@ import com.example.cookierunbot.diagnostics.IncidentManager
 import com.example.cookierunbot.diagnostics.PersistentTrace
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.statistics.RoundResultCollector
+import com.example.cookierunbot.statistics.RoundResultStore
 import com.example.cookierunbot.statistics.MysteryBoxPhasePolicy
 import org.opencv.core.Mat
 import org.opencv.core.Rect
@@ -3111,6 +3112,14 @@ class BotController(
     }
 
     private fun handleAntiBot(detector: StateDetector, frame: Mat, sourceWidth: Int, sourceHeight: Int) {
+        val statisticsGeneration = RoundResultStore.currentGeneration()
+        if (RoundResultStore.recordAntiBotDetected(statisticsGeneration)) {
+            val stats = RoundResultStore.snapshot()
+            logDiagnostic(
+                "[ANTI_BOT_STATS] detected=${stats.antiBotDetectedCount} " +
+                    "successfulTaps=${stats.antiBotSuccessfulTapCount}",
+            )
+        }
         val cards = listOf(
             LogicalPoint(346, 179), LogicalPoint(542, 179), LogicalPoint(738, 179),
             LogicalPoint(346, 435), LogicalPoint(542, 435), LogicalPoint(738, 435),
@@ -3123,7 +3132,20 @@ class BotController(
                 Random.nextInt(origin.x + 20, origin.x + 163),
                 Random.nextInt(origin.y + 20, origin.y + 221),
             )
-            performDetectedTap("ANTI_BOT_CARD_${index + 1}", target, sourceWidth, sourceHeight)
+            performDetectedTap(
+                "ANTI_BOT_CARD_${index + 1}",
+                target,
+                sourceWidth,
+                sourceHeight,
+            ) { success ->
+                if (success && RoundResultStore.recordAntiBotSuccessfulTap(statisticsGeneration)) {
+                    val stats = RoundResultStore.snapshot()
+                    logDiagnostic(
+                        "[ANTI_BOT_STATS] detected=${stats.antiBotDetectedCount} " +
+                            "successfulTaps=${stats.antiBotSuccessfulTapCount}",
+                    )
+                }
+            }
             delayOrStop(randomMs(10_000, 15_000))
         }
         delayOrStop(randomMs(800, 1400))
@@ -4562,11 +4584,19 @@ class BotController(
         point: LogicalPoint,
         sourceWidth: Int,
         sourceHeight: Int,
+        onGestureCompleted: ((success: Boolean) -> Unit)? = null,
     ): Boolean {
         logBotActionRequest(name)
         val result = synchronized(lock) {
             if (!canDispatchActionLocked()) return actionSkippedBotStopped(name)
-            actionExecutor.tapDetectedPoint(name, point, sourceWidth, sourceHeight)
+            actionExecutor.tapDetectedPoint(
+                name,
+                point,
+                sourceWidth,
+                sourceHeight,
+            ) { _, success ->
+                onGestureCompleted?.invoke(success)
+            }
         }
         return reportActionResult(result)
     }
