@@ -41,8 +41,8 @@ class BotOptionsTest {
 
     @Test
     fun antiBotImageDeliveryIsExplicitOptIn() {
-        assertEquals(false, BotOptions().saveAndSendAntiBotImages)
-        assertEquals(true, BotOptions(saveAndSendAntiBotImages = true).saveAndSendAntiBotImages)
+        assertEquals(false, BotOptions().sendAntiBotImagesToTelegram)
+        assertEquals(true, BotOptions(sendAntiBotImagesToTelegram = true).sendAntiBotImagesToTelegram)
     }
 
     @Test
