@@ -110,6 +110,24 @@ class RoundStatisticsTest {
         assertTrue(RoundResultStore.snapshot().sessionRuntimeMs < 1_000L)
     }
 
+    @Test fun antiBotSessionCountersTrackOnlyCurrentGenerationAndReset() {
+        val first = RoundResultStore.startNewSession()
+        assertTrue(RoundResultStore.recordAntiBotDetected(first))
+        assertTrue(RoundResultStore.recordAntiBotSuccessfulTap(first))
+        assertTrue(RoundResultStore.recordAntiBotSuccessfulTap(first))
+        assertEquals(1, RoundResultStore.snapshot().antiBotDetectedCount)
+        assertEquals(2, RoundResultStore.snapshot().antiBotSuccessfulTapCount)
+
+        val second = RoundResultStore.startNewSession()
+        assertFalse(RoundResultStore.recordAntiBotDetected(first))
+        assertFalse(RoundResultStore.recordAntiBotSuccessfulTap(first))
+        assertEquals(0, RoundResultStore.snapshot().antiBotDetectedCount)
+        assertEquals(0, RoundResultStore.snapshot().antiBotSuccessfulTapCount)
+
+        assertTrue(RoundResultStore.recordAntiBotDetected(second))
+        assertEquals(1, RoundResultStore.snapshot().antiBotDetectedCount)
+    }
+
     @Test fun staleResultGenerationIsRejected() {
         val stale = RoundResultStore.startNewSession()
         val current = RoundResultStore.startNewSession()
