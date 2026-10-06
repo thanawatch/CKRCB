@@ -14,6 +14,8 @@ object RoundResultStore {
     private var silverBoxes = 0
     private var goldBoxes = 0
     private var rainbowBoxes = 0
+    private var antiBotDetectedCount = 0
+    private var antiBotSuccessfulTapCount = 0
 
     fun startNewSession(wallClockMs: Long = System.currentTimeMillis()): Long = synchronized(lock) {
         sessionGeneration += 1L
@@ -21,8 +23,21 @@ object RoundResultStore {
         cumulativeByRound.clear()
         totalCoins = 0; totalXp = 0; totalBoxes = 0
         woodBoxes = 0; silverBoxes = 0; goldBoxes = 0; rainbowBoxes = 0
+        antiBotDetectedCount = 0; antiBotSuccessfulTapCount = 0
         sessionStartedAt = wallClockMs
         sessionGeneration
+    }
+
+    fun recordAntiBotDetected(generation: Long): Boolean = synchronized(lock) {
+        if (generation != sessionGeneration) return@synchronized false
+        antiBotDetectedCount += 1
+        true
+    }
+
+    fun recordAntiBotSuccessfulTap(generation: Long): Boolean = synchronized(lock) {
+        if (generation != sessionGeneration) return@synchronized false
+        antiBotSuccessfulTapCount += 1
+        true
     }
 
     fun currentGeneration(): Long = synchronized(lock) { sessionGeneration }
@@ -68,6 +83,8 @@ object RoundResultStore {
             history = history,
             sessionRuntimeMs = if (sessionStartedAt == 0L) 0L else
                 (System.currentTimeMillis() - sessionStartedAt).coerceAtLeast(0L),
+            antiBotDetectedCount = antiBotDetectedCount,
+            antiBotSuccessfulTapCount = antiBotSuccessfulTapCount,
         )
     }
 
@@ -78,6 +95,7 @@ object RoundResultStore {
         sessionGeneration = 0L
         totalCoins = 0; totalXp = 0; totalBoxes = 0
         woodBoxes = 0; silverBoxes = 0; goldBoxes = 0; rainbowBoxes = 0
+        antiBotDetectedCount = 0; antiBotSuccessfulTapCount = 0
     }
 
     private fun replaceContribution(round: Int, replacement: RoundContribution) {
