@@ -29,6 +29,7 @@ data class TelegramSendResult(
     val reason: String,
     val httpCode: Int? = null,
     val retryAfterSeconds: Long? = null,
+    val attempt: Int = 1,
 )
 
 /** Keep the complete /all summary even if the optional screenshot is unavailable. */
@@ -38,6 +39,9 @@ internal fun formatAllWithScreenNote(allReply: String, screenFailure: String?): 
 internal const val TELEGRAM_COMMAND_MAX_ATTEMPTS = 3
 private const val TELEGRAM_COMMAND_RETRY_1_MS = 2_000L
 private const val TELEGRAM_COMMAND_RETRY_2_MS = 5_000L
+private const val TELEGRAM_ANTI_BOT_MAX_ATTEMPTS = 3
+private const val TELEGRAM_ANTI_BOT_RETRY_1_MS = 2_000L
+private const val TELEGRAM_ANTI_BOT_RETRY_2_MS = 5_000L
 
 internal data class TelegramCommandReplyAttempt(
     val replyText: String,
@@ -489,6 +493,7 @@ class TelegramNotifier(context: Context) {
     /**
      * Explicit Anti-bot evidence delivery. The Startup Options toggle is the opt-in,
      * so this path intentionally does not depend on the generic debug-image toggle.
+     * The destination is bound when queued and revalidated before every attempt.
      */
     fun notifyAntiBotImage(
         normalizedPng: ByteArray,
@@ -499,33 +504,113 @@ class TelegramNotifier(context: Context) {
         val config = TelegramConfigStore.load(appContext)
         logConfig(config)
         if (!config.enabled) {
+            val result = TelegramSendResult(false, "telegram_disabled", attempt = 0)
             log("[TELEGRAM_ANTI_BOT] queued=false reason=telegram_disabled")
+            runCatching { callback(result) }
             return false
         }
         if (!config.isValid) {
+            val result = TelegramSendResult(false, "invalid_config", attempt = 0)
             log("[TELEGRAM_ANTI_BOT] queued=false reason=invalid_config detail=${config.invalidReason}")
+            runCatching { callback(result) }
             return false
         }
+        return scheduleAntiBotImage(
+            target = TelegramCommandReplyTarget.from(config),
+            normalizedPng = normalizedPng,
+            filename = filename,
+            caption = caption,
+            attempt = 1,
+            delayMs = 0L,
+            callback = callback,
+        )
+    }
+
+    private fun scheduleAntiBotImage(
+        target: TelegramCommandReplyTarget,
+        normalizedPng: ByteArray,
+        filename: String,
+        caption: String,
+        attempt: Int,
+        delayMs: Long,
+        callback: (TelegramSendResult) -> Unit,
+    ): Boolean {
         return try {
-            executor.execute {
-                val result = runCatching {
-                    sendPhotoBlocking(config, normalizedPng, filename, caption)
-                }.getOrElse { error ->
-                    log("[TELEGRAM_ANTI_BOT] success=false reason=async_exception type=${error.javaClass.simpleName}")
-                    TelegramSendResult(false, "exception:${error.javaClass.simpleName}")
+            executor.schedule({
+                val currentConfig = TelegramConfigStore.load(appContext)
+                if (!target.matches(currentConfig)) {
+                    val result = TelegramSendResult(false, "config_changed", attempt = attempt)
+                    log(
+                        "[TELEGRAM_ANTI_BOT] success=false reason=config_changed " +
+                            "attempt=$attempt/$TELEGRAM_ANTI_BOT_MAX_ATTEMPTS",
+                    )
+                    runCatching { callback(result) }
+                    return@schedule
                 }
+
+                val result = runCatching {
+                    sendPhotoBlocking(currentConfig, normalizedPng, filename, caption)
+                }.getOrElse { error ->
+                    log(
+                        "[TELEGRAM_ANTI_BOT] success=false reason=async_exception " +
+                            "type=${error.javaClass.simpleName}",
+                    )
+                    TelegramSendResult(false, "exception:${error.javaClass.simpleName}")
+                }.copy(attempt = attempt)
+
+                if (
+                    !result.success &&
+                    attempt < TELEGRAM_ANTI_BOT_MAX_ATTEMPTS &&
+                    isTransientTelegramFailure(result)
+                ) {
+                    val fallback = if (attempt == 1) {
+                        TELEGRAM_ANTI_BOT_RETRY_1_MS
+                    } else {
+                        TELEGRAM_ANTI_BOT_RETRY_2_MS
+                    }
+                    val retryDelayMs = result.retryAfterSeconds
+                        ?.coerceAtLeast(0L)
+                        ?.let(::secondsToMillisSafely)
+                        ?: fallback
+                    log(
+                        "[TELEGRAM_ANTI_BOT] success=false attempt=$attempt/" +
+                            "$TELEGRAM_ANTI_BOT_MAX_ATTEMPTS retryInMs=$retryDelayMs " +
+                            "code=${result.httpCode ?: "none"} reason=${result.reason}",
+                    )
+                    scheduleAntiBotImage(
+                        target,
+                        normalizedPng,
+                        filename,
+                        caption,
+                        attempt + 1,
+                        retryDelayMs,
+                        callback,
+                    )
+                    return@schedule
+                }
+
                 log(
                     "[TELEGRAM_ANTI_BOT] success=${result.success} " +
+                        "attempt=$attempt/$TELEGRAM_ANTI_BOT_MAX_ATTEMPTS " +
                         "code=${result.httpCode ?: "none"} reason=${result.reason}",
                 )
                 runCatching { callback(result) }
                     .onFailure { error ->
                         log("[TELEGRAM_CALLBACK] success=false type=${error.javaClass.simpleName}")
                     }
-            }
+            }, delayMs, TimeUnit.MILLISECONDS)
             true
         } catch (error: Exception) {
-            log("[TELEGRAM_ANTI_BOT] queued=false reason=queue_rejected type=${error.javaClass.simpleName}")
+            val result = TelegramSendResult(
+                false,
+                "queue_rejected:${error.javaClass.simpleName}",
+                attempt = attempt,
+            )
+            log(
+                "[TELEGRAM_ANTI_BOT] queued=false reason=queue_rejected " +
+                    "attempt=$attempt type=${error.javaClass.simpleName}",
+            )
+            runCatching { callback(result) }
             false
         }
     }
