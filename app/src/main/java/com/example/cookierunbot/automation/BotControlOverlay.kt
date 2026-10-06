@@ -62,6 +62,7 @@ class BotControlOverlay(private val context: Context) {
     private val quickLivesMinutes = EditText(context)
     private val saveDebugImages = Switch(context)
     private val saveResultImages = Switch(context)
+    private val antiBotTelegramImages = Switch(context)
     private val jumpFixed = Switch(context)
     private val jumpContinuous = Switch(context)
     private val fixedCount = EditText(context)
@@ -271,6 +272,11 @@ class BotControlOverlay(private val context: Context) {
         panel.addView(quickLivesMinutes, matchWidth())
         addSwitch(saveDebugImages, "Save NO_MATCH Debug Images", options.saveDebugImages)
         addSwitch(saveResultImages, "Save GAME_COMPLETE / MYSTERY_BOX Images", options.saveResultImages)
+        addSwitch(
+            antiBotTelegramImages,
+            "Save & send Anti-bot image to Telegram",
+            options.saveAndSendAntiBotImages,
+        )
         val saveImageOptions = android.widget.CompoundButton.OnCheckedChangeListener { _, _ ->
             BotOptionsStore.saveImageOptions(context, saveDebugImages.isChecked, saveResultImages.isChecked)
         }
@@ -455,6 +461,7 @@ class BotControlOverlay(private val context: Context) {
             slideMode = slideMode,
             fixedSlideCount = if (slideMode == SlideMode.FIXED_COUNT) slideCount else 0,
             slideIntervalMs = if (slideMode == SlideMode.NONE) 250 else slideTapInterval,
+            saveAndSendAntiBotImages = antiBotTelegramImages.isChecked,
         )
     }
 
