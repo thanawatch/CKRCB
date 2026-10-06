@@ -123,6 +123,10 @@ object RoundResultStore {
         updatedAt: Long = System.currentTimeMillis(),
     ): Boolean = synchronized(lock) {
         if (generation != sessionGeneration) return@synchronized false
+        val current = antiBotLatestEvidence
+        if (current != null && detectionIndex < current.detectionIndex) {
+            return@synchronized false
+        }
         antiBotLatestEvidence = AntiBotEvidence(
             detectionIndex = detectionIndex,
             status = status,
