@@ -1263,7 +1263,11 @@ class BotController(
                 }
                 publishRuntimeState("WAITING_FOR_${group.name}")
                 if (group == DetectionGroup.IN_GAME && gameStartDetectedForRound) {
-                    synchronized(lock) { if (!progressRecoveryGate.isActive()) autoTapper.start() }
+                    synchronized(lock) {
+                        if (!progressRecoveryGate.isActive() && !actionExecutor.isActionInProgress()) {
+                            autoTapper.start()
+                        }
+                    }
                 }
                 return
             }
@@ -2639,9 +2643,7 @@ class BotController(
             // If Android drops the callback, actively observe the arbiter so its stale
             // lease can expire before the first BACKGROUND jump is attempted.
             if (!awaitFastStartGestureRelease(completion)) {
-                logDiagnostic(
-                    "[FAST_START] callbackTimeout=true gestureBusy=true action=DEFER_AUTO_JUMP",
-                )
+                logDiagnostic("[FAST_START] gestureBusy=true action=DEFER_AUTO_JUMP")
             }
         }
         synchronized(lock) {
