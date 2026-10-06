@@ -486,6 +486,50 @@ class TelegramNotifier(context: Context) {
         }
     }
 
+    /**
+     * Explicit Anti-bot evidence delivery. The Startup Options toggle is the opt-in,
+     * so this path intentionally does not depend on the generic debug-image toggle.
+     */
+    fun notifyAntiBotImage(
+        normalizedPng: ByteArray,
+        filename: String,
+        caption: String,
+        callback: (TelegramSendResult) -> Unit = {},
+    ): Boolean {
+        val config = TelegramConfigStore.load(appContext)
+        logConfig(config)
+        if (!config.enabled) {
+            log("[TELEGRAM_ANTI_BOT] queued=false reason=telegram_disabled")
+            return false
+        }
+        if (!config.isValid) {
+            log("[TELEGRAM_ANTI_BOT] queued=false reason=invalid_config detail=${config.invalidReason}")
+            return false
+        }
+        return try {
+            executor.execute {
+                val result = runCatching {
+                    sendPhotoBlocking(config, normalizedPng, filename, caption)
+                }.getOrElse { error ->
+                    log("[TELEGRAM_ANTI_BOT] success=false reason=async_exception type=${error.javaClass.simpleName}")
+                    TelegramSendResult(false, "exception:${error.javaClass.simpleName}")
+                }
+                log(
+                    "[TELEGRAM_ANTI_BOT] success=${result.success} " +
+                        "code=${result.httpCode ?: "none"} reason=${result.reason}",
+                )
+                runCatching { callback(result) }
+                    .onFailure { error ->
+                        log("[TELEGRAM_CALLBACK] success=false type=${error.javaClass.simpleName}")
+                    }
+            }
+            true
+        } catch (error: Exception) {
+            log("[TELEGRAM_ANTI_BOT] queued=false reason=queue_rejected type=${error.javaClass.simpleName}")
+            false
+        }
+    }
+
     fun notifyDiagnosticImage(
         normalizedPng: ByteArray,
         filename: String,
