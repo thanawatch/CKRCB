@@ -40,6 +40,12 @@ class BotOptionsTest {
     }
 
     @Test
+    fun antiBotImageDeliveryIsExplicitOptIn() {
+        assertEquals(false, BotOptions().saveAndSendAntiBotImages)
+        assertEquals(true, BotOptions(saveAndSendAntiBotImages = true).saveAndSendAntiBotImages)
+    }
+
+    @Test
     fun postRelayRequiresCookieRelay() {
         assertThrows(IllegalArgumentException::class.java) {
             BotOptions(postCookieRelaySequence = true)
