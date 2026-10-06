@@ -3,6 +3,8 @@ package com.example.cookierunbot.statistics
 object RoundResultStore {
     private const val MAX_ROUNDS = 50
     private const val MAX_ANTI_BOT_EVENTS = 30
+    private const val ANTI_BOT_TESTS_PER_CHALLENGE = 3
+    private const val ANTI_BOT_CHALLENGE_GAP_MS = 2 * 60 * 1000L
     private val lock = Any()
     private val results = ArrayDeque<RoundResult>()
     private val antiBotHistory = ArrayDeque<AntiBotEvent>()
@@ -16,9 +18,14 @@ object RoundResultStore {
     private var silverBoxes = 0
     private var goldBoxes = 0
     private var rainbowBoxes = 0
+    private var antiBotChallengeCount = 0
+    private var antiBotCompletedChallengeCount = 0
+    private val completedAntiBotChallenges = mutableSetOf<Int>()
     private var antiBotDetectedCount = 0
+    private var antiBotCompletedTestCount = 0
     private var antiBotSelectedTapCount = 0
     private var antiBotSuccessfulTapCount = 0
+    private var antiBotLatestEvidence: AntiBotEvidence? = null
 
     fun startNewSession(wallClockMs: Long = System.currentTimeMillis()): Long = synchronized(lock) {
         sessionGeneration += 1L
@@ -27,7 +34,11 @@ object RoundResultStore {
         cumulativeByRound.clear()
         totalCoins = 0; totalXp = 0; totalBoxes = 0
         woodBoxes = 0; silverBoxes = 0; goldBoxes = 0; rainbowBoxes = 0
-        antiBotDetectedCount = 0; antiBotSelectedTapCount = 0; antiBotSuccessfulTapCount = 0
+        antiBotChallengeCount = 0; antiBotCompletedChallengeCount = 0
+        completedAntiBotChallenges.clear()
+        antiBotDetectedCount = 0; antiBotCompletedTestCount = 0
+        antiBotSelectedTapCount = 0; antiBotSuccessfulTapCount = 0
+        antiBotLatestEvidence = null
         sessionStartedAt = wallClockMs
         sessionGeneration
     }
@@ -39,11 +50,26 @@ object RoundResultStore {
         detectedAt: Long = System.currentTimeMillis(),
     ): Boolean = synchronized(lock) {
         if (generation != sessionGeneration) return@synchronized false
+        val previous = antiBotHistory.firstOrNull()
+        val startsNewChallenge = previous == null ||
+            previous.testIndexInChallenge >= ANTI_BOT_TESTS_PER_CHALLENGE ||
+            detectedAt - previous.detectedAt > ANTI_BOT_CHALLENGE_GAP_MS ||
+            detectedAt < previous.detectedAt
+        val challengeIndex = if (startsNewChallenge) {
+            antiBotChallengeCount += 1
+            antiBotChallengeCount
+        } else {
+            previous.challengeIndex
+        }
+        val testIndex = if (startsNewChallenge) 1 else previous.testIndexInChallenge + 1
+
         antiBotDetectedCount += 1
         antiBotSelectedTapCount += selectedCards.size
         antiBotHistory.addFirst(
             AntiBotEvent(
                 detectionIndex = antiBotDetectedCount,
+                challengeIndex = challengeIndex,
+                testIndexInChallenge = testIndex,
                 round = round,
                 detectedAt = detectedAt,
                 selectedCards = selectedCards.toList(),
@@ -59,17 +85,50 @@ object RoundResultStore {
         card: Int? = null,
     ): Boolean = synchronized(lock) {
         if (generation != sessionGeneration) return@synchronized false
-        if (detectionIndex != null && card != null) {
-            val index = antiBotHistory.indexOfFirst { it.detectionIndex == detectionIndex }
-            if (index >= 0) {
-                val current = antiBotHistory[index]
-                if (card in current.successfulCards) return@synchronized true
-                antiBotHistory[index] = current.copy(
-                    successfulCards = current.successfulCards + card,
-                )
+        if (detectionIndex == null || card == null) {
+            antiBotSuccessfulTapCount += 1
+            return@synchronized true
+        }
+        val index = antiBotHistory.indexOfFirst { it.detectionIndex == detectionIndex }
+        if (index < 0) return@synchronized false
+
+        val current = antiBotHistory[index]
+        if (card in current.successfulCards) return@synchronized true
+        val wasCompleted = current.completed
+        val updated = current.copy(successfulCards = current.successfulCards + card)
+        antiBotHistory[index] = updated
+        antiBotSuccessfulTapCount += 1
+
+        if (!wasCompleted && updated.completed) {
+            antiBotCompletedTestCount += 1
+            val challengeComplete = updated.testIndexInChallenge == ANTI_BOT_TESTS_PER_CHALLENGE &&
+                antiBotHistory
+                    .filter { it.challengeIndex == updated.challengeIndex }
+                    .let { events ->
+                        events.size >= ANTI_BOT_TESTS_PER_CHALLENGE &&
+                            events.all { it.completed }
+                    }
+            if (challengeComplete && completedAntiBotChallenges.add(updated.challengeIndex)) {
+                antiBotCompletedChallengeCount += 1
             }
         }
-        antiBotSuccessfulTapCount += 1
+        true
+    }
+
+    fun recordAntiBotEvidence(
+        generation: Long,
+        detectionIndex: Int,
+        status: AntiBotEvidenceStatus,
+        attempt: Int = 0,
+        updatedAt: Long = System.currentTimeMillis(),
+    ): Boolean = synchronized(lock) {
+        if (generation != sessionGeneration) return@synchronized false
+        antiBotLatestEvidence = AntiBotEvidence(
+            detectionIndex = detectionIndex,
+            status = status,
+            attempt = attempt,
+            updatedAt = updatedAt,
+        )
         true
     }
 
@@ -116,10 +175,14 @@ object RoundResultStore {
             history = history,
             sessionRuntimeMs = if (sessionStartedAt == 0L) 0L else
                 (System.currentTimeMillis() - sessionStartedAt).coerceAtLeast(0L),
+            antiBotChallengeCount = antiBotChallengeCount,
+            antiBotCompletedChallengeCount = antiBotCompletedChallengeCount,
             antiBotDetectedCount = antiBotDetectedCount,
+            antiBotCompletedTestCount = antiBotCompletedTestCount,
             antiBotSelectedTapCount = antiBotSelectedTapCount,
             antiBotSuccessfulTapCount = antiBotSuccessfulTapCount,
             antiBotHistory = antiBotHistory.toList(),
+            antiBotLatestEvidence = antiBotLatestEvidence,
         )
     }
 
@@ -131,7 +194,11 @@ object RoundResultStore {
         sessionGeneration = 0L
         totalCoins = 0; totalXp = 0; totalBoxes = 0
         woodBoxes = 0; silverBoxes = 0; goldBoxes = 0; rainbowBoxes = 0
-        antiBotDetectedCount = 0; antiBotSelectedTapCount = 0; antiBotSuccessfulTapCount = 0
+        antiBotChallengeCount = 0; antiBotCompletedChallengeCount = 0
+        completedAntiBotChallenges.clear()
+        antiBotDetectedCount = 0; antiBotCompletedTestCount = 0
+        antiBotSelectedTapCount = 0; antiBotSuccessfulTapCount = 0
+        antiBotLatestEvidence = null
     }
 
     private fun replaceContribution(round: Int, replacement: RoundContribution) {
