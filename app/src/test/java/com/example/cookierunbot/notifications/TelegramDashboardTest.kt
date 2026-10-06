@@ -174,7 +174,7 @@ class TelegramDashboardTest {
                     detectionIndex = 1,
                     challengeIndex = 1,
                     testIndexInChallenge = 1,
-                    round = 30,
+                    round = 31,
                     detectedAt = 500L,
                     selectedCards = listOf(3, 4),
                     successfulCards = listOf(3, 4),
