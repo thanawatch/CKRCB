@@ -14,10 +14,34 @@ data class RoundResult(
 
 data class AntiBotEvent(
     val detectionIndex: Int,
+    val challengeIndex: Int,
+    val testIndexInChallenge: Int,
     val round: Int,
     val detectedAt: Long,
     val selectedCards: List<Int>,
     val successfulCards: List<Int> = emptyList(),
+) {
+    val completed: Boolean
+        get() = selectedCards.isNotEmpty() && successfulCards.size >= selectedCards.size
+}
+
+enum class AntiBotEvidenceStatus {
+    QUEUED,
+    RETRYING,
+    SENT,
+    ENCODE_FAILED,
+    QUEUE_FAILED,
+    SEND_FAILED,
+    CONFIG_CHANGED,
+    TELEGRAM_DISABLED,
+    INVALID_CONFIG,
+}
+
+data class AntiBotEvidence(
+    val detectionIndex: Int,
+    val status: AntiBotEvidenceStatus,
+    val attempt: Int = 0,
+    val updatedAt: Long = System.currentTimeMillis(),
 )
 
 data class SessionStatistics(
@@ -32,8 +56,12 @@ data class SessionStatistics(
     val lastRound: RoundResult?,
     val history: List<RoundResult>,
     val sessionRuntimeMs: Long,
+    val antiBotChallengeCount: Int = 0,
+    val antiBotCompletedChallengeCount: Int = 0,
     val antiBotDetectedCount: Int = 0,
+    val antiBotCompletedTestCount: Int = 0,
     val antiBotSelectedTapCount: Int = 0,
     val antiBotSuccessfulTapCount: Int = 0,
     val antiBotHistory: List<AntiBotEvent> = emptyList(),
+    val antiBotLatestEvidence: AntiBotEvidence? = null,
 )
