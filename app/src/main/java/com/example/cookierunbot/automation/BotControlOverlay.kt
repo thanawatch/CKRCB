@@ -274,7 +274,7 @@ class BotControlOverlay(private val context: Context) {
         addSwitch(saveResultImages, "Save GAME_COMPLETE / MYSTERY_BOX Images", options.saveResultImages)
         addSwitch(
             antiBotTelegramImages,
-            "Save & send Anti-bot image to Telegram",
+            "Send Anti-bot image to Telegram",
             options.saveAndSendAntiBotImages,
         )
         val saveImageOptions = android.widget.CompoundButton.OnCheckedChangeListener { _, _ ->
