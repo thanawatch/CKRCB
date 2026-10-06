@@ -26,6 +26,7 @@ object BotOptionsStore {
             .putString("slide_mode", options.slideMode.name)
             .putInt("fixed_slide_count", options.fixedSlideCount)
             .putInt("slide_interval_ms", options.slideIntervalMs)
+            .putBoolean("anti_bot_image_telegram", options.saveAndSendAntiBotImages)
             .apply()
     }
 
@@ -87,6 +88,10 @@ object BotOptionsStore {
                 } else {
                     preferences.getInt("slide_interval_ms", 250)
                 },
+                saveAndSendAntiBotImages = preferences.getBoolean(
+                    "anti_bot_image_telegram",
+                    false,
+                ),
             )
         }.getOrDefault(BotOptions())
     }
