@@ -3169,7 +3169,7 @@ class BotController(
                     success &&
                     RoundResultStore.recordAntiBotSuccessfulTap(
                         statisticsGeneration,
-                        detectionIndex = detectionIndex.takeIf { it > 0 },
+                        detectionIndex = detectionIndex,
                         card = cardNumber,
                     )
                 ) {
