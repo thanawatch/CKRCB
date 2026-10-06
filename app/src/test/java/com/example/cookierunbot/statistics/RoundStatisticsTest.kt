@@ -216,6 +216,23 @@ class RoundStatisticsTest {
         )
     }
 
+    @Test fun staleAntiBotEvidenceCannotOverwriteNewerDetection() {
+        val generation = RoundResultStore.startNewSession()
+        assertTrue(
+            RoundResultStore.recordAntiBotEvidence(
+                generation, 2, AntiBotEvidenceStatus.QUEUED,
+            ),
+        )
+        assertFalse(
+            RoundResultStore.recordAntiBotEvidence(
+                generation, 1, AntiBotEvidenceStatus.SENT,
+            ),
+        )
+        val latest = RoundResultStore.snapshot().antiBotLatestEvidence
+        assertEquals(2, latest?.detectionIndex)
+        assertEquals(AntiBotEvidenceStatus.QUEUED, latest?.status)
+    }
+
     @Test fun antiBotHistoryKeepsLatestThirtyButTotalsCoverWholeSession() {
         val generation = RoundResultStore.startNewSession()
         (1..35).forEach { round ->
