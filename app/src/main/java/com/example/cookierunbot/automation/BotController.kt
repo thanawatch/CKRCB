@@ -3166,7 +3166,7 @@ class BotController(
         selectedCards: List<Int>,
         detectionCount: Int,
     ) {
-        if (!options.saveAndSendAntiBotImages) return
+        if (!BotOptionsStore.shouldSaveAndSendAntiBotImages(context)) return
         val ownedFrame = frame.clone()
         val capturedRound = roundNumber
         val filename = "anti_bot_round_${capturedRound.toString().padStart(4, '0')}_detection_$detectionCount.png"
