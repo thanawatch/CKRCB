@@ -147,14 +147,24 @@ class TelegramDashboardTest {
         assertTrue(formatRoundsReply(stats(emptyList())).contains("No completed rounds"))
     }
 
-    @Test fun antiBotReplyShowsTotalsToggleAndRecentCardHistory() {
+    @Test fun antiBotReplyShowsChallengesEvidenceAndRecentCardHistory() {
         val stats = stats(emptyList()).copy(
+            antiBotChallengeCount = 1,
+            antiBotCompletedChallengeCount = 0,
             antiBotDetectedCount = 2,
+            antiBotCompletedTestCount = 1,
             antiBotSelectedTapCount = 4,
             antiBotSuccessfulTapCount = 3,
+            antiBotLatestEvidence = com.example.cookierunbot.statistics.AntiBotEvidence(
+                detectionIndex = 2,
+                status = com.example.cookierunbot.statistics.AntiBotEvidenceStatus.RETRYING,
+                attempt = 2,
+            ),
             antiBotHistory = listOf(
                 com.example.cookierunbot.statistics.AntiBotEvent(
                     detectionIndex = 2,
+                    challengeIndex = 1,
+                    testIndexInChallenge = 2,
                     round = 31,
                     detectedAt = 1_000L,
                     selectedCards = listOf(2, 6),
@@ -162,6 +172,8 @@ class TelegramDashboardTest {
                 ),
                 com.example.cookierunbot.statistics.AntiBotEvent(
                     detectionIndex = 1,
+                    challengeIndex = 1,
+                    testIndexInChallenge = 1,
                     round = 30,
                     detectedAt = 500L,
                     selectedCards = listOf(3, 4),
@@ -170,25 +182,41 @@ class TelegramDashboardTest {
             ),
         )
         val reply = formatAntiBotReply(stats, imageDeliveryEnabled = true)
-        assertTrue(reply.contains("Detected screens: 2"))
+        assertTrue(reply.contains("Challenges: 1"))
+        assertTrue(reply.contains("Challenges completed: 0"))
+        assertTrue(reply.contains("Tests detected: 2"))
+        assertTrue(reply.contains("Tests completed: 1"))
         assertTrue(reply.contains("Successful taps: 3/4"))
         assertTrue(reply.contains("Success rate: 75.0%"))
         assertTrue(reply.contains("Telegram image delivery: ON"))
-        assertTrue(reply.contains("Latest evidence: none yet"))
-        assertTrue(reply.contains("#2 • Round 31"))
+        assertTrue(reply.contains("Latest evidence: #2: retrying (attempt 2)"))
+        assertTrue(reply.contains("#2 • Challenge 1 Test 2/3 • Round 31"))
         assertTrue(reply.contains("Cards: 2, 6 | Successful: 1/2 (2)"))
     }
 
-    @Test fun antiBotEvidenceStatusOnlySummarizesKnownEvidenceLines() {
-        val logs = """
-            [x] [TELEGRAM_CONFIG] botToken=never_surface
-            [x] [ANTI_BOT_EVIDENCE] telegramQueued=true localSave=false
-            [x] [TELEGRAM_ANTI_BOT] success=true code=200 reason=success
-        """.trimIndent()
-        val status = latestAntiBotEvidenceStatus(logs)
-        assertEquals("Telegram sent", status)
-        assertFalse(requireNotNull(status).contains("botToken"))
-        assertNull(latestAntiBotEvidenceStatus("[x] unrelated"))
+    @Test fun antiBotReplyReportsEncodeAndConfigFailuresFromSessionState() {
+        val encode = formatAntiBotReply(
+            stats(emptyList()).copy(
+                antiBotLatestEvidence = com.example.cookierunbot.statistics.AntiBotEvidence(
+                    1,
+                    com.example.cookierunbot.statistics.AntiBotEvidenceStatus.ENCODE_FAILED,
+                ),
+            ),
+            imageDeliveryEnabled = true,
+        )
+        assertTrue(encode.contains("PNG encode FAILED"))
+
+        val changed = formatAntiBotReply(
+            stats(emptyList()).copy(
+                antiBotLatestEvidence = com.example.cookierunbot.statistics.AntiBotEvidence(
+                    2,
+                    com.example.cookierunbot.statistics.AntiBotEvidenceStatus.CONFIG_CHANGED,
+                    attempt = 2,
+                ),
+            ),
+            imageDeliveryEnabled = true,
+        )
+        assertTrue(changed.contains("cancelled: Telegram config changed"))
     }
 
     @Test fun errorSummaryOnlyReturnsWhitelistedEventsAndAtMostFive() {
