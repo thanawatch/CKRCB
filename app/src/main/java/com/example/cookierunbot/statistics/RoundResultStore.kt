@@ -82,14 +82,10 @@ object RoundResultStore {
 
     fun recordAntiBotSuccessfulTap(
         generation: Long,
-        detectionIndex: Int? = null,
-        card: Int? = null,
+        detectionIndex: Int,
+        card: Int,
     ): Boolean = synchronized(lock) {
         if (generation != sessionGeneration) return@synchronized false
-        if (detectionIndex == null || card == null) {
-            antiBotSuccessfulTapCount += 1
-            return@synchronized true
-        }
         val index = antiBotHistory.indexOfFirst { it.detectionIndex == detectionIndex }
         if (index < 0) return@synchronized false
 
