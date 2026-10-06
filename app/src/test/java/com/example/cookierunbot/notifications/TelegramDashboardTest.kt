@@ -173,7 +173,7 @@ class TelegramDashboardTest {
         assertTrue(reply.contains("Detected screens: 2"))
         assertTrue(reply.contains("Successful taps: 3/4"))
         assertTrue(reply.contains("Success rate: 75.0%"))
-        assertTrue(reply.contains("Evidence image + Telegram: ON"))
+        assertTrue(reply.contains("Telegram image delivery: ON"))
         assertTrue(reply.contains("Latest evidence: none yet"))
         assertTrue(reply.contains("#2 • Round 31"))
         assertTrue(reply.contains("Cards: 2, 6 | Successful: 1/2 (2)"))
@@ -182,11 +182,11 @@ class TelegramDashboardTest {
     @Test fun antiBotEvidenceStatusOnlySummarizesKnownEvidenceLines() {
         val logs = """
             [x] [TELEGRAM_CONFIG] botToken=never_surface
-            [x] [ANTI_BOT_EVIDENCE] saveSuccess=true telegramQueued=true
+            [x] [ANTI_BOT_EVIDENCE] telegramQueued=true localSave=false
             [x] [TELEGRAM_ANTI_BOT] success=true code=200 reason=success
         """.trimIndent()
         val status = latestAntiBotEvidenceStatus(logs)
-        assertEquals("local save OK | Telegram sent", status)
+        assertEquals("Telegram sent", status)
         assertFalse(requireNotNull(status).contains("botToken"))
         assertNull(latestAntiBotEvidenceStatus("[x] unrelated"))
     }
