@@ -6,6 +6,19 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TelegramAntiBotDeliveryTest {
+    @Test fun antiBotDestinationBindingRejectsChangedTelegramConfig() {
+        val original = TelegramConfig(
+            enabled = true,
+            botToken = "token-a",
+            chatId = "123",
+        )
+        val target = TelegramCommandReplyTarget.from(original)
+        assertTrue(target.matches(original))
+        assertFalse(target.matches(original.copy(botToken = "token-b")))
+        assertFalse(target.matches(original.copy(chatId = "456")))
+        assertFalse(target.matches(original.copy(enabled = false)))
+    }
+
     @Test fun antiBotRetryUsesRetryAfterFor429() {
         val decision = telegramAntiBotRetryDecision(
             attempt = 1,
