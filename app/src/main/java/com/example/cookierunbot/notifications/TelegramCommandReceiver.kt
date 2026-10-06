@@ -208,6 +208,7 @@ internal fun telegramCommandReply(command: String): String? = when (command) {
         TelegramCommandReceiver.commandContext()?.let {
             BotOptionsStore.shouldSaveAndSendAntiBotImages(it)
         } == true,
+        latestAntiBotEvidenceStatus(DebugLogStore.snapshot().text),
     )
     "/dashboard" -> "🤖 RobotRun Dashboard\n\nTap a button below. 📊 All shows stats, status and last round; 🤖 Anti Bot shows Anti-bot totals and recent card history; 📥 Download Logs sends a private ZIP; 📦 Update App checks the feed and sends a verified newer APK."
     else -> null
