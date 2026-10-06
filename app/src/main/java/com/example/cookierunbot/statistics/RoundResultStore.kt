@@ -98,17 +98,23 @@ object RoundResultStore {
 
         if (!wasCompleted && updated.completed) {
             antiBotCompletedTestCount += 1
-            val challengeComplete = updated.testIndexInChallenge == ANTI_BOT_TESTS_PER_CHALLENGE &&
-                antiBotHistory
-                    .filter { it.challengeIndex == updated.challengeIndex }
-                    .let { events ->
-                        events.size >= ANTI_BOT_TESTS_PER_CHALLENGE &&
-                            events.all { it.completed }
-                    }
-            if (challengeComplete && completedAntiBotChallenges.add(updated.challengeIndex)) {
-                antiBotCompletedChallengeCount += 1
-            }
         }
+        true
+    }
+
+    fun recordAntiBotExited(generation: Long): Boolean = synchronized(lock) {
+        if (generation != sessionGeneration) return@synchronized false
+        val latest = antiBotHistory.firstOrNull() ?: return@synchronized false
+        if (latest.testIndexInChallenge != ANTI_BOT_TESTS_PER_CHALLENGE) {
+            return@synchronized false
+        }
+        val challengeEvents = antiBotHistory.filter { it.challengeIndex == latest.challengeIndex }
+        val completed = challengeEvents.size >= ANTI_BOT_TESTS_PER_CHALLENGE &&
+            challengeEvents.all { it.completed }
+        if (!completed || !completedAntiBotChallenges.add(latest.challengeIndex)) {
+            return@synchronized false
+        }
+        antiBotCompletedChallengeCount += 1
         true
     }
 
