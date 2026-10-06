@@ -3233,6 +3233,14 @@ class BotController(
                         png,
                         filename,
                         caption,
+                        onRetry = { nextAttempt ->
+                            RoundResultStore.recordAntiBotEvidence(
+                                statisticsGeneration,
+                                detectionIndex,
+                                AntiBotEvidenceStatus.RETRYING,
+                                attempt = nextAttempt,
+                            )
+                        },
                     ) { result ->
                         val status = when {
                             result.success -> AntiBotEvidenceStatus.SENT
