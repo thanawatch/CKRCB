@@ -63,6 +63,8 @@ class TelegramCommandReceiverTest {
         val boxReply = formatBoxesReply(stats)
         assertTrue(sessionReply.contains("Rounds: 75"))
         assertTrue(sessionReply.contains("Coins: 126,540"))
+        assertTrue(sessionReply.contains("Anti-bot detected: 0"))
+        assertTrue(sessionReply.contains("Anti-bot successful taps: 0"))
         assertTrue(boxReply.contains("Total: 17"))
         assertTrue(boxReply.contains("Rainbow: 1"))
     }
