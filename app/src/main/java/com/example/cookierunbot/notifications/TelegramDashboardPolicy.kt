@@ -15,7 +15,7 @@ internal object TelegramDashboardPolicy {
     const val UPDATE = "📦 Update App"
     const val LOGS = "📥 Download Logs"
     const val DASHBOARD = "🏠 Dashboard"
-    const val REFRESH = "🔄 Refresh"
+    const val ANTI_BOT = "🤖 Anti Bot"
 
     const val keyboardJson = """
         {"keyboard":[
@@ -24,7 +24,7 @@ internal object TelegramDashboardPolicy {
           [{"text":"⏱ Watchdog"},{"text":"🎮 Rounds"}],
           [{"text":"⚠️ Errors"},{"text":"📥 Download Logs"}],
           [{"text":"📦 Update App"},{"text":"🏠 Dashboard"}],
-          [{"text":"🔄 Refresh"}]
+          [{"text":"🤖 Anti Bot"}]
         ],"resize_keyboard":true,"is_persistent":true,"one_time_keyboard":false}
     """
 
@@ -33,7 +33,8 @@ internal object TelegramDashboardPolicy {
             nowNanos - capturedAtNanos <= 1_000_000_000L
 
     fun commandForButton(text: String): String? = when (text.trim()) {
-        ALL, REFRESH -> "/all"
+        ALL -> "/all"
+        ANTI_BOT -> "/antibot"
         SCREEN -> "/screen"
         FRIEND -> "/friend"
         HEALTH -> "/health"
