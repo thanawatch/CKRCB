@@ -47,6 +47,31 @@ private const val FAST_START_GESTURE_RELEASE_POLL_MS = 10L
 
 enum class DetectionGroup { PRE_GAME, IN_GAME, POST_GAME }
 
+internal val IN_GAME_BACKGROUND_RECOVERY_STAGES = listOf(
+    BotStage.ANTI_BOT,
+    BotStage.OVERTAKE_BREAK_SCORE,
+    BotStage.MYSTERY_BOX,
+    BotStage.CONGRATULATIONS,
+    BotStage.RELIC_COMPLETE,
+    BotStage.RELIC_CLAIM,
+    BotStage.TOO_MANY_TREASURES,
+    BotStage.MAINMENU,
+    BotStage.PARTY_RUN,
+    BotStage.PARTY_RUN_SEASON_REWARDS,
+    BotStage.TIME_DEAL,
+    BotStage.PREVIOUS_RESULTS,
+    BotStage.GAME_SETTINGS,
+    BotStage.PURCHASE_ITEM,
+    BotStage.LEVEL_UP,
+    BotStage.DAILY_CHECKIN,
+    BotStage.DAILY_CHECKIN_BOOST_SET,
+    BotStage.DAILY_TREASURE,
+    BotStage.DAILY_NEW,
+    BotStage.ENTER_LEAGUE,
+    BotStage.LEAGUE_RESULTS,
+    BotStage.PREVIOUS_RANK_RESULTS,
+)
+
 internal data class BackgroundStageSelection(
     val stage: BotStage?,
     val nextCursor: Int,
@@ -1301,7 +1326,7 @@ class BotController(
                 )
             ) {
                 val backgroundStages = filterRelicStages(
-                    IN_GAME_BACKGROUND_RECOVERY,
+                    IN_GAME_BACKGROUND_RECOVERY_STAGES,
                     options.detectRelic,
                     RELIC_STAGES,
                 )
@@ -5581,32 +5606,6 @@ class BotController(
             BotStage.MAINMENU, BotStage.PURCHASE_ITEM,
         )
         private val IN_GAME = listOf(BotStage.GAME_RELAY, BotStage.GAME_COMPLETE, BotStage.GAME_START)
-        // Background recovery intentionally excludes every primary gameplay state and CLOSE_BUTTON.
-        // Non-Anti-bot matches require confirmation on a second fresh frame before dispatch.
-        private val IN_GAME_BACKGROUND_RECOVERY = listOf(
-            BotStage.ANTI_BOT,
-            BotStage.OVERTAKE_BREAK_SCORE,
-            BotStage.MYSTERY_BOX,
-            BotStage.CONGRATULATIONS,
-            BotStage.RELIC_COMPLETE,
-            BotStage.RELIC_CLAIM,
-            BotStage.TOO_MANY_TREASURES,
-            BotStage.MAINMENU,
-            BotStage.PARTY_RUN,
-            BotStage.PARTY_RUN_SEASON_REWARDS,
-            BotStage.TIME_DEAL,
-            BotStage.PREVIOUS_RESULTS,
-            BotStage.GAME_SETTINGS,
-            BotStage.PURCHASE_ITEM,
-            BotStage.LEVEL_UP,
-            BotStage.DAILY_CHECKIN,
-            BotStage.DAILY_CHECKIN_BOOST_SET,
-            BotStage.DAILY_TREASURE,
-            BotStage.DAILY_NEW,
-            BotStage.ENTER_LEAGUE,
-            BotStage.LEAGUE_RESULTS,
-            BotStage.PREVIOUS_RANK_RESULTS,
-        )
         private val FAST_START_PRIORITY = listOf(BotStage.GAME_START)
         private const val IN_GAME_FRAME_WAIT_MS = 500L
         private const val DESIRED_BOOST_TIMEOUT_MS = 30_000L
