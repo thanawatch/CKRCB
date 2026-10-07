@@ -4846,6 +4846,27 @@ class BotController(
         }
     }
 
+    private fun antiBotCardLayoutFingerprint(frame: Mat): AntiBotCardLayoutFingerprint? {
+        if (frame.empty()) return null
+        val gray = Mat()
+        return try {
+            when (frame.channels()) {
+                1 -> frame.copyTo(gray)
+                4 -> Imgproc.cvtColor(frame, gray, Imgproc.COLOR_RGBA2GRAY)
+                else -> Imgproc.cvtColor(frame, gray, Imgproc.COLOR_BGR2GRAY)
+            }
+            val pixels = ByteArray(gray.cols() * gray.rows())
+            gray.get(0, 0, pixels)
+            AntiBotCardLayoutFingerprinting.sample(
+                pixels,
+                gray.cols(),
+                gray.rows(),
+            )
+        } finally {
+            gray.release()
+        }
+    }
+
     private fun popupFingerprint(frame: Mat, stage: BotStage): PopupFingerprint? {
         if (frame.empty()) return null
         val gray = Mat()
