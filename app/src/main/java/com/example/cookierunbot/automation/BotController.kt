@@ -1758,7 +1758,13 @@ class BotController(
             }
         }
         when (result.state) {
-            BotStage.LOGIN -> handleLogin(result, sourceWidth, sourceHeight, frameGeneration)
+            BotStage.LOGIN -> handleLogin(
+                detector,
+                result,
+                sourceWidth,
+                sourceHeight,
+                frameGeneration,
+            )
             BotStage.MAINMENU -> handleMainMenu(detector, sourceWidth, sourceHeight)
             BotStage.PURCHASE_ITEM -> handlePurchaseItem(detector, sourceWidth, sourceHeight)
             BotStage.GAME_START -> handleGameStart(result, frame, sourceWidth, sourceHeight, timing)
@@ -3728,6 +3734,7 @@ class BotController(
     }
 
     private fun handleLogin(
+        detector: StateDetector,
         result: DetectionResult,
         sourceWidth: Int,
         sourceHeight: Int,
@@ -3795,13 +3802,117 @@ class BotController(
             return
         }
 
-        minimumFreshFrameGeneration = googleBaseline
+        logDiagnostic(
+            "[LOGIN] googleDispatchAccepted=true action=SEARCH_ACCOUNT_PICKER " +
+                "timeoutMs=${LoginPolicy.ACCOUNT_PICKER_SEARCH_TIMEOUT_MS}",
+        )
+        val profileTapGeneration = waitForLoginAccountPickerAndTap(
+            detector = detector,
+            afterGeneration = googleBaseline,
+        )
+        if (!isRunning()) return
+
+        if (profileTapGeneration != null) {
+            minimumFreshFrameGeneration = profileTapGeneration
+            logDiagnostic(
+                "[LOGIN] accountPickerResult=TAPPED_PROFILE " +
+                    "freshFrameRequiredAfter=$profileTapGeneration",
+            )
+        } else {
+            logDiagnostic(
+                "[LOGIN] accountPickerResult=TIMEOUT action=END_LOGIN_FLOW",
+            )
+        }
         updateGroup(DetectionGroup.PRE_GAME)
         lastStage = null
-        logDiagnostic(
-            "[LOGIN] googleDispatchAccepted=true next=PRE_GAME " +
-                "freshFrameRequiredAfter=$googleBaseline",
+        logDiagnostic("[LOGIN] flowComplete=true next=PRE_GAME")
+    }
+
+    private fun waitForLoginAccountPickerAndTap(
+        detector: StateDetector,
+        afterGeneration: Long,
+    ): Long? {
+        val roi = Rect(
+            LoginPolicy.ACCOUNT_PICKER_ROI_LEFT,
+            LoginPolicy.ACCOUNT_PICKER_ROI_TOP,
+            LoginPolicy.ACCOUNT_PICKER_ROI_RIGHT - LoginPolicy.ACCOUNT_PICKER_ROI_LEFT,
+            LoginPolicy.ACCOUNT_PICKER_ROI_BOTTOM - LoginPolicy.ACCOUNT_PICKER_ROI_TOP,
         )
+        val startedAt = SystemClock.elapsedRealtime()
+        var baselineGeneration = afterGeneration
+        var lastStatusLogAt = 0L
+        logDiagnostic(
+            "[LOGIN_ACCOUNT_PICKER] action=SEARCH_START " +
+                "roi=(${roi.x},${roi.y},${roi.x + roi.width},${roi.y + roi.height}) " +
+                "timeoutMs=${LoginPolicy.ACCOUNT_PICKER_SEARCH_TIMEOUT_MS} " +
+                "baselineGeneration=$baselineGeneration",
+        )
+
+        while (isRunning()) {
+            val now = SystemClock.elapsedRealtime()
+            if (LoginPolicy.accountPickerSearchExpired(startedAt, now)) {
+                logDiagnostic(
+                    "[LOGIN_ACCOUNT_PICKER] action=TIMEOUT matched=false " +
+                        "elapsedMs=${now - startedAt}",
+                )
+                return null
+            }
+            val remainingMs = (
+                LoginPolicy.ACCOUNT_PICKER_SEARCH_TIMEOUT_MS - (now - startedAt)
+            ).coerceAtLeast(1L)
+            val snapshot = LatestFrameProvider.awaitNextSnapshot(
+                baselineGeneration,
+                minOf(LoginPolicy.ACCOUNT_PICKER_FRAME_WAIT_MS, remainingMs),
+            ) ?: continue
+            baselineGeneration = snapshot.generation
+
+            try {
+                val match = detector.detectTemplate(
+                    snapshot.mat,
+                    LoginPolicy.ACCOUNT_PICKER_TEMPLATE,
+                    roi,
+                    LoginPolicy.ACCOUNT_PICKER_MATCH_THRESHOLD,
+                )
+                if (match.matched) {
+                    detectionActionFrameGeneration.set(snapshot.generation)
+                    val profilePoint = LoginPolicy.ACCOUNT_PROFILE_POINT
+                    logDiagnostic(
+                        "[LOGIN_ACCOUNT_PICKER] matched=true score=${format(match.score)} " +
+                            "match=(${match.x},${match.y},${match.width},${match.height}) " +
+                            "profilePoint=(${profilePoint.x},${profilePoint.y}) " +
+                            "frameGeneration=${snapshot.generation}",
+                    )
+                    val accepted = performTap(
+                        "LOGIN_PROFILE",
+                        profilePoint,
+                        snapshot.sourceWidth,
+                        snapshot.sourceHeight,
+                        jitter = 0,
+                    )
+                    if (accepted) {
+                        logDiagnostic(
+                            "[LOGIN_ACCOUNT_PICKER] action=TAP_PROFILE accepted=true " +
+                                "logical=(${profilePoint.x},${profilePoint.y}) " +
+                                "frameGeneration=${snapshot.generation}",
+                        )
+                        return snapshot.generation
+                    }
+                    logDiagnostic(
+                        "[LOGIN_ACCOUNT_PICKER] action=TAP_PROFILE accepted=false " +
+                            "continueSearching=true frameGeneration=${snapshot.generation}",
+                    )
+                } else if (now - lastStatusLogAt >= LoginPolicy.ACCOUNT_PICKER_LOG_INTERVAL_MS) {
+                    logDiagnostic(
+                        "[LOGIN_ACCOUNT_PICKER] matched=false score=${format(match.score)} " +
+                            "elapsedMs=${now - startedAt} frameGeneration=${snapshot.generation}",
+                    )
+                    lastStatusLogAt = now
+                }
+            } finally {
+                snapshot.mat.release()
+            }
+        }
+        return null
     }
 
     private fun handleAntiBot(detector: StateDetector, frame: Mat, sourceWidth: Int, sourceHeight: Int) {
