@@ -3768,12 +3768,39 @@ class BotController(
         }
 
         lastLoginTapAt = now
-        minimumFreshFrameGeneration = frameGeneration
+        logDiagnostic(
+            "[LOGIN] dispatchAccepted=true action=WAIT_FOR_GOOGLE_ACCOUNT " +
+                "delayMs=${LoginPolicy.GOOGLE_ACCOUNT_DELAY_MS}",
+        )
+        delayOrStop(LoginPolicy.GOOGLE_ACCOUNT_DELAY_MS)
+
+        val googleBaseline = LatestFrameProvider.currentGeneration()
+        val googlePoint = LoginPolicy.GOOGLE_LOGO_POINT
+        logDiagnostic(
+            "[LOGIN] action=TAP_GOOGLE_LOGO logical=(${googlePoint.x},${googlePoint.y}) " +
+                "baselineGeneration=$googleBaseline",
+        )
+        val googleAccepted = performTap(
+            "LOGIN_GOOGLE",
+            googlePoint,
+            sourceWidth,
+            sourceHeight,
+            jitter = 0,
+        )
+        if (!googleAccepted) {
+            lastStage = null
+            logDiagnostic(
+                "[LOGIN] googleDispatchAccepted=false action=WAIT_FOR_REDETECT",
+            )
+            return
+        }
+
+        minimumFreshFrameGeneration = googleBaseline
         updateGroup(DetectionGroup.PRE_GAME)
         lastStage = null
         logDiagnostic(
-            "[LOGIN] dispatchAccepted=true next=PRE_GAME " +
-                "freshFrameRequiredAfter=$frameGeneration",
+            "[LOGIN] googleDispatchAccepted=true next=PRE_GAME " +
+                "freshFrameRequiredAfter=$googleBaseline",
         )
     }
 

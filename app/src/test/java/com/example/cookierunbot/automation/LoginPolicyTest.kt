@@ -23,6 +23,12 @@ class LoginPolicyTest {
     }
 
     @Test
+    fun googleAccountFollowUpUsesProvidedScreenCoordinateAndFiveSecondDelay() {
+        assertEquals(LogicalPoint(657, 294), LoginPolicy.GOOGLE_LOGO_POINT)
+        assertEquals(5_000L, LoginPolicy.GOOGLE_ACCOUNT_DELAY_MS)
+    }
+
+    @Test
     fun retryWaitsThreeSecondsAfterAcceptedTap() {
         assertFalse(LoginPolicy.retryDue(nowMs = 3_999L, lastTapAtMs = 1_000L))
         assertTrue(LoginPolicy.retryDue(nowMs = 4_000L, lastTapAtMs = 1_000L))
