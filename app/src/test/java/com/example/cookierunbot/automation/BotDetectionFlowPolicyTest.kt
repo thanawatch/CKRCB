@@ -56,6 +56,31 @@ class BotDetectionFlowPolicyTest {
         assertTrue(stages.indexOf(BotStage.LEVEL_UP) < stages.indexOf(BotStage.MAINMENU))
     }
 
+    @Test fun postGameKeepsLoginRecoveryButStillDropsPurchaseItem() {
+        val stages = postGameStages(
+            listOf(
+                BotStage.LOGIN,
+                BotStage.LEVEL_UP,
+                BotStage.MAINMENU,
+                BotStage.PURCHASE_ITEM,
+            ),
+            setOf(BotStage.LEVEL_UP),
+        )
+
+        assertEquals(
+            listOf(
+                BotStage.ANTI_BOT,
+                BotStage.OVERTAKE_BREAK_SCORE,
+                BotStage.MYSTERY_BOX,
+                BotStage.LOGIN,
+                BotStage.LEVEL_UP,
+                BotStage.MAINMENU,
+            ),
+            stages,
+        )
+        assertFalse(stages.contains(BotStage.PURCHASE_ITEM))
+    }
+
     @Test fun rewardPopupResumesItsPreOrPostGameGroup() {
         assertEquals(DetectionGroup.PRE_GAME, rewardPopupResumeGroup(DetectionGroup.PRE_GAME))
         assertEquals(DetectionGroup.POST_GAME, rewardPopupResumeGroup(DetectionGroup.POST_GAME))

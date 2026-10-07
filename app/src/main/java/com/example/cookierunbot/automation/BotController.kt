@@ -49,6 +49,7 @@ enum class DetectionGroup { PRE_GAME, IN_GAME, POST_GAME }
 
 internal val IN_GAME_BACKGROUND_RECOVERY_STAGES = listOf(
     BotStage.ANTI_BOT,
+    BotStage.LOGIN,
     BotStage.OVERTAKE_BREAK_SCORE,
     BotStage.MYSTERY_BOX,
     BotStage.CONGRATULATIONS,
@@ -6263,7 +6264,6 @@ class BotController(
         private val ALWAYS = listOf(
             BotStage.CONNECTION_LOST,
             BotStage.INACTIVE,
-            BotStage.LOGIN,
         )
         private val RELIC_STAGES = setOf(BotStage.RELIC_COMPLETE, BotStage.RELIC_CLAIM)
         private val REWARD_PRE_GAME_POPUPS = setOf(
@@ -6287,6 +6287,7 @@ class BotController(
             BotStage.GAME_SETTINGS,
         )
         private val PRE_GAME = listOf(
+            BotStage.LOGIN,
             BotStage.CONGRATULATIONS, BotStage.LEVEL_UP, BotStage.RELIC_COMPLETE,
             BotStage.RELIC_CLAIM, BotStage.DAILY_CHECKIN, BotStage.DAILY_CHECKIN_BOOST_SET,
             BotStage.DAILY_TREASURE, BotStage.DAILY_NEW, BotStage.ENTER_LEAGUE,

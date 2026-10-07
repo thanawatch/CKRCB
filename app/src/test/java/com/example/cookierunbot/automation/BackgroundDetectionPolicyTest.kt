@@ -94,11 +94,11 @@ class BackgroundDetectionPolicyTest {
             BotStage.GAME_COMPLETE,
             BotStage.CONNECTION_LOST,
             BotStage.INACTIVE,
-            BotStage.LOGIN,
             BotStage.CLOSE_BUTTON,
         )
 
         assertTrue(BotStage.ANTI_BOT in IN_GAME_BACKGROUND_RECOVERY_STAGES)
+        assertTrue(BotStage.LOGIN in IN_GAME_BACKGROUND_RECOVERY_STAGES)
         assertTrue(IN_GAME_BACKGROUND_RECOVERY_STAGES.none { it in forbidden })
     }
 
@@ -129,9 +129,9 @@ class BackgroundDetectionPolicyTest {
         assertEquals(
             listOf(
                 BotStage.ANTI_BOT,
-                BotStage.OVERTAKE_BREAK_SCORE,
+                BotStage.LOGIN,
                 BotStage.ANTI_BOT,
-                BotStage.MYSTERY_BOX,
+                BotStage.OVERTAKE_BREAK_SCORE,
             ),
             seen,
         )

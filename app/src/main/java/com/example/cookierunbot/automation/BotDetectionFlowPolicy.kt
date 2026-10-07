@@ -8,7 +8,7 @@ internal fun postGameStages(
     BotStage.ANTI_BOT,
     BotStage.OVERTAKE_BREAK_SCORE,
     BotStage.MYSTERY_BOX,
-) + preGameStages.filter { it in rewardPopups } + BotStage.MAINMENU
+) + preGameStages.filter { it == BotStage.LOGIN || it in rewardPopups } + BotStage.MAINMENU
 
 internal fun filterRelicStages(
     stages: List<BotStage>,

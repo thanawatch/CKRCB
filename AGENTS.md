@@ -91,10 +91,10 @@ Important rules:
 
 `BotController.stagesFor()` defines ordering:
 
-- `ALWAYS`: `CONNECTION_LOST`, `INACTIVE`, `LOGIN`, prepended to every normal group. `LOGIN` uses the normalized 1280×720 ROI `(390,570)-(890,700)`, scale 1.0 and the standard 0.8 threshold; its handler taps the center of the actual matched template rectangle, waits exactly 5 seconds, then taps logical `(657,294)` on the Google logo with zero jitter. After that Google tap, only this Login handler probes `LOGIN_ACCOUNT_PICKER_1.png` inside ROI `(270,75)-(1010,285)` for at most 60 seconds. If it matches, tap the profile circle at logical `(323,299)` with zero jitter and finish the Login flow; if it never matches, finish the Login flow without another tap. In either case resume PRE_GAME; only a successful profile tap installs a fresh-frame baseline. Accepted Login taps are rate-limited to one attempt per 3 seconds while the same login screen remains visible.
+- `ALWAYS`: only `CONNECTION_LOST` and `INACTIVE`, prepended to every normal group. `LOGIN` is primary in PRE_GAME/POST_GAME but **not** primary in IN_GAME; during gameplay it is checked only by the background/recovery rotation after primary gameplay states miss, and it is excluded entirely from the Fast Start priority window. `LOGIN` uses ROI `(390,570)-(890,700)`, scale 1.0 and threshold 0.8; its handler taps the detected template center, waits 5 seconds, taps Google at `(657,294)`, then probes `LOGIN_ACCOUNT_PICKER_1.png` in ROI `(270,75)-(1010,285)` for up to 60 seconds. On match it taps profile `(323,299)`; on timeout it ends without another tap. Both paths resume PRE_GAME.
 - `PRE_GAME`: reward/daily/relic/league/treasure/party/time-deal/previous-results/settings popups, then `MAINMENU`, then `PURCHASE_ITEM` (with relic states filtered unless enabled).
-- `IN_GAME`: `GAME_RELAY`, `GAME_COMPLETE`, `GAME_START`, followed by `ALWAYS`. During the 8-second Fast Start priority window it checks only `GAME_START` then `ALWAYS`.
-- `POST_GAME`: `ALWAYS`, then `ANTI_BOT`, `OVERTAKE_BREAK_SCORE`, `MYSTERY_BOX`, the reward-popup subset in PRE_GAME order, and `MAINMENU`.
+- `IN_GAME`: `GAME_RELAY`, `GAME_COMPLETE`, `GAME_START`, followed by `ALWAYS` (`CONNECTION_LOST`, `INACTIVE`). `LOGIN` is background/recovery-only here. During the 8-second Fast Start priority window it checks only `GAME_START` then `ALWAYS`, so Login cannot compete with Fast Start.
+- `POST_GAME`: `ALWAYS`, then `ANTI_BOT`, `OVERTAKE_BREAK_SCORE`, `MYSTERY_BOX`, `LOGIN`, the reward-popup subset in PRE_GAME order, and `MAINMENU`.
 
 Normal route:
 
