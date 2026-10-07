@@ -5974,7 +5974,7 @@ class BotController(
         private const val MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS = 3
         private val POST_GAME = postGameStages(PRE_GAME, REWARD_PRE_GAME_POPUPS)
         private val POST_GAME_RESULT_INTERRUPTS =
-            (ALWAYS + POST_GAME.filterNot { it == BotStage.ANTI_BOT }).distinct()
+            postGameResultInterruptStages(ALWAYS, POST_GAME)
         private val ALL_STAGE_ORDER = listOf(
             BotStage.GAME_START, BotStage.GAME_RELAY, BotStage.ANTI_BOT,
             BotStage.CONNECTION_LOST, BotStage.INACTIVE, BotStage.GAME_COMPLETE,
