@@ -1239,18 +1239,17 @@ class BotController(
                 logDiagnostic("[FRIEND_LIFE_DUE] elapsedMs=$now pending=true")
             }
 
-            // Primary state matching always runs first. Background coverage only consumes
-            // a single extra template slot after the primary candidates miss, so GAME_START
-            // and GAME_RELAY keep the shortest possible detection path.
+            // Primary state matching always runs first. Background work starts only after
+            // primary miss, so GAME_START and GAME_RELAY keep the shortest detection path.
             if (result == null &&
                 antiBotFollowUpActive &&
                 BackgroundDetectionPolicy.antiBotFollowUpDue(
                     now,
-                    lastBackgroundDetectionAt,
+                    lastAntiBotFollowUpAt,
                     fastStartPriorityAtDetectionStart,
                 )
             ) {
-                lastBackgroundDetectionAt = now
+                lastAntiBotFollowUpAt = now
                 result = detector.detectFirst(listOf(BotStage.ANTI_BOT), frame.mat)
                 if (result != null) {
                     detectionMatchedAtNanos = SystemClock.elapsedRealtimeNanos()
@@ -1258,6 +1257,35 @@ class BotController(
                         "[BACKGROUND_DETECT] mode=ANTI_BOT_FOLLOW_UP " +
                             "state=${result.state.name} frameGeneration=${frame.generation}",
                     )
+                }
+            }
+
+            // A non-Anti-bot state discovered by the low-cost background rotation is never
+            // dispatched from a single frame. Primary detection still runs first on the next
+            // fresh frame, then the candidate must match again before recovery is allowed.
+            if (result == null && group == DetectionGroup.IN_GAME) {
+                val pendingStage = pendingBackgroundConfirmationStage
+                if (
+                    pendingStage != null &&
+                    frame.generation > pendingBackgroundConfirmationGeneration
+                ) {
+                    pendingBackgroundConfirmationStage = null
+                    pendingBackgroundConfirmationGeneration = -1L
+                    lastBackgroundDetectionAt = now
+                    val confirmed = detector.detectFirst(listOf(pendingStage), frame.mat)
+                    if (confirmed != null) {
+                        result = confirmed
+                        detectionMatchedAtNanos = SystemClock.elapsedRealtimeNanos()
+                        logDiagnostic(
+                            "[BACKGROUND_DETECT] mode=CONFIRMED_RECOVERY " +
+                                "state=${confirmed.state.name} frameGeneration=${frame.generation}",
+                        )
+                    } else {
+                        logDiagnostic(
+                            "[BACKGROUND_DETECT] mode=CONFIRM_REJECTED " +
+                                "state=${pendingStage.name} frameGeneration=${frame.generation}",
+                        )
+                    }
                 }
             }
 
@@ -1270,11 +1298,21 @@ class BotController(
                     fastStartPriorityAtDetectionStart,
                 )
             ) {
+                val backgroundStages = filterRelicStages(
+                    IN_GAME_BACKGROUND_RECOVERY,
+                    options.detectRelic,
+                    RELIC_STAGES,
+                )
+                val backgroundExcluded = if (antiBotFollowUpActive) {
+                    candidates + BotStage.ANTI_BOT
+                } else {
+                    candidates
+                }
                 val backgroundStage = if (postRelayAntiBotPriorityActive) {
                     val selection = BackgroundDetectionPolicy.nextAfterGameRelay(
-                        ALL_STAGE_ORDER,
+                        backgroundStages,
                         backgroundDetectionCursor,
-                        candidates,
+                        backgroundExcluded,
                         postRelayAntiBotTurn,
                     )
                     backgroundDetectionCursor = selection.nextCursor
@@ -1282,27 +1320,39 @@ class BotController(
                     selection.stage
                 } else {
                     val selection = BackgroundDetectionPolicy.nextStage(
-                        ALL_STAGE_ORDER,
+                        backgroundStages,
                         backgroundDetectionCursor,
-                        candidates,
+                        backgroundExcluded,
                     )
                     backgroundDetectionCursor = selection.nextCursor
                     selection.stage
                 }
                 if (backgroundStage != null) {
                     lastBackgroundDetectionAt = now
-                    result = detector.detectFirst(listOf(backgroundStage), frame.mat)
-                    if (result != null) {
+                    val backgroundMatch = detector.detectFirst(listOf(backgroundStage), frame.mat)
+                    if (backgroundMatch != null) {
                         detectionMatchedAtNanos = SystemClock.elapsedRealtimeNanos()
                         val backgroundMode = if (postRelayAntiBotPriorityActive) {
                             "POST_RELAY_INTERLEAVE"
                         } else {
                             "ROTATION"
                         }
-                        logDiagnostic(
-                            "[BACKGROUND_DETECT] mode=$backgroundMode " +
-                                "state=${result.state.name} frameGeneration=${frame.generation}",
-                        )
+                        if (backgroundStage == BotStage.ANTI_BOT) {
+                            result = backgroundMatch
+                            logDiagnostic(
+                                "[BACKGROUND_DETECT] mode=$backgroundMode " +
+                                    "state=ANTI_BOT action=DISPATCH " +
+                                    "frameGeneration=${frame.generation}",
+                            )
+                        } else {
+                            pendingBackgroundConfirmationStage = backgroundStage
+                            pendingBackgroundConfirmationGeneration = frame.generation
+                            logDiagnostic(
+                                "[BACKGROUND_DETECT] mode=$backgroundMode " +
+                                    "state=${backgroundStage.name} action=CONFIRM_NEXT_FRESH_FRAME " +
+                                    "frameGeneration=${frame.generation}",
+                            )
+                        }
                     }
                 }
             }
