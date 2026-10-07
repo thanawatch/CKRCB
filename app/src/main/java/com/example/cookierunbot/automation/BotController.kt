@@ -3326,7 +3326,7 @@ class BotController(
             delayOrStop(randomMs(10_000, 15_000))
         }
         delayOrStop(randomMs(800, 1400))
-        antiBotFollowUpActive = event?.testIndexInChallenge in 1..2
+        antiBotFollowUpActive = event?.testIndexInChallenge?.let { it in 1..2 } == true
         if (!antiBotFollowUpActive) {
             lastAntiBotFingerprint = null
         }
