@@ -230,6 +230,7 @@ class BotController(
     private var antiBotAwaitingExit = false
     private val antiBotLayoutTransitionGuard = AntiBotLayoutTransitionGuard()
     private val antiBotExitConfirmationTracker = AntiBotExitConfirmationTracker()
+    private val antiBotStallRecoveryTracker = AntiBotStallRecoveryTracker()
     private var gameCompleteImageSaved = true
     private var gameCompleteFallbackRecorded = false
     private var gameCompleteDetectedElapsedRealtime = 0L
@@ -382,6 +383,7 @@ class BotController(
             antiBotAwaitingExit = false
             antiBotLayoutTransitionGuard.reset()
             antiBotExitConfirmationTracker.reset()
+            antiBotStallRecoveryTracker.reset()
             gameCompleteImageSaved = true
             gameCompleteFallbackRecorded = false
             gameCompleteDetectedElapsedRealtime = 0L
@@ -1742,6 +1744,7 @@ class BotController(
             lastAntiBotFollowUpAt = 0L
             antiBotLayoutTransitionGuard.reset()
             antiBotExitConfirmationTracker.reset()
+            antiBotStallRecoveryTracker.reset()
             val generation = RoundResultStore.currentGeneration()
             if (RoundResultStore.recordAntiBotExited(generation)) {
                 val stats = RoundResultStore.snapshot()
@@ -2854,6 +2857,7 @@ class BotController(
                 antiBotAwaitingExit = false
                 antiBotLayoutTransitionGuard.reset()
                 antiBotExitConfirmationTracker.reset()
+                antiBotStallRecoveryTracker.reset()
                 gameStartDetectedForRound = false
                 fastStartPollDeadlineNanos = 0L
                 flushFastStartAttemptMetrics("NEW_ROUND")
@@ -3411,6 +3415,7 @@ class BotController(
 
         antiBotAwaitingExit = false
         antiBotLayoutTransitionGuard.reset()
+        antiBotStallRecoveryTracker.reset()
         val generation = RoundResultStore.currentGeneration()
         if (RoundResultStore.recordAntiBotExited(generation)) {
             val stats = RoundResultStore.snapshot()
@@ -3720,6 +3725,8 @@ class BotController(
     }
 
     private fun handleAntiBot(detector: StateDetector, frame: Mat, sourceWidth: Int, sourceHeight: Int) {
+        val observedAt = SystemClock.elapsedRealtime()
+        val stallStatus = antiBotStallRecoveryTracker.observeMatched(observedAt)
         if (antiBotAwaitingExit) {
             logDiagnostic(
                 "[ANTI_BOT_FOLLOW_UP] action=WAIT reason=awaiting_challenge_exit " +
@@ -3729,124 +3736,285 @@ class BotController(
             return
         }
 
-        val layoutFingerprint = antiBotCardLayoutFingerprint(frame)
+        var actionFrame = frame
+        var actionSourceWidth = sourceWidth
+        var actionSourceHeight = sourceHeight
+        var recoverySnapshot: FrameSnapshot? = null
+        var layoutFingerprint = antiBotCardLayoutFingerprint(actionFrame)
+
         if (antiBotFollowUpActive) {
-            when (antiBotLayoutTransitionGuard.evaluateFollowUp(layoutFingerprint)) {
-                AntiBotLayoutDecision.SAME_ACCEPTED_LAYOUT -> {
+            val layoutDecision = antiBotLayoutTransitionGuard.evaluateFollowUp(layoutFingerprint)
+            if (layoutDecision == AntiBotLayoutDecision.ACCEPT_NEW_LAYOUT) {
+                antiBotStallRecoveryTracker.recordProgress(observedAt)
+                logDiagnostic(
+                    "[ANTI_BOT_STALL] progress=layout_accepted idleMs=0 " +
+                        "frameGeneration=${detectionActionFrameGeneration.get() ?: -1L}",
+                )
+            } else {
+                val waitReason = when (layoutDecision) {
+                    AntiBotLayoutDecision.SAME_ACCEPTED_LAYOUT -> "same_card_layout"
+                    AntiBotLayoutDecision.WAIT_FOR_STABLE_NEW_LAYOUT -> "new_layout_not_stable_yet"
+                    AntiBotLayoutDecision.FINGERPRINT_UNAVAILABLE -> "layout_fingerprint_unavailable"
+                    AntiBotLayoutDecision.ACCEPT_NEW_LAYOUT -> error("handled above")
+                }
+                if (!stallStatus.recoveryDue) {
                     logDiagnostic(
-                        "[ANTI_BOT_FOLLOW_UP] action=WAIT reason=same_card_layout " +
+                        "[ANTI_BOT_FOLLOW_UP] action=WAIT reason=$waitReason " +
+                            "idleMs=${stallStatus.idleMs} " +
+                            "stallRecoveryConsumed=${stallStatus.recoveryConsumed} " +
                             "frameGeneration=${detectionActionFrameGeneration.get() ?: -1L}",
                     )
                     lastStage = null
                     return
                 }
-                AntiBotLayoutDecision.WAIT_FOR_STABLE_NEW_LAYOUT -> {
+
+                val baselineGeneration = detectionActionFrameGeneration.get()
+                    ?: LatestFrameProvider.currentGeneration()
+                logDiagnostic(
+                    "[ANTI_BOT_STALL] action=VERIFY reason=$waitReason " +
+                        "idleMs=${stallStatus.idleMs} timeoutMs=" +
+                        "${AntiBotStallRecoveryPolicy.STALL_TIMEOUT_MS} " +
+                        "baselineGeneration=$baselineGeneration",
+                )
+                val verified = verifyAntiBotStallRecovery(
+                    detector = detector,
+                    afterGeneration = baselineGeneration,
+                ) ?: run {
+                    lastStage = null
+                    return
+                }
+
+                detectionActionFrameGeneration.set(verified.generation)
+                val dispatchReady = synchronized(lock) { canDispatchActionLocked() } &&
+                    !actionExecutor.isActionInProgress()
+                if (!dispatchReady ||
+                    !antiBotFollowUpActive ||
+                    antiBotAwaitingExit ||
+                    !antiBotStallRecoveryTracker.tryConsumeRecovery(SystemClock.elapsedRealtime())
+                ) {
+                    verified.mat.release()
                     logDiagnostic(
-                        "[ANTI_BOT_FOLLOW_UP] action=WAIT reason=new_layout_not_stable_yet " +
-                            "frameGeneration=${detectionActionFrameGeneration.get() ?: -1L}",
+                        "[ANTI_BOT_STALL] action=CANCEL reason=" +
+                            (if (!dispatchReady) "action_not_ready" else "episode_no_longer_eligible"),
                     )
                     lastStage = null
                     return
                 }
-                AntiBotLayoutDecision.FINGERPRINT_UNAVAILABLE -> {
-                    logDiagnostic(
-                        "[ANTI_BOT_FOLLOW_UP] action=WAIT reason=layout_fingerprint_unavailable " +
-                            "frameGeneration=${detectionActionFrameGeneration.get() ?: -1L}",
-                    )
-                    lastStage = null
-                    return
-                }
-                AntiBotLayoutDecision.ACCEPT_NEW_LAYOUT -> Unit
+
+                recoverySnapshot = verified
+                actionFrame = verified.mat
+                actionSourceWidth = verified.sourceWidth
+                actionSourceHeight = verified.sourceHeight
+                layoutFingerprint = antiBotCardLayoutFingerprint(actionFrame)
+                logDiagnostic(
+                    "[ANTI_BOT_STALL] action=FORCE_FOLLOW_UP reason=$waitReason " +
+                        "frameGeneration=${verified.generation} " +
+                        "confirmationFrames=${AntiBotStallRecoveryPolicy.REQUIRED_CONFIRMATION_FRAMES}",
+                )
             }
         }
 
-        val cards = listOf(
-            LogicalPoint(346, 179), LogicalPoint(542, 179), LogicalPoint(738, 179),
-            LogicalPoint(346, 435), LogicalPoint(542, 435), LogicalPoint(738, 435),
-        )
-        val odd = detector.detectAntiBotOddCards(frame)
-        val selectedCards = odd.map { it + 1 }
-        val statisticsGeneration = RoundResultStore.currentGeneration()
-        val detectionRecorded = RoundResultStore.recordAntiBotDetected(
-            statisticsGeneration,
-            round = roundNumber,
-            selectedCards = selectedCards,
-            continueCurrentChallenge = antiBotFollowUpActive,
-        )
-        val statsAfterDetection = RoundResultStore.snapshot()
-        val event = if (detectionRecorded) statsAfterDetection.antiBotHistory.firstOrNull() else null
-        val detectionIndex = event?.detectionIndex ?: 0
-        if (event != null) {
-            antiBotLayoutTransitionGuard.recordAccepted(layoutFingerprint)
-        }
-        if (event != null) {
-            logDiagnostic(
-                "[ANTI_BOT_STATS] challenges=${statsAfterDetection.antiBotChallengeCount} " +
-                    "completedChallenges=${statsAfterDetection.antiBotCompletedChallengeCount} " +
-                    "tests=${statsAfterDetection.antiBotDetectedCount} " +
-                    "completedTests=${statsAfterDetection.antiBotCompletedTestCount} " +
-                    "selectedTaps=${statsAfterDetection.antiBotSelectedTapCount} " +
-                    "successfulTaps=${statsAfterDetection.antiBotSuccessfulTapCount}",
+        val forcedRecovery = recoverySnapshot != null
+        val recoverySuccessfulTap = AtomicBoolean(false)
+        val recoveryAcceptedDispatch = AtomicBoolean(false)
+        try {
+            val cards = listOf(
+                LogicalPoint(346, 179), LogicalPoint(542, 179), LogicalPoint(738, 179),
+                LogicalPoint(346, 435), LogicalPoint(542, 435), LogicalPoint(738, 435),
             )
-        }
-        Log.i(CookieRunBotApplication.TAG, "[RECOVERY] Anti-bot odd cards=$selectedCards")
-        if (event != null) {
-            enqueueAntiBotEvidence(
-                frame = frame,
-                selectedCards = selectedCards,
-                detectionIndex = event.detectionIndex,
-                challengeIndex = event.challengeIndex,
-                testIndexInChallenge = event.testIndexInChallenge,
-                statisticsGeneration = statisticsGeneration,
-            )
-        }
-        for (index in odd) {
-            val cardNumber = index + 1
-            val origin = cards[index]
-            val target = LogicalPoint(
-                Random.nextInt(origin.x + 20, origin.x + 163),
-                Random.nextInt(origin.y + 20, origin.y + 221),
-            )
-            performDetectedTap(
-                "ANTI_BOT_CARD_$cardNumber",
-                target,
-                sourceWidth,
-                sourceHeight,
-            ) { success ->
-                if (
-                    success &&
-                    RoundResultStore.recordAntiBotSuccessfulTap(
-                        statisticsGeneration,
-                        detectionIndex = detectionIndex,
-                        card = cardNumber,
-                    )
-                ) {
-                    val stats = RoundResultStore.snapshot()
-                    logDiagnostic(
-                        "[ANTI_BOT_STATS] challenges=${stats.antiBotChallengeCount} " +
-                            "completedChallenges=${stats.antiBotCompletedChallengeCount} " +
-                            "tests=${stats.antiBotDetectedCount} " +
-                            "completedTests=${stats.antiBotCompletedTestCount} " +
-                            "selectedTaps=${stats.antiBotSelectedTapCount} " +
-                            "successfulTaps=${stats.antiBotSuccessfulTapCount}",
-                    )
-                }
+            val detectedOdd = detector.detectAntiBotOddCards(actionFrame)
+            val detectedSelectedCards = detectedOdd.map { it + 1 }
+            val statisticsGeneration = RoundResultStore.currentGeneration()
+            val statsBeforeDetection = RoundResultStore.snapshot()
+            val incompleteEvent = if (forcedRecovery) {
+                statsBeforeDetection.antiBotHistory.firstOrNull()?.takeIf { !it.completed }
+            } else {
+                null
             }
-            delayOrStop(randomMs(3_000, 6_000))
+            val retryCards = incompleteEvent?.let { event ->
+                antiBotIncompleteRetryCards(
+                    testIndexInChallenge = event.testIndexInChallenge,
+                    selectedCards = event.selectedCards,
+                    successfulCards = event.successfulCards,
+                    cardCount = cards.size,
+                )
+            }.orEmpty()
+            val retryCurrentTest = incompleteEvent != null && retryCards.isNotEmpty()
+            val selectedCards = if (retryCurrentTest) retryCards else detectedSelectedCards
+            val actionCardIndices = selectedCards.map { it - 1 }
+
+            val detectionRecorded = if (retryCurrentTest) {
+                false
+            } else {
+                RoundResultStore.recordAntiBotDetected(
+                    statisticsGeneration,
+                    round = roundNumber,
+                    selectedCards = selectedCards,
+                    continueCurrentChallenge = antiBotFollowUpActive,
+                )
+            }
+            val statsAfterDetection = RoundResultStore.snapshot()
+            val event = if (retryCurrentTest) {
+                incompleteEvent
+            } else if (detectionRecorded) {
+                statsAfterDetection.antiBotHistory.firstOrNull()
+            } else {
+                null
+            }
+            val detectionIndex = event?.detectionIndex ?: 0
+            if (event != null && !retryCurrentTest) {
+                antiBotLayoutTransitionGuard.recordAccepted(layoutFingerprint)
+            }
+            if (retryCurrentTest) {
+                logDiagnostic(
+                    "[ANTI_BOT_STALL] action=RETRY_CURRENT_TEST " +
+                        "challenge=${event?.challengeIndex ?: 0} " +
+                        "test=${event?.testIndexInChallenge ?: 0} " +
+                        "missingCards=$selectedCards currentDetectedCards=$detectedSelectedCards",
+                )
+            }
+            if (event != null) {
+                logDiagnostic(
+                    "[ANTI_BOT_STATS] challenges=${statsAfterDetection.antiBotChallengeCount} " +
+                        "completedChallenges=${statsAfterDetection.antiBotCompletedChallengeCount} " +
+                        "tests=${statsAfterDetection.antiBotDetectedCount} " +
+                        "completedTests=${statsAfterDetection.antiBotCompletedTestCount} " +
+                        "selectedTaps=${statsAfterDetection.antiBotSelectedTapCount} " +
+                        "successfulTaps=${statsAfterDetection.antiBotSuccessfulTapCount}",
+                )
+            }
+            Log.i(
+                CookieRunBotApplication.TAG,
+                "[RECOVERY] Anti-bot cards=$selectedCards retryCurrentTest=$retryCurrentTest " +
+                    "detectedCards=$detectedSelectedCards",
+            )
+            if (event != null && !retryCurrentTest) {
+                enqueueAntiBotEvidence(
+                    frame = actionFrame,
+                    selectedCards = selectedCards,
+                    detectionIndex = event.detectionIndex,
+                    challengeIndex = event.challengeIndex,
+                    testIndexInChallenge = event.testIndexInChallenge,
+                    statisticsGeneration = statisticsGeneration,
+                )
+            }
+            for (index in actionCardIndices) {
+                val cardNumber = index + 1
+                val origin = cards[index]
+                val target = LogicalPoint(
+                    Random.nextInt(origin.x + 20, origin.x + 163),
+                    Random.nextInt(origin.y + 20, origin.y + 221),
+                )
+                val dispatchAccepted = performDetectedTap(
+                    "ANTI_BOT_CARD_$cardNumber",
+                    target,
+                    actionSourceWidth,
+                    actionSourceHeight,
+                ) { success ->
+                    if (
+                        success &&
+                        RoundResultStore.recordAntiBotSuccessfulTap(
+                            statisticsGeneration,
+                            detectionIndex = detectionIndex,
+                            card = cardNumber,
+                        )
+                    ) {
+                        if (forcedRecovery) recoverySuccessfulTap.set(true)
+                        antiBotStallRecoveryTracker.recordProgress(SystemClock.elapsedRealtime())
+                        val stats = RoundResultStore.snapshot()
+                        logDiagnostic(
+                            "[ANTI_BOT_STALL] progress=successful_tap card=$cardNumber idleMs=0",
+                        )
+                        logDiagnostic(
+                            "[ANTI_BOT_STATS] challenges=${stats.antiBotChallengeCount} " +
+                                "completedChallenges=${stats.antiBotCompletedChallengeCount} " +
+                                "tests=${stats.antiBotDetectedCount} " +
+                                "completedTests=${stats.antiBotCompletedTestCount} " +
+                                "selectedTaps=${stats.antiBotSelectedTapCount} " +
+                                "successfulTaps=${stats.antiBotSuccessfulTapCount}",
+                        )
+                    }
+                }
+                if (forcedRecovery && dispatchAccepted) recoveryAcceptedDispatch.set(true)
+                delayOrStop(randomMs(3_000, 6_000))
+            }
+            delayOrStop(3_000L)
+            if (forcedRecovery && !recoverySuccessfulTap.get()) {
+                antiBotStallRecoveryTracker.recordFailedRecoveryAttempt(
+                    SystemClock.elapsedRealtime(),
+                )
+                logDiagnostic(
+                    "[ANTI_BOT_STALL] action=REARM_AFTER_FAILED_RECOVERY " +
+                        "acceptedDispatch=${recoveryAcceptedDispatch.get()} " +
+                        "nextRetryMs=${AntiBotStallRecoveryPolicy.STALL_TIMEOUT_MS}",
+                )
+            }
+            val testIndex = event?.testIndexInChallenge ?: 0
+            val postTestState = antiBotPostTestState(testIndex)
+            antiBotFollowUpActive = postTestState.followUpActive
+            antiBotAwaitingExit = postTestState.awaitingExit
+            antiBotExitConfirmationTracker.reset()
+            lastAntiBotFollowUpAt = 0L
+            logDiagnostic(
+                "[ANTI_BOT_FOLLOW_UP] active=$antiBotFollowUpActive " +
+                    "awaitingExit=$antiBotAwaitingExit " +
+                    "challenge=${event?.challengeIndex ?: 0} test=$testIndex",
+            )
+            lastStage = null
+        } finally {
+            recoverySnapshot?.mat?.release()
         }
-        delayOrStop(3_000L)
-        val testIndex = event?.testIndexInChallenge ?: 0
-        val postTestState = antiBotPostTestState(testIndex)
-        antiBotFollowUpActive = postTestState.followUpActive
-        antiBotAwaitingExit = postTestState.awaitingExit
-        antiBotExitConfirmationTracker.reset()
-        lastAntiBotFollowUpAt = 0L
-        logDiagnostic(
-            "[ANTI_BOT_FOLLOW_UP] active=$antiBotFollowUpActive " +
-                "awaitingExit=$antiBotAwaitingExit " +
-                "challenge=${event?.challengeIndex ?: 0} test=$testIndex",
-        )
-        lastStage = null
+    }
+
+    private fun verifyAntiBotStallRecovery(
+        detector: StateDetector,
+        afterGeneration: Long,
+    ): FrameSnapshot? {
+        var baselineGeneration = afterGeneration
+        var retainedSnapshot: FrameSnapshot? = null
+
+        repeat(AntiBotStallRecoveryPolicy.REQUIRED_CONFIRMATION_FRAMES) { index ->
+            retainedSnapshot?.mat?.release()
+            retainedSnapshot = null
+            val fresh = LatestFrameProvider.awaitNextSnapshot(
+                baselineGeneration,
+                AntiBotStallRecoveryPolicy.CONFIRMATION_FRAME_TIMEOUT_MS,
+            ) ?: run {
+                logDiagnostic(
+                    "[ANTI_BOT_STALL] action=CANCEL reason=fresh_frame_timeout " +
+                        "confirmation=${index + 1}/" +
+                        "${AntiBotStallRecoveryPolicy.REQUIRED_CONFIRMATION_FRAMES} " +
+                        "baselineGeneration=$baselineGeneration",
+                )
+                return null
+            }
+            baselineGeneration = fresh.generation
+
+            val connectionLost = detector.detect(BotStage.CONNECTION_LOST, fresh.mat)
+            val inactive = detector.detect(BotStage.INACTIVE, fresh.mat)
+            val antiBot = detector.detect(BotStage.ANTI_BOT, fresh.mat)
+            val safe = antiBot.matched && !connectionLost.matched && !inactive.matched
+            logDiagnostic(
+                "[ANTI_BOT_STALL] action=VERIFY_FRAME " +
+                    "confirmation=${index + 1}/" +
+                    "${AntiBotStallRecoveryPolicy.REQUIRED_CONFIRMATION_FRAMES} " +
+                    "frameGeneration=${fresh.generation} antiBotMatched=${antiBot.matched} " +
+                    "antiBotScore=${format(antiBot.score)} " +
+                    "connectionLost=${connectionLost.matched} inactive=${inactive.matched} safe=$safe",
+            )
+            if (!safe) {
+                fresh.mat.release()
+                antiBotStallRecoveryTracker.reset()
+                logDiagnostic(
+                    "[ANTI_BOT_STALL] action=CANCEL reason=anti_bot_not_stably_visible",
+                )
+                return null
+            }
+
+            antiBotStallRecoveryTracker.observeMatched(SystemClock.elapsedRealtime())
+            retainedSnapshot = fresh
+        }
+        return retainedSnapshot
     }
 
     private fun enqueueAntiBotEvidence(
