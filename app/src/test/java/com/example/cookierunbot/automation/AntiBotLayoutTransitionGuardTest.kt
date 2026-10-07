@@ -16,6 +16,16 @@ class AntiBotLayoutTransitionGuardTest {
     }
 
     @Test
+    fun challengeExitRequiresTwoConsecutiveAntiBotMisses() {
+        val tracker = AntiBotExitConfirmationTracker(requiredConsecutiveMisses = 2)
+
+        assertFalse(tracker.observe(antiBotMatched = false))
+        assertFalse(tracker.observe(antiBotMatched = true))
+        assertFalse(tracker.observe(antiBotMatched = false))
+        assertTrue(tracker.observe(antiBotMatched = false))
+    }
+
+    @Test
     fun uniformBrightnessShiftDoesNotBecomeNewLayout() {
         val before = layoutFrame(cardBase = 70)
         val after = before.copyOf().also { pixels ->
