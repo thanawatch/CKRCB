@@ -46,6 +46,28 @@ class BackgroundDetectionPolicyTest {
     }
 
     @Test
+    fun antiBotFollowUpCannotResetOtherRecoveryGraceForever() {
+        assertFalse(
+            BackgroundDetectionPolicy.due(
+                nowMs = 10_999L,
+                lastMatchedAtMs = 10_900L,
+                lastBackgroundAtMs = 10_000L,
+                fastStartPriority = false,
+                antiBotFollowUpActive = true,
+            ),
+        )
+        assertTrue(
+            BackgroundDetectionPolicy.due(
+                nowMs = 11_000L,
+                lastMatchedAtMs = 10_999L,
+                lastBackgroundAtMs = 10_000L,
+                fastStartPriority = false,
+                antiBotFollowUpActive = true,
+            ),
+        )
+    }
+
+    @Test
     fun productionInGameBackgroundListExcludesCriticalGameplayAndCloseButton() {
         val forbidden = setOf(
             BotStage.GAME_START,
