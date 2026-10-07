@@ -1254,7 +1254,11 @@ class BotController(
                 stagesFor(group)
             }
             val priorityCandidate = if (profilingEnabled && group == DetectionGroup.IN_GAME) {
-                if (gameStartDetectedForRound) BotStage.GAME_RELAY else BotStage.GAME_START
+                when {
+                    !gameStartDetectedForRound -> BotStage.GAME_START
+                    !postRelayAntiBotPriorityActive -> BotStage.GAME_RELAY
+                    else -> BotStage.GAME_COMPLETE
+                }
             } else {
                 null
             }
