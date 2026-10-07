@@ -15,6 +15,29 @@ internal fun antiBotPostTestState(testIndexInChallenge: Int): AntiBotPostTestSta
         awaitingExit = testIndexInChallenge == 3,
     )
 
+internal class AntiBotExitConfirmationTracker(
+    private val requiredConsecutiveMisses: Int = 2,
+) {
+    init {
+        require(requiredConsecutiveMisses >= 1)
+    }
+
+    private var consecutiveMisses = 0
+
+    fun reset() {
+        consecutiveMisses = 0
+    }
+
+    fun observe(antiBotMatched: Boolean): Boolean {
+        if (antiBotMatched) {
+            consecutiveMisses = 0
+            return false
+        }
+        consecutiveMisses += 1
+        return consecutiveMisses >= requiredConsecutiveMisses
+    }
+}
+
 internal enum class AntiBotLayoutDecision {
     SAME_ACCEPTED_LAYOUT,
     WAIT_FOR_STABLE_NEW_LAYOUT,
