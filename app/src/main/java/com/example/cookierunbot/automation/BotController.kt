@@ -180,10 +180,14 @@ class BotController(
     private var postRelaySequenceDone = false
     private var backgroundDetectionCursor = 0
     private var lastBackgroundDetectionAt = 0L
+    private var lastAntiBotFollowUpAt = 0L
+    private var pendingBackgroundConfirmationStage: BotStage? = null
+    private var pendingBackgroundConfirmationGeneration = -1L
     private var postRelayAntiBotPriorityActive = false
     private var postRelayAntiBotTurn = true
     private var antiBotFollowUpActive = false
-    private var lastAntiBotFingerprint: PopupFingerprint? = null
+    private var antiBotAwaitingExit = false
+    private val antiBotLayoutTransitionGuard = AntiBotLayoutTransitionGuard()
     private var gameCompleteImageSaved = true
     private var gameCompleteDetectedElapsedRealtime = 0L
     private var mysteryBoxImageSaved = true
@@ -326,10 +330,14 @@ class BotController(
             postRelaySequenceDone = false
             backgroundDetectionCursor = 0
             lastBackgroundDetectionAt = 0L
+            lastAntiBotFollowUpAt = 0L
+            pendingBackgroundConfirmationStage = null
+            pendingBackgroundConfirmationGeneration = -1L
             postRelayAntiBotPriorityActive = false
             postRelayAntiBotTurn = true
             antiBotFollowUpActive = false
-            lastAntiBotFingerprint = null
+            antiBotAwaitingExit = false
+            antiBotLayoutTransitionGuard.reset()
             gameCompleteImageSaved = true
             gameCompleteDetectedElapsedRealtime = 0L
             mysteryBoxImageSaved = true
@@ -1590,7 +1598,9 @@ class BotController(
         try {
         if (result.state != BotStage.ANTI_BOT) {
             antiBotFollowUpActive = false
-            lastAntiBotFingerprint = null
+            antiBotAwaitingExit = false
+            lastAntiBotFollowUpAt = 0L
+            antiBotLayoutTransitionGuard.reset()
             val generation = RoundResultStore.currentGeneration()
             if (RoundResultStore.recordAntiBotExited(generation)) {
                 val stats = RoundResultStore.snapshot()
@@ -1609,6 +1619,8 @@ class BotController(
             BotStage.GAME_COMPLETE -> {
                 postRelayAntiBotPriorityActive = false
                 postRelayAntiBotTurn = true
+                pendingBackgroundConfirmationStage = null
+                pendingBackgroundConfirmationGeneration = -1L
                 val detectedAt = SystemClock.elapsedRealtime()
                 val roundCompletedAt = synchronized(lock) {
                     firstGameCompleteElapsedRealtime(
@@ -2692,10 +2704,14 @@ class BotController(
                 postRelaySequenceDone = false
                 backgroundDetectionCursor = 0
                 lastBackgroundDetectionAt = 0L
+                lastAntiBotFollowUpAt = 0L
+                pendingBackgroundConfirmationStage = null
+                pendingBackgroundConfirmationGeneration = -1L
                 postRelayAntiBotPriorityActive = false
                 postRelayAntiBotTurn = true
                 antiBotFollowUpActive = false
-                lastAntiBotFingerprint = null
+                antiBotAwaitingExit = false
+                antiBotLayoutTransitionGuard.reset()
                 gameStartDetectedForRound = false
                 fastStartPollDeadlineNanos = 0L
                 flushFastStartAttemptMetrics("NEW_ROUND")
