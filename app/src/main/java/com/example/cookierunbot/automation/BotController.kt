@@ -1151,11 +1151,9 @@ class BotController(
             if (handleStuckSendLifeFollowUpCheck(detector, frame)) return
             val detectionStartedAtNanos = SystemClock.elapsedRealtimeNanos()
             val profilingEnabled = RedfingerPerformancePolicy.profilingEnabled(options.performanceProfile)
-            val fastStartPriorityAtDetectionStart = if (profilingEnabled) {
-                isFastStartPriorityWindow(detectionStartedAtNanos)
-            } else {
-                false
-            }
+            // Fast Start priority is behavioral, not a profiling-only concern. Background
+            // coverage must stay disabled in this window on every performance profile.
+            val fastStartPriorityAtDetectionStart = isFastStartPriorityWindow(detectionStartedAtNanos)
             if (profilingEnabled && !fastStartPriorityAtDetectionStart) {
                 flushFastStartAttemptMetrics("WINDOW_ENDED")
             }
