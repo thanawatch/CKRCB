@@ -3163,19 +3163,27 @@ class BotController(
             )
         }
 
-        val validated = awaitValidatedGameCompleteResultFrame(
+        val waitOutcome = awaitValidatedGameCompleteResultFrame(
             detector = detector,
             initialWaitMs = waitMs,
         )
-        if (validated == null) {
+        if (waitOutcome.type != GameCompleteResultWaitType.VALIDATED) {
+            val reason = when (waitOutcome.type) {
+                GameCompleteResultWaitType.POST_GAME_INTERRUPTED ->
+                    "post_game_${waitOutcome.interruptedStage?.name ?: "UNKNOWN"}"
+                GameCompleteResultWaitType.TIMED_OUT -> "timeout"
+                GameCompleteResultWaitType.VALIDATED -> "validated"
+            }
+            ensureGameCompleteFallbackRoundRecord(completedElapsedRealtime, reason)
             logDiagnostic(
-                "[GAME_COMPLETE_REVALIDATE] freshFrame=false action=DEFER_RESULT " +
-                    "reason=no_valid_game_complete_frame",
+                "[GAME_COMPLETE_REVALIDATE] action=DEFER_RESULT reason=$reason " +
+                    "interruptedStage=${waitOutcome.interruptedStage?.name ?: "NONE"}",
             )
             lastStage = null
             return
         }
 
+        val validated = requireNotNull(waitOutcome.frame)
         try {
             val freshGeneration = validated.generation
             val stillFresh = synchronized(lock) {
@@ -3221,17 +3229,40 @@ class BotController(
     private fun awaitValidatedGameCompleteResultFrame(
         detector: StateDetector,
         initialWaitMs: Long,
-    ): FrameSnapshot? {
+    ): GameCompleteResultWaitOutcome {
         val startedAt = SystemClock.elapsedRealtime()
         val captureReadyAt = startedAt + initialWaitMs
         val deadline = startedAt + GAME_COMPLETE_RESULT_RECOVERY_TIMEOUT_MS
         var lastGeneration = LatestFrameProvider.currentGeneration()
+        var lastResultProbeAt = 0L
+        var lastPostGameProbeAt = 0L
+        val gameCompleteStability = GameCompleteResultStabilityTracker()
+        val postGameInterruptTracker = PostGameInterruptTracker()
 
         while (isRunning() && SystemClock.elapsedRealtime() < deadline) {
-            if (synchronized(lock) { progressRecoveryGate.isActive() }) return null
+            if (synchronized(lock) { progressRecoveryGate.isActive() }) {
+                return GameCompleteResultWaitOutcome(GameCompleteResultWaitType.TIMED_OUT)
+            }
+
+            val now = SystemClock.elapsedRealtime()
+            if (
+                !fixedIntervalProbeDue(
+                    nowMs = now,
+                    lastProbeAtMs = lastResultProbeAt,
+                    intervalMs = GAME_COMPLETE_RESULT_PROBE_INTERVAL_MS,
+                )
+            ) {
+                val remaining = (
+                    GAME_COMPLETE_RESULT_PROBE_INTERVAL_MS - (now - lastResultProbeAt)
+                    ).coerceAtLeast(1L)
+                delayOrStop(remaining)
+                continue
+            }
+            lastResultProbeAt = now
+
             val fresh = LatestFrameProvider.awaitNextSnapshot(
                 lastGeneration,
-                GAME_COMPLETE_RESULT_POLL_MS,
+                GAME_COMPLETE_RESULT_PROBE_INTERVAL_MS,
             ) ?: continue
             lastGeneration = fresh.generation
 
@@ -3239,6 +3270,8 @@ class BotController(
             try {
                 val antiBot = detector.detect(BotStage.ANTI_BOT, fresh.mat)
                 if (antiBot.matched) {
+                    gameCompleteStability.reset()
+                    postGameInterruptTracker.reset()
                     LatestFrameProvider.updateDetection(antiBot)
                     logDiagnostic(
                         "[GAME_COMPLETE_RESULT_WAIT] interrupt=ANTI_BOT " +
@@ -3263,46 +3296,78 @@ class BotController(
                 }
 
                 if (antiBotAwaitingExit) {
+                    gameCompleteStability.reset()
+                    postGameInterruptTracker.reset()
                     val exitConfirmed = observeAntiBotExit(
                         antiBotStillVisible = false,
                         frameGeneration = fresh.generation,
                         nextState = "GAME_COMPLETE_RESULT_WAIT",
                     )
+                    // Always wait for a later fresh probe after the popup exit. The next
+                    // GAME_COMPLETE frame must start a new two-frame stability sequence.
                     if (!exitConfirmed) continue
-                }
-
-                if (antiBotFollowUpActive || antiBotAwaitingExit) {
+                    lastPostGameProbeAt = 0L
                     continue
                 }
 
-                val readyForCapture = SystemClock.elapsedRealtime() >= captureReadyAt
-                val gameComplete = if (readyForCapture) {
-                    detector.detect(BotStage.GAME_COMPLETE, fresh.mat)
-                } else {
-                    null
-                }
-                val decision = gameCompleteResultWaitDecision(
-                    readyForResultCapture = readyForCapture,
-                    antiBotMatched = false,
-                    gameCompleteMatched = gameComplete?.matched == true,
-                )
-                if (decision == GameCompleteResultWaitDecision.CAPTURE_GAME_COMPLETE) {
-                    logDiagnostic(
-                        "[GAME_COMPLETE_RESULT_WAIT] result=VALID " +
-                            "score=${format(requireNotNull(gameComplete).score)} " +
-                            "frameGeneration=${fresh.generation} elapsedMs=" +
-                            "${SystemClock.elapsedRealtime() - startedAt}",
-                    )
-                    keepFrame = true
-                    return fresh
+                if (antiBotFollowUpActive) {
+                    gameCompleteStability.reset()
+                    postGameInterruptTracker.reset()
+                    continue
                 }
 
-                if (readyForCapture && gameComplete != null) {
+                val probeNow = SystemClock.elapsedRealtime()
+                val readyForCapture = probeNow >= captureReadyAt
+                if (!readyForCapture) {
+                    gameCompleteStability.reset()
+                    continue
+                }
+
+                val gameComplete = detector.detect(BotStage.GAME_COMPLETE, fresh.mat)
+                val stableGameComplete = gameCompleteStability.observe(gameComplete.matched)
+                if (gameComplete.matched) {
+                    postGameInterruptTracker.reset()
                     logDiagnostic(
-                        "[GAME_COMPLETE_RESULT_WAIT] result=WAIT " +
-                            "gameCompleteScore=${format(gameComplete.score)} " +
-                            "antiBot=false frameGeneration=${fresh.generation}",
+                        "[GAME_COMPLETE_RESULT_WAIT] result=GAME_COMPLETE " +
+                            "score=${format(gameComplete.score)} stable=$stableGameComplete " +
+                            "frameGeneration=${fresh.generation}",
                     )
+                    if (stableGameComplete) {
+                        keepFrame = true
+                        return GameCompleteResultWaitOutcome(
+                            type = GameCompleteResultWaitType.VALIDATED,
+                            frame = fresh,
+                        )
+                    }
+                    continue
+                }
+
+                if (
+                    fixedIntervalProbeDue(
+                        nowMs = probeNow,
+                        lastProbeAtMs = lastPostGameProbeAt,
+                        intervalMs = GAME_COMPLETE_POST_GAME_PROBE_INTERVAL_MS,
+                    )
+                ) {
+                    lastPostGameProbeAt = probeNow
+                    val closePopup = detectClosePopup(detector, fresh.mat)
+                    val interrupt = closePopup ?: detector.detectFirst(
+                        POST_GAME_RESULT_INTERRUPTS,
+                        fresh.mat,
+                    )
+                    val confirmedInterrupt = postGameInterruptTracker.observe(interrupt?.state)
+                    logDiagnostic(
+                        "[GAME_COMPLETE_RESULT_WAIT] result=POST_GAME_PROBE " +
+                            "candidate=${interrupt?.state?.name ?: "NONE"} " +
+                            "confirmed=${confirmedInterrupt?.name ?: "NONE"} " +
+                            "frameGeneration=${fresh.generation}",
+                    )
+                    if (confirmedInterrupt != null) {
+                        return GameCompleteResultWaitOutcome(
+                            type = GameCompleteResultWaitType.POST_GAME_INTERRUPTED,
+                            interruptedStage = confirmedInterrupt,
+                        )
+                    }
                 }
             } finally {
                 if (!keepFrame) fresh.mat.release()
@@ -3313,7 +3378,23 @@ class BotController(
             "[GAME_COMPLETE_RESULT_WAIT] result=TIMEOUT timeoutMs=" +
                 "$GAME_COMPLETE_RESULT_RECOVERY_TIMEOUT_MS",
         )
-        return null
+        return GameCompleteResultWaitOutcome(GameCompleteResultWaitType.TIMED_OUT)
+    }
+
+    private fun ensureGameCompleteFallbackRoundRecord(
+        completedElapsedRealtime: Long,
+        reason: String,
+    ) {
+        if (gameCompleteImageSaved || gameCompleteFallbackRecorded) return
+        roundResultCollector.completeRoundWithoutFrame(
+            round = roundNumber,
+            completedElapsedRealtime = completedElapsedRealtime,
+        )
+        gameCompleteFallbackRecorded = true
+        logDiagnostic(
+            "[GAME_COMPLETE_RESULT_FALLBACK] round=$roundNumber reason=$reason " +
+                "coins=unknown xp=unknown recoverableByLaterUpsert=true",
+        )
     }
 
     private fun observeAntiBotExit(
