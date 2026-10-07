@@ -52,6 +52,12 @@ internal data class BackgroundStageSelection(
     val nextCursor: Int,
 )
 
+internal data class InterleavedBackgroundSelection(
+    val stage: BotStage?,
+    val nextCursor: Int,
+    val nextAntiBotTurn: Boolean,
+)
+
 internal object BackgroundDetectionPolicy {
     const val GRACE_MS = 2_000L
     const val INTERVAL_MS = 500L
@@ -93,6 +99,31 @@ internal object BackgroundDetectionPolicy {
             }
         }
         return BackgroundStageSelection(null, next)
+    }
+
+    fun nextAfterGameRelay(
+        orderedStages: List<BotStage>,
+        cursor: Int,
+        primaryStages: Collection<BotStage>,
+        antiBotTurn: Boolean,
+    ): InterleavedBackgroundSelection {
+        if (antiBotTurn && BotStage.ANTI_BOT !in primaryStages) {
+            return InterleavedBackgroundSelection(
+                stage = BotStage.ANTI_BOT,
+                nextCursor = cursor,
+                nextAntiBotTurn = false,
+            )
+        }
+        val other = nextStage(
+            orderedStages = orderedStages,
+            cursor = cursor,
+            primaryStages = primaryStages + BotStage.ANTI_BOT,
+        )
+        return InterleavedBackgroundSelection(
+            stage = other.stage,
+            nextCursor = other.nextCursor,
+            nextAntiBotTurn = true,
+        )
     }
 }
 
@@ -149,6 +180,8 @@ class BotController(
     private var postRelaySequenceDone = false
     private var backgroundDetectionCursor = 0
     private var lastBackgroundDetectionAt = 0L
+    private var postRelayAntiBotPriorityActive = false
+    private var postRelayAntiBotTurn = true
     private var antiBotFollowUpActive = false
     private var lastAntiBotFingerprint: PopupFingerprint? = null
     private var gameCompleteImageSaved = true
@@ -293,6 +326,8 @@ class BotController(
             postRelaySequenceDone = false
             backgroundDetectionCursor = 0
             lastBackgroundDetectionAt = 0L
+            postRelayAntiBotPriorityActive = false
+            postRelayAntiBotTurn = true
             antiBotFollowUpActive = false
             lastAntiBotFingerprint = null
             gameCompleteImageSaved = true
@@ -1227,21 +1262,34 @@ class BotController(
                     fastStartPriorityAtDetectionStart,
                 )
             ) {
-                val selection = BackgroundDetectionPolicy.nextStage(
-                    ALL_STAGE_ORDER,
-                    backgroundDetectionCursor,
-                    candidates,
-                )
-                backgroundDetectionCursor = selection.nextCursor
-                val backgroundStage = selection.stage
+                val backgroundStage = if (postRelayAntiBotPriorityActive) {
+                    val selection = BackgroundDetectionPolicy.nextAfterGameRelay(
+                        ALL_STAGE_ORDER,
+                        backgroundDetectionCursor,
+                        candidates,
+                        postRelayAntiBotTurn,
+                    )
+                    backgroundDetectionCursor = selection.nextCursor
+                    postRelayAntiBotTurn = selection.nextAntiBotTurn
+                    selection.stage
+                } else {
+                    val selection = BackgroundDetectionPolicy.nextStage(
+                        ALL_STAGE_ORDER,
+                        backgroundDetectionCursor,
+                        candidates,
+                    )
+                    backgroundDetectionCursor = selection.nextCursor
+                    selection.stage
+                }
                 if (backgroundStage != null) {
                     lastBackgroundDetectionAt = now
                     result = detector.detectFirst(listOf(backgroundStage), frame.mat)
                     if (result != null) {
                         detectionMatchedAtNanos = SystemClock.elapsedRealtimeNanos()
                         logDiagnostic(
-                            "[BACKGROUND_DETECT] mode=ROTATION state=${result.state.name} " +
-                                "frameGeneration=${frame.generation}",
+                            "[BACKGROUND_DETECT] mode=" +
+                                if (postRelayAntiBotPriorityActive) "POST_RELAY_INTERLEAVE " else "ROTATION " +
+                                "state=${result.state.name} frameGeneration=${frame.generation}",
                         )
                     }
                 }
@@ -1555,6 +1603,8 @@ class BotController(
             BotStage.GAME_START -> handleGameStart(result, frame, sourceWidth, sourceHeight, timing)
             BotStage.GAME_RELAY -> handleGameRelay(result, frame, sourceWidth, sourceHeight, timing)
             BotStage.GAME_COMPLETE -> {
+                postRelayAntiBotPriorityActive = false
+                postRelayAntiBotTurn = true
                 val detectedAt = SystemClock.elapsedRealtime()
                 val roundCompletedAt = synchronized(lock) {
                     firstGameCompleteElapsedRealtime(
@@ -2636,6 +2686,12 @@ class BotController(
             } else {
                 roundNumber += 1
                 postRelaySequenceDone = false
+                backgroundDetectionCursor = 0
+                lastBackgroundDetectionAt = 0L
+                postRelayAntiBotPriorityActive = false
+                postRelayAntiBotTurn = true
+                antiBotFollowUpActive = false
+                lastAntiBotFingerprint = null
                 gameStartDetectedForRound = false
                 fastStartPollDeadlineNanos = 0L
                 flushFastStartAttemptMetrics("NEW_ROUND")
@@ -2835,6 +2891,13 @@ class BotController(
                 }
             } else delayOrStop(randomMs(800, 1200))
         }
+        postRelayAntiBotPriorityActive = true
+        postRelayAntiBotTurn = true
+        backgroundDetectionCursor = 0
+        lastBackgroundDetectionAt = 0L
+        logDiagnostic(
+            "[BACKGROUND_DETECT] postRelayAntiBotPriority=true pattern=ANTI_BOT_OTHER_REPEAT",
+        )
         updateGroup(DetectionGroup.IN_GAME)
     }
 
