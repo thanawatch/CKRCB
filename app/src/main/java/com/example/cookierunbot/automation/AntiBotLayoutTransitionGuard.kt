@@ -4,6 +4,17 @@ import kotlin.math.abs
 
 internal data class AntiBotCardLayoutFingerprint(val pixels: ByteArray)
 
+internal data class AntiBotPostTestState(
+    val followUpActive: Boolean,
+    val awaitingExit: Boolean,
+)
+
+internal fun antiBotPostTestState(testIndexInChallenge: Int): AntiBotPostTestState =
+    AntiBotPostTestState(
+        followUpActive = testIndexInChallenge in 1..2,
+        awaitingExit = testIndexInChallenge == 3,
+    )
+
 internal enum class AntiBotLayoutDecision {
     SAME_ACCEPTED_LAYOUT,
     WAIT_FOR_STABLE_NEW_LAYOUT,
