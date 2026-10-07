@@ -70,6 +70,8 @@ internal object PopupFingerprinting {
         BotStage.PARTY_RUN -> FingerprintRegion(260, 20, 1020, 680)
         BotStage.GAME_SETTINGS -> FingerprintRegion(300, 25, 980, 680)
         BotStage.PREVIOUS_RESULTS -> FingerprintRegion(260, 120, 1020, 680)
+        // Cover the six Anti-bot cards while excluding most of the static popup chrome.
+        BotStage.ANTI_BOT -> FingerprintRegion(330, 160, 940, 690)
         else -> fallbackRegion
     }
 
