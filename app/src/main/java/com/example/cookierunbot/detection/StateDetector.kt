@@ -543,6 +543,7 @@ class StateDetector(
         private const val LOGICAL_HEIGHT = 720
         private const val MATCH_THRESHOLD = 0.8
         private val DETECTABLE_STAGES = setOf(
+            BotStage.LOGIN,
             BotStage.MAINMENU,
             BotStage.PURCHASE_ITEM,
             BotStage.GAME_START,
@@ -572,6 +573,7 @@ class StateDetector(
             BotStage.GAME_SETTINGS,
         )
         private val ROI_BY_STAGE = mapOf(
+            BotStage.LOGIN to Rect(390, 570, 500, 130),
             BotStage.MAINMENU to Rect(154, 150, 344 - 154, 225 - 150),
             BotStage.PURCHASE_ITEM to Rect(474, 84, 602 - 474, 138 - 84),
             BotStage.GAME_START to Rect(500, 200, 800 - 500, 500 - 200),
@@ -601,6 +603,7 @@ class StateDetector(
             BotStage.GAME_SETTINGS to Rect(484, 62, 769 - 484, 122 - 62),
         )
 private val TEMPLATE_PATHS_BY_STAGE = mapOf(
+            BotStage.LOGIN to listOf("templates/LOGIN_1.png"),
             BotStage.MAINMENU to listOf("templates/MAINMENU_1.png"),
             BotStage.PURCHASE_ITEM to listOf("templates/PURCHASE_ITEM_1.png"),
             BotStage.GAME_START to listOf("templates/GAME_START_1.png"),
@@ -633,6 +636,7 @@ private val TEMPLATE_PATHS_BY_STAGE = mapOf(
             BotStage.GAME_SETTINGS to listOf("templates/GAME_SETTINGS_1.png"),
         )
         private val SCALE_BY_STAGE = mapOf(
+            BotStage.LOGIN to listOf(1.0),
             BotStage.MAINMENU to listOf(1.0),
             BotStage.PURCHASE_ITEM to listOf(1.0),
             // Legacy retains all seven animation-aware scales; Redfinger uses 1.0 only.

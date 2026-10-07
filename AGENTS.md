@@ -91,7 +91,7 @@ Important rules:
 
 `BotController.stagesFor()` defines ordering:
 
-- `ALWAYS`: `CONNECTION_LOST`, `INACTIVE`, prepended to every normal group.
+- `ALWAYS`: `CONNECTION_LOST`, `INACTIVE`, `LOGIN`, prepended to every normal group. `LOGIN` uses the normalized 1280×720 ROI `(390,570)-(890,700)`, scale 1.0 and the standard 0.8 threshold; its handler taps the center of the actual matched template rectangle, then routes to PRE_GAME and requires a newer frame. Accepted taps are rate-limited to one attempt per 3 seconds while the same login screen remains visible.
 - `PRE_GAME`: reward/daily/relic/league/treasure/party/time-deal/previous-results/settings popups, then `MAINMENU`, then `PURCHASE_ITEM` (with relic states filtered unless enabled).
 - `IN_GAME`: `GAME_RELAY`, `GAME_COMPLETE`, `GAME_START`, followed by `ALWAYS`. During the 8-second Fast Start priority window it checks only `GAME_START` then `ALWAYS`.
 - `POST_GAME`: `ALWAYS`, then `ANTI_BOT`, `OVERTAKE_BREAK_SCORE`, `MYSTERY_BOX`, the reward-popup subset in PRE_GAME order, and `MAINMENU`.

@@ -94,6 +94,7 @@ class BackgroundDetectionPolicyTest {
             BotStage.GAME_COMPLETE,
             BotStage.CONNECTION_LOST,
             BotStage.INACTIVE,
+            BotStage.LOGIN,
             BotStage.CLOSE_BUTTON,
         )
 

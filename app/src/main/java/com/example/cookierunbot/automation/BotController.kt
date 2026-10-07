@@ -214,6 +214,7 @@ class BotController(
     private var lastPreviousResultsDiagnosticAt = 0L
     private var lastCloseButtonDiagnosticAt = 0L
     private var lastCloseButtonFallbackAt = 0L
+    private var lastLoginTapAt = 0L
     private var roundNumber = 0
     private var gameStartDetectedForRound = false
     private var fastStartPollDeadlineNanos = 0L
@@ -364,6 +365,7 @@ class BotController(
             lastStage = null
             lastDetectionAt = SystemClock.elapsedRealtime()
             lastCloseButtonFallbackAt = 0L
+            lastLoginTapAt = 0L
             roundNumber = 0
             purchaseItemRetryState.reset()
             gameStartDetectedForRound = false
@@ -1756,6 +1758,7 @@ class BotController(
             }
         }
         when (result.state) {
+            BotStage.LOGIN -> handleLogin(result, sourceWidth, sourceHeight, frameGeneration)
             BotStage.MAINMENU -> handleMainMenu(detector, sourceWidth, sourceHeight)
             BotStage.PURCHASE_ITEM -> handlePurchaseItem(detector, sourceWidth, sourceHeight)
             BotStage.GAME_START -> handleGameStart(result, frame, sourceWidth, sourceHeight, timing)
@@ -3722,6 +3725,56 @@ class BotController(
         performTap("INACTIVE_RELOAD", AutomationConfig.RELOAD, sourceWidth, sourceHeight)
         delayOrStop(randomMs(10_000, 15_000))
         lastStage = null
+    }
+
+    private fun handleLogin(
+        result: DetectionResult,
+        sourceWidth: Int,
+        sourceHeight: Int,
+        frameGeneration: Long,
+    ) {
+        val now = SystemClock.elapsedRealtime()
+        if (!LoginPolicy.retryDue(now, lastLoginTapAt)) {
+            logDiagnostic(
+                "[LOGIN] action=WAIT reason=retry_cooldown " +
+                    "retryInMs=${(LoginPolicy.RETRY_INTERVAL_MS - (now - lastLoginTapAt)).coerceAtLeast(0L)}",
+            )
+            lastStage = null
+            return
+        }
+
+        val center = LoginPolicy.tapCenter(result)
+        logDiagnostic(
+            "[LOGIN] matched=true score=${format(result.score)} " +
+                "match=(${result.x},${result.y},${result.width},${result.height}) " +
+                "tapCenter=(${center.x},${center.y}) frameGeneration=$frameGeneration",
+        )
+        val accepted = performDetectedTap(
+            "LOGIN",
+            center,
+            sourceWidth,
+            sourceHeight,
+        ) { success ->
+            logDiagnostic("[LOGIN] callbackSuccess=$success")
+        }
+        if (!accepted) {
+            minimumFreshFrameGeneration = frameGeneration
+            lastStage = null
+            logDiagnostic(
+                "[LOGIN] dispatchAccepted=false action=RETRY_ON_FRESH_FRAME " +
+                    "generation>$frameGeneration",
+            )
+            return
+        }
+
+        lastLoginTapAt = now
+        minimumFreshFrameGeneration = frameGeneration
+        updateGroup(DetectionGroup.PRE_GAME)
+        lastStage = null
+        logDiagnostic(
+            "[LOGIN] dispatchAccepted=true next=PRE_GAME " +
+                "freshFrameRequiredAfter=$frameGeneration",
+        )
     }
 
     private fun handleAntiBot(detector: StateDetector, frame: Mat, sourceWidth: Int, sourceHeight: Int) {
@@ -6069,7 +6122,11 @@ class BotController(
         String.format(Locale.US, "%.2f", nanos.coerceAtLeast(0L) / 1_000_000.0)
 
     companion object {
-        private val ALWAYS = listOf(BotStage.CONNECTION_LOST, BotStage.INACTIVE)
+        private val ALWAYS = listOf(
+            BotStage.CONNECTION_LOST,
+            BotStage.INACTIVE,
+            BotStage.LOGIN,
+        )
         private val RELIC_STAGES = setOf(BotStage.RELIC_COMPLETE, BotStage.RELIC_CLAIM)
         private val REWARD_PRE_GAME_POPUPS = setOf(
             BotStage.CLOSE_BUTTON,
@@ -6146,7 +6203,7 @@ class BotController(
             postGameResultInterruptStages(ALWAYS, POST_GAME)
         private val ALL_STAGE_ORDER = listOf(
             BotStage.GAME_START, BotStage.GAME_RELAY, BotStage.ANTI_BOT,
-            BotStage.CONNECTION_LOST, BotStage.INACTIVE, BotStage.GAME_COMPLETE,
+            BotStage.CONNECTION_LOST, BotStage.INACTIVE, BotStage.LOGIN, BotStage.GAME_COMPLETE,
             BotStage.OVERTAKE_BREAK_SCORE, BotStage.MYSTERY_BOX, BotStage.CONGRATULATIONS,
             BotStage.RELIC_COMPLETE, BotStage.RELIC_CLAIM, BotStage.TOO_MANY_TREASURES,
             BotStage.MAINMENU, BotStage.PARTY_RUN, BotStage.PARTY_RUN_SEASON_REWARDS,

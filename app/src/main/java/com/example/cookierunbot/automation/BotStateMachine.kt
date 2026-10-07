@@ -1,6 +1,7 @@
 package com.example.cookierunbot.automation
 
 enum class BotStage {
+    LOGIN,
     MAINMENU,
     PURCHASE_ITEM,
     GAME_START,
