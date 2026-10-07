@@ -231,6 +231,7 @@ class BotController(
     private val antiBotLayoutTransitionGuard = AntiBotLayoutTransitionGuard()
     private val antiBotExitConfirmationTracker = AntiBotExitConfirmationTracker()
     private var gameCompleteImageSaved = true
+    private var gameCompleteFallbackRecorded = false
     private var gameCompleteDetectedElapsedRealtime = 0L
     private var mysteryBoxImageSaved = true
     private var mysteryBoxCount = 0
@@ -382,6 +383,7 @@ class BotController(
             antiBotLayoutTransitionGuard.reset()
             antiBotExitConfirmationTracker.reset()
             gameCompleteImageSaved = true
+            gameCompleteFallbackRecorded = false
             gameCompleteDetectedElapsedRealtime = 0L
             mysteryBoxImageSaved = true
             mysteryBoxCount = 0
@@ -2856,6 +2858,7 @@ class BotController(
                 fastStartPollDeadlineNanos = 0L
                 flushFastStartAttemptMetrics("NEW_ROUND")
                 gameCompleteImageSaved = false
+                gameCompleteFallbackRecorded = false
                 gameCompleteDetectedElapsedRealtime = 0L
                 mysteryBoxImageSaved = false
                 mysteryBoxCount = 0
@@ -5875,7 +5878,8 @@ class BotController(
         private const val NO_MATCH_CAPTURE_LIMIT = 10
         private const val DETECT_FRAME_LOG_INTERVAL_MS = 2_000L
         private const val POPUP_FRESH_FRAME_TIMEOUT_MS = 2_500L
-        private const val GAME_COMPLETE_RESULT_POLL_MS = 500L
+        private const val GAME_COMPLETE_RESULT_PROBE_INTERVAL_MS = 500L
+        private const val GAME_COMPLETE_POST_GAME_PROBE_INTERVAL_MS = 1_000L
         private const val GAME_COMPLETE_RESULT_RECOVERY_TIMEOUT_MS = 120_000L
         private const val PREVIOUS_RESULTS_SETTLE_MS = 500L
         private const val PREVIOUS_RESULTS_CONFIRM_OFFSET_X = 153
@@ -5888,6 +5892,8 @@ class BotController(
         private const val FRESH_FRAME_GATE_MAX_WAIT_MS = 7_500L
         private const val MAX_CONSECUTIVE_REWARD_POPUP_ACTIONS = 3
         private val POST_GAME = postGameStages(PRE_GAME, REWARD_PRE_GAME_POPUPS)
+        private val POST_GAME_RESULT_INTERRUPTS =
+            (ALWAYS + POST_GAME.filterNot { it == BotStage.ANTI_BOT }).distinct()
         private val ALL_STAGE_ORDER = listOf(
             BotStage.GAME_START, BotStage.GAME_RELAY, BotStage.ANTI_BOT,
             BotStage.CONNECTION_LOST, BotStage.INACTIVE, BotStage.GAME_COMPLETE,
@@ -5963,6 +5969,18 @@ private data class FastPathTiming(
     val latestFramePublishedAtNanos: Long,
     val detectionStartedAtNanos: Long,
     val detectionMatchedAtNanos: Long,
+)
+
+private enum class GameCompleteResultWaitType {
+    VALIDATED,
+    POST_GAME_INTERRUPTED,
+    TIMED_OUT,
+}
+
+private data class GameCompleteResultWaitOutcome(
+    val type: GameCompleteResultWaitType,
+    val frame: FrameSnapshot? = null,
+    val interruptedStage: BotStage? = null,
 )
 
 private data class StoppedRun(
