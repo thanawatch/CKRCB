@@ -7,6 +7,15 @@ import org.junit.Test
 
 class AntiBotLayoutTransitionGuardTest {
     @Test
+    fun postTestStateFollowsTestsOneAndTwoThenWaitsForExitAfterThree() {
+        assertEquals(AntiBotPostTestState(true, false), antiBotPostTestState(1))
+        assertEquals(AntiBotPostTestState(true, false), antiBotPostTestState(2))
+        assertEquals(AntiBotPostTestState(false, true), antiBotPostTestState(3))
+        assertEquals(AntiBotPostTestState(false, false), antiBotPostTestState(0))
+        assertEquals(AntiBotPostTestState(false, false), antiBotPostTestState(4))
+    }
+
+    @Test
     fun uniformBrightnessShiftDoesNotBecomeNewLayout() {
         val before = layoutFrame(cardBase = 70)
         val after = before.copyOf().also { pixels ->
