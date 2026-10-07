@@ -3624,9 +3624,9 @@ class BotController(
                     )
                 }
             }
-            delayOrStop(randomMs(10_000, 15_000))
+            delayOrStop(randomMs(3_000, 6_000))
         }
-        delayOrStop(randomMs(800, 1400))
+        delayOrStop(3_000L)
         val testIndex = event?.testIndexInChallenge ?: 0
         val postTestState = antiBotPostTestState(testIndex)
         antiBotFollowUpActive = postTestState.followUpActive
