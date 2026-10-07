@@ -3562,8 +3562,9 @@ class BotController(
         }
         delayOrStop(randomMs(800, 1400))
         val testIndex = event?.testIndexInChallenge ?: 0
-        antiBotFollowUpActive = testIndex in 1..2
-        antiBotAwaitingExit = testIndex == 3
+        val postTestState = antiBotPostTestState(testIndex)
+        antiBotFollowUpActive = postTestState.followUpActive
+        antiBotAwaitingExit = postTestState.awaitingExit
         lastAntiBotFollowUpAt = 0L
         logDiagnostic(
             "[ANTI_BOT_FOLLOW_UP] active=$antiBotFollowUpActive " +
