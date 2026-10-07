@@ -117,7 +117,7 @@ internal class AntiBotLayoutTransitionGuard(
     }
 
     fun recordAccepted(fingerprint: AntiBotCardLayoutFingerprint?) {
-        if (fingerprint != null) accepted = fingerprint
+        accepted = fingerprint
         pending = null
         pendingSamples = 0
     }
