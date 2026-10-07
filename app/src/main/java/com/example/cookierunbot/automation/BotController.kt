@@ -1304,24 +1304,11 @@ class BotController(
                 lastAntiBotFollowUpAt = now
                 val antiBotStillVisible =
                     detector.detectFirst(listOf(BotStage.ANTI_BOT), frame.mat) != null
-                val exitConfirmed = antiBotExitConfirmationTracker.observe(antiBotStillVisible)
-                logDiagnostic(
-                    "[ANTI_BOT_EXIT] visible=$antiBotStillVisible " +
-                        "confirmed=$exitConfirmed frameGeneration=${frame.generation}",
+                observeAntiBotExit(
+                    antiBotStillVisible = antiBotStillVisible,
+                    frameGeneration = frame.generation,
+                    nextState = "IN_GAME_NO_MATCH",
                 )
-                if (exitConfirmed) {
-                    antiBotAwaitingExit = false
-                    antiBotLayoutTransitionGuard.reset()
-                    val generation = RoundResultStore.currentGeneration()
-                    if (RoundResultStore.recordAntiBotExited(generation)) {
-                        val stats = RoundResultStore.snapshot()
-                        logDiagnostic(
-                            "[ANTI_BOT_STATS] challengeExitConfirmed=true " +
-                                "completedChallenges=${stats.antiBotCompletedChallengeCount} " +
-                                "nextState=IN_GAME_NO_MATCH",
-                        )
-                    }
-                }
             }
 
             if (result == null &&
@@ -3164,56 +3151,192 @@ class BotController(
         autoTapper.stop("GAME_COMPLETE")
         autoSlider.stop("GAME_COMPLETE")
         Log.i(CookieRunBotApplication.TAG, "[RESULT] GAME_COMPLETE detected")
+
+        val waitMs = if (!gameCompleteImageSaved) randomMs(9000, 11000) else 0L
         if (!gameCompleteImageSaved) {
-            val waitMs = randomMs(9000, 11000)
             Log.i(
                 CookieRunBotApplication.TAG,
-                "[RESULT] Waiting ${waitMs / 1000.0}s before result capture",
+                "[RESULT] Waiting ${waitMs / 1000.0}s before validated result capture",
             )
-            delayOrStop(waitMs)
-            if (!synchronized(lock) { canDispatchActionLocked() }) return
-            captureGameCompleteResult(completedElapsedRealtime)
-            gameCompleteImageSaved = true
         }
-        val baseline = LatestFrameProvider.currentGeneration()
-        val fresh = LatestFrameProvider.awaitNextSnapshot(baseline, POPUP_FRESH_FRAME_TIMEOUT_MS)
-        if (fresh == null) {
-            logDiagnostic("[GAME_COMPLETE_REVALIDATE] freshFrame=false action=SKIP_FINISH")
-            lastStage = null
-            return
-        }
-        val freshGeneration = fresh.generation
-        val revalidated = try {
-            detector.detect(BotStage.GAME_COMPLETE, fresh.mat)
-        } finally {
-            fresh.mat.release()
-        }
-        if (!gameCompleteFinishAllowed(true, revalidated.matched)) {
+
+        val validated = awaitValidatedGameCompleteResultFrame(
+            detector = detector,
+            initialWaitMs = waitMs,
+        )
+        if (validated == null) {
             logDiagnostic(
-                "[GAME_COMPLETE_REVALIDATE] matched=false score=${format(revalidated.score)} action=SKIP_FINISH",
+                "[GAME_COMPLETE_REVALIDATE] freshFrame=false action=DEFER_RESULT " +
+                    "reason=no_valid_game_complete_frame",
             )
             lastStage = null
             return
         }
-        val stillFresh = synchronized(lock) {
-            val valid = PopupFreshFramePolicy.allowsActionDispatch(
-                isCurrentWorkerRunLocked(),
-                freshGeneration,
-                minimumFreshFrameGeneration,
-            ) && !progressRecoveryGate.isActive()
-            if (valid) detectionActionFrameGeneration.set(freshGeneration)
-            valid
+
+        try {
+            val freshGeneration = validated.generation
+            val stillFresh = synchronized(lock) {
+                val valid = PopupFreshFramePolicy.allowsActionDispatch(
+                    isCurrentWorkerRunLocked(),
+                    freshGeneration,
+                    minimumFreshFrameGeneration,
+                ) && !progressRecoveryGate.isActive()
+                if (valid) detectionActionFrameGeneration.set(freshGeneration)
+                valid
+            }
+            if (!stillFresh) {
+                logDiagnostic(
+                    "[GAME_COMPLETE_REVALIDATE] matched=true action=DEFER_RESULT reason=stale_action",
+                )
+                lastStage = null
+                return
+            }
+
+            if (!gameCompleteImageSaved) {
+                captureGameCompleteResult(validated, completedElapsedRealtime)
+                gameCompleteImageSaved = true
+            }
+
+            logDiagnostic(
+                "[GAME_COMPLETE_REVALIDATE] matched=true action=CAPTURED_AND_FINISH " +
+                    "frameGeneration=$freshGeneration",
+            )
+            val finishAccepted = performTap(
+                "GAME_COMPLETE_FINISH",
+                AutomationConfig.COMPLETE_FINISH,
+                validated.sourceWidth.takeIf { it > 0 } ?: sourceWidth,
+                validated.sourceHeight.takeIf { it > 0 } ?: sourceHeight,
+            )
+            if (!finishAccepted && !synchronized(lock) { canDispatchActionLocked() }) return
+            delayOrStop(randomMs(800, 1400))
+            livesPendingAfterGame = false
+        } finally {
+            validated.mat.release()
         }
-        if (!stillFresh) {
-            logDiagnostic("[GAME_COMPLETE_REVALIDATE] matched=true action=SKIP_FINISH reason=stale_action")
-            lastStage = null
-            return
+    }
+
+    private fun awaitValidatedGameCompleteResultFrame(
+        detector: StateDetector,
+        initialWaitMs: Long,
+    ): FrameSnapshot? {
+        val startedAt = SystemClock.elapsedRealtime()
+        val captureReadyAt = startedAt + initialWaitMs
+        val deadline = startedAt + GAME_COMPLETE_RESULT_RECOVERY_TIMEOUT_MS
+        var lastGeneration = LatestFrameProvider.currentGeneration()
+
+        while (isRunning() && SystemClock.elapsedRealtime() < deadline) {
+            if (synchronized(lock) { progressRecoveryGate.isActive() }) return null
+            val fresh = LatestFrameProvider.awaitNextSnapshot(
+                lastGeneration,
+                GAME_COMPLETE_RESULT_POLL_MS,
+            ) ?: continue
+            lastGeneration = fresh.generation
+
+            var keepFrame = false
+            try {
+                val antiBot = detector.detect(BotStage.ANTI_BOT, fresh.mat)
+                if (antiBot.matched) {
+                    LatestFrameProvider.updateDetection(antiBot)
+                    logDiagnostic(
+                        "[GAME_COMPLETE_RESULT_WAIT] interrupt=ANTI_BOT " +
+                            "score=${format(antiBot.score)} frameGeneration=${fresh.generation}",
+                    )
+                    if (antiBotAwaitingExit) {
+                        observeAntiBotExit(
+                            antiBotStillVisible = true,
+                            frameGeneration = fresh.generation,
+                            nextState = "GAME_COMPLETE_RESULT_WAIT",
+                        )
+                    } else {
+                        detectionActionFrameGeneration.set(fresh.generation)
+                        handleAntiBot(
+                            detector,
+                            fresh.mat,
+                            fresh.sourceWidth,
+                            fresh.sourceHeight,
+                        )
+                    }
+                    continue
+                }
+
+                if (antiBotAwaitingExit) {
+                    val exitConfirmed = observeAntiBotExit(
+                        antiBotStillVisible = false,
+                        frameGeneration = fresh.generation,
+                        nextState = "GAME_COMPLETE_RESULT_WAIT",
+                    )
+                    if (!exitConfirmed) continue
+                }
+
+                if (antiBotFollowUpActive || antiBotAwaitingExit) {
+                    continue
+                }
+
+                val readyForCapture = SystemClock.elapsedRealtime() >= captureReadyAt
+                val gameComplete = if (readyForCapture) {
+                    detector.detect(BotStage.GAME_COMPLETE, fresh.mat)
+                } else {
+                    null
+                }
+                val decision = gameCompleteResultWaitDecision(
+                    readyForResultCapture = readyForCapture,
+                    antiBotMatched = false,
+                    gameCompleteMatched = gameComplete?.matched == true,
+                )
+                if (decision == GameCompleteResultWaitDecision.CAPTURE_GAME_COMPLETE) {
+                    logDiagnostic(
+                        "[GAME_COMPLETE_RESULT_WAIT] result=VALID " +
+                            "score=${format(requireNotNull(gameComplete).score)} " +
+                            "frameGeneration=${fresh.generation} elapsedMs=" +
+                            "${SystemClock.elapsedRealtime() - startedAt}",
+                    )
+                    keepFrame = true
+                    return fresh
+                }
+
+                if (readyForCapture && gameComplete != null) {
+                    logDiagnostic(
+                        "[GAME_COMPLETE_RESULT_WAIT] result=WAIT " +
+                            "gameCompleteScore=${format(gameComplete.score)} " +
+                            "antiBot=false frameGeneration=${fresh.generation}",
+                    )
+                }
+            } finally {
+                if (!keepFrame) fresh.mat.release()
+            }
         }
-        logDiagnostic("[GAME_COMPLETE_REVALIDATE] matched=true score=${format(revalidated.score)}")
-        val finishAccepted = performTap("GAME_COMPLETE_FINISH", AutomationConfig.COMPLETE_FINISH, sourceWidth, sourceHeight)
-        if (!finishAccepted && !synchronized(lock) { canDispatchActionLocked() }) return
-        delayOrStop(randomMs(800, 1400))
-        livesPendingAfterGame = false
+
+        logDiagnostic(
+            "[GAME_COMPLETE_RESULT_WAIT] result=TIMEOUT timeoutMs=" +
+                "$GAME_COMPLETE_RESULT_RECOVERY_TIMEOUT_MS",
+        )
+        return null
+    }
+
+    private fun observeAntiBotExit(
+        antiBotStillVisible: Boolean,
+        frameGeneration: Long,
+        nextState: String,
+    ): Boolean {
+        val exitConfirmed = antiBotExitConfirmationTracker.observe(antiBotStillVisible)
+        logDiagnostic(
+            "[ANTI_BOT_EXIT] visible=$antiBotStillVisible " +
+                "confirmed=$exitConfirmed frameGeneration=$frameGeneration",
+        )
+        if (!exitConfirmed) return false
+
+        antiBotAwaitingExit = false
+        antiBotLayoutTransitionGuard.reset()
+        val generation = RoundResultStore.currentGeneration()
+        if (RoundResultStore.recordAntiBotExited(generation)) {
+            val stats = RoundResultStore.snapshot()
+            logDiagnostic(
+                "[ANTI_BOT_STATS] challengeExitConfirmed=true " +
+                    "completedChallenges=${stats.antiBotCompletedChallengeCount} " +
+                    "nextState=$nextState",
+            )
+        }
+        return true
     }
 
     private fun handleMysteryBox(
@@ -5047,15 +5170,10 @@ class BotController(
         } finally { snapshot.mat.release() }
     }
 
-    private fun captureGameCompleteResult(completedElapsedRealtime: Long) {
-        val snapshot = LatestFrameProvider.snapshot()
-        if (snapshot == null) {
-            roundResultCollector.completeRoundWithoutFrame(
-                round = roundNumber,
-                completedElapsedRealtime = completedElapsedRealtime,
-            )
-            return
-        }
+    private fun captureGameCompleteResult(
+        snapshot: FrameSnapshot,
+        completedElapsedRealtime: Long,
+    ) {
         try {
             val screenshotPath = if (BotOptionsStore.shouldSaveResultImages(context)) {
                 try {
@@ -5079,7 +5197,7 @@ class BotController(
             )
         } catch (error: Exception) {
             Log.e(CookieRunBotApplication.TAG, "[RESULT_READ_FAILED] enqueue reason=${error.message}", error)
-        } finally { snapshot.mat.release() }
+        }
     }
 
     private fun performTap(
@@ -5757,6 +5875,8 @@ class BotController(
         private const val NO_MATCH_CAPTURE_LIMIT = 10
         private const val DETECT_FRAME_LOG_INTERVAL_MS = 2_000L
         private const val POPUP_FRESH_FRAME_TIMEOUT_MS = 2_500L
+        private const val GAME_COMPLETE_RESULT_POLL_MS = 500L
+        private const val GAME_COMPLETE_RESULT_RECOVERY_TIMEOUT_MS = 120_000L
         private const val PREVIOUS_RESULTS_SETTLE_MS = 500L
         private const val PREVIOUS_RESULTS_CONFIRM_OFFSET_X = 153
         private const val PREVIOUS_RESULTS_CONFIRM_OFFSET_Y = 236
