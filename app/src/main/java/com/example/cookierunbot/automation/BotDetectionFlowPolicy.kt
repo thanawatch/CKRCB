@@ -59,6 +59,12 @@ internal fun mainMenuRecoveryDecision(matched: Boolean, elapsedMs: Long): MainMe
 internal fun gameCompleteFinishAllowed(freshFrameAvailable: Boolean, gameCompleteMatched: Boolean): Boolean =
     freshFrameAvailable && gameCompleteMatched
 
+internal fun postGameResultInterruptStages(
+    alwaysStages: List<BotStage>,
+    postGameStages: List<BotStage>,
+): List<BotStage> =
+    (alwaysStages + postGameStages.filterNot { it == BotStage.ANTI_BOT }).distinct()
+
 internal fun fixedIntervalProbeDue(
     nowMs: Long,
     lastProbeAtMs: Long,
