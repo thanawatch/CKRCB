@@ -1703,7 +1703,7 @@ class BotController(
             BotStage.MAINMENU -> handleMainMenu(detector, sourceWidth, sourceHeight)
             BotStage.PURCHASE_ITEM -> handlePurchaseItem(detector, sourceWidth, sourceHeight)
             BotStage.GAME_START -> handleGameStart(result, frame, sourceWidth, sourceHeight, timing)
-            BotStage.GAME_RELAY -> handleGameRelay(result, frame, sourceWidth, sourceHeight, timing)
+            BotStage.GAME_RELAY -> handleGameRelay(detector, result, frame, sourceWidth, sourceHeight, timing)
             BotStage.GAME_COMPLETE -> {
                 postRelayAntiBotPriorityActive = false
                 postRelayAntiBotTurn = true
@@ -2971,6 +2971,7 @@ class BotController(
     }
 
     private fun handleGameRelay(
+        detector: StateDetector,
         result: DetectionResult,
         frame: Mat,
         sourceWidth: Int,
@@ -2988,17 +2989,29 @@ class BotController(
             )
             if (!accepted) return
             Log.i(CookieRunBotApplication.TAG, "[COOKIE RELAY] Cookie Relay used")
+            activatePostRelayAntiBotPriority()
             if (options.postCookieRelaySequence && !postRelaySequenceDone) {
                 // Both profiles retain fire-once semantics. Only the Redfinger target
                 // coordinates and mapping path differ; Legacy stays absolute-physical.
                 postRelaySequenceDone = true
-                if (options.performanceProfile == PerformanceProfile.LEGACY) {
-                    postRelaySequence(sourceWidth, sourceHeight)
+                val completed = if (options.performanceProfile == PerformanceProfile.LEGACY) {
+                    postRelaySequence(detector, sourceWidth, sourceHeight)
                 } else {
-                    redfingerPostRelaySequence(sourceWidth, sourceHeight)
+                    redfingerPostRelaySequence(detector, sourceWidth, sourceHeight)
+                }
+                if (!completed) {
+                    logDiagnostic(
+                        "[COOKIE RELAY SEQUENCE] action=ABORT_REMAINING reason=ANTI_BOT_VISIBLE",
+                    )
                 }
             } else delayOrStop(randomMs(800, 1200))
+        } else {
+            activatePostRelayAntiBotPriority()
         }
+        updateGroup(DetectionGroup.IN_GAME)
+    }
+
+    private fun activatePostRelayAntiBotPriority() {
         postRelayAntiBotPriorityActive = true
         postRelayAntiBotTurn = true
         backgroundDetectionCursor = 0
@@ -3006,10 +3019,29 @@ class BotController(
         logDiagnostic(
             "[BACKGROUND_DETECT] postRelayAntiBotPriority=true pattern=ANTI_BOT_OTHER_REPEAT",
         )
-        updateGroup(DetectionGroup.IN_GAME)
     }
 
-    private fun postRelaySequence(sourceWidth: Int, sourceHeight: Int) {
+    private fun antiBotVisibleOnLatestFrame(detector: StateDetector): Boolean {
+        val snapshot = LatestFrameProvider.snapshot() ?: return false
+        return try {
+            val match = detector.detect(BotStage.ANTI_BOT, snapshot.mat)
+            if (match.matched) {
+                logDiagnostic(
+                    "[POST_RELAY_ANTI_BOT] matched=true score=${format(match.score)} " +
+                        "frameGeneration=${snapshot.generation} action=ABORT_SEQUENCE",
+                )
+            }
+            match.matched
+        } finally {
+            snapshot.mat.release()
+        }
+    }
+
+    private fun postRelaySequence(
+        detector: StateDetector,
+        sourceWidth: Int,
+        sourceHeight: Int,
+    ): Boolean {
         val waits = longArrayOf(randomMs(2000, 4000), randomMs(600, 2000), randomMs(600, 2000))
         val points = arrayOf(
             AutomationConfig.POST_RELAY_1 to AutomationConfig.POST_RELAY_1_PHYSICAL,
@@ -3019,6 +3051,7 @@ class BotController(
         points.forEachIndexed { index, (logicalReference, physicalTarget) ->
             Log.i(CookieRunBotApplication.TAG, "[COOKIE RELAY SEQUENCE] Waiting ${waits[index] / 1000.0}s")
             delayOrStop(waits[index])
+            if (antiBotVisibleOnLatestFrame(detector)) return false
             performPostRelayTap(
                 "POST_RELAY_${index + 1}",
                 logicalReference,
@@ -3028,9 +3061,14 @@ class BotController(
             )
         }
         Log.i(CookieRunBotApplication.TAG, "[COOKIE RELAY SEQUENCE] Completed")
+        return true
     }
 
-    private fun redfingerPostRelaySequence(sourceWidth: Int, sourceHeight: Int) {
+    private fun redfingerPostRelaySequence(
+        detector: StateDetector,
+        sourceWidth: Int,
+        sourceHeight: Int,
+    ): Boolean {
         val points = requireNotNull(PostRelayTargetPolicy.optimizedLogicalTargets(options.performanceProfile))
         // Keep the existing three-step pacing, but route these calibrated normalized
         // points through the detector contentRect rather than legacy raw phone pixels.
@@ -3038,6 +3076,7 @@ class BotController(
         points.forEachIndexed { index, point ->
             Log.i(CookieRunBotApplication.TAG, "[COOKIE RELAY SEQUENCE] Waiting ${waits[index] / 1000.0}s")
             delayOrStop(waits[index])
+            if (antiBotVisibleOnLatestFrame(detector)) return false
             val name = "POST_RELAY_${index + 1}"
             logDiagnostic(
                 "[POST_RELAY] profile=REDFINGER_OPTIMIZED state=$name " +
@@ -3046,6 +3085,7 @@ class BotController(
             performRedfingerPostRelayTap(name, point, sourceWidth, sourceHeight)
         }
         Log.i(CookieRunBotApplication.TAG, "[COOKIE RELAY SEQUENCE] Completed")
+        return true
     }
 
     private fun handleGameComplete(
