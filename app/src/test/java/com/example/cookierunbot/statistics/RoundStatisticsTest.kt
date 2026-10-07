@@ -78,6 +78,25 @@ class RoundStatisticsTest {
         assertEquals(0, snapshot.totalXp)
     }
 
+    @Test fun fallbackRoundWithUnknownNumbersStillAcceptsLateMysteryBoxes() {
+        val generation = RoundResultStore.startNewSession()
+        RoundResultStore.upsert(result(1, coins = null, xp = null), generation)
+
+        assertTrue(
+            RoundResultStore.updateBoxes(
+                1,
+                listOf("wood", "rainbow"),
+                generation,
+            ),
+        )
+
+        val snapshot = RoundResultStore.snapshot()
+        assertNull(snapshot.lastRound?.coins)
+        assertNull(snapshot.lastRound?.xp)
+        assertEquals(listOf("wood", "rainbow"), snapshot.lastRound?.boxes)
+        assertEquals(2, snapshot.totalBoxes)
+    }
+
     @Test fun newSessionClearsPreviousRoundsAndTotals() {
         val first = RoundResultStore.startNewSession()
         RoundResultStore.upsert(result(1, 100, 10), first)
