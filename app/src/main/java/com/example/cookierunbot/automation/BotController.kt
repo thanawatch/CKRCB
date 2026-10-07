@@ -47,6 +47,55 @@ private const val FAST_START_GESTURE_RELEASE_POLL_MS = 10L
 
 enum class DetectionGroup { PRE_GAME, IN_GAME, POST_GAME }
 
+internal data class BackgroundStageSelection(
+    val stage: BotStage?,
+    val nextCursor: Int,
+)
+
+internal object BackgroundDetectionPolicy {
+    const val GRACE_MS = 2_000L
+    const val INTERVAL_MS = 500L
+    const val ANTI_BOT_FOLLOW_UP_INTERVAL_MS = 500L
+
+    fun due(
+        nowMs: Long,
+        lastMatchedAtMs: Long,
+        lastBackgroundAtMs: Long,
+        fastStartPriority: Boolean,
+    ): Boolean {
+        if (fastStartPriority) return false
+        if (nowMs - lastMatchedAtMs < GRACE_MS) return false
+        return lastBackgroundAtMs == 0L || nowMs - lastBackgroundAtMs >= INTERVAL_MS
+    }
+
+    fun antiBotFollowUpDue(
+        nowMs: Long,
+        lastBackgroundAtMs: Long,
+        fastStartPriority: Boolean,
+    ): Boolean {
+        if (fastStartPriority) return false
+        return lastBackgroundAtMs == 0L ||
+            nowMs - lastBackgroundAtMs >= ANTI_BOT_FOLLOW_UP_INTERVAL_MS
+    }
+
+    fun nextStage(
+        orderedStages: List<BotStage>,
+        cursor: Int,
+        primaryStages: Collection<BotStage>,
+    ): BackgroundStageSelection {
+        if (orderedStages.isEmpty()) return BackgroundStageSelection(null, 0)
+        var next = ((cursor % orderedStages.size) + orderedStages.size) % orderedStages.size
+        repeat(orderedStages.size) {
+            val candidate = orderedStages[next]
+            next = (next + 1) % orderedStages.size
+            if (candidate !in primaryStages) {
+                return BackgroundStageSelection(candidate, next)
+            }
+        }
+        return BackgroundStageSelection(null, next)
+    }
+}
+
 class BotController(
     private val context: Context,
     private val listener: Listener,
@@ -98,6 +147,10 @@ class BotController(
     private var fastStartPollDeadlineNanos = 0L
     private val fastStartAttemptMetrics = FastStartAttemptMetrics()
     private var postRelaySequenceDone = false
+    private var backgroundDetectionCursor = 0
+    private var lastBackgroundDetectionAt = 0L
+    private var antiBotFollowUpActive = false
+    private var lastAntiBotFingerprint: PopupFingerprint? = null
     private var gameCompleteImageSaved = true
     private var gameCompleteDetectedElapsedRealtime = 0L
     private var mysteryBoxImageSaved = true
@@ -238,6 +291,10 @@ class BotController(
                 fastStartAttemptMetrics.reset()
             }
             postRelaySequenceDone = false
+            backgroundDetectionCursor = 0
+            lastBackgroundDetectionAt = 0L
+            antiBotFollowUpActive = false
+            lastAntiBotFingerprint = null
             gameCompleteImageSaved = true
             gameCompleteDetectedElapsedRealtime = 0L
             mysteryBoxImageSaved = true
@@ -1140,6 +1197,58 @@ class BotController(
             if (friendLifeScheduler.observeTime(now)) {
                 logDiagnostic("[FRIEND_LIFE_DUE] elapsedMs=$now pending=true")
             }
+
+            // Primary state matching always runs first. Background coverage only consumes
+            // a single extra template slot after the primary candidates miss, so GAME_START
+            // and GAME_RELAY keep the shortest possible detection path.
+            if (result == null &&
+                antiBotFollowUpActive &&
+                BackgroundDetectionPolicy.antiBotFollowUpDue(
+                    now,
+                    lastBackgroundDetectionAt,
+                    fastStartPriorityAtDetectionStart,
+                )
+            ) {
+                lastBackgroundDetectionAt = now
+                result = detector.detectFirst(listOf(BotStage.ANTI_BOT), frame.mat)
+                if (result != null) {
+                    detectionMatchedAtNanos = SystemClock.elapsedRealtimeNanos()
+                    logDiagnostic(
+                        "[BACKGROUND_DETECT] mode=ANTI_BOT_FOLLOW_UP " +
+                            "state=${result.state.name} frameGeneration=${frame.generation}",
+                    )
+                }
+            }
+
+            if (result == null &&
+                group == DetectionGroup.IN_GAME &&
+                BackgroundDetectionPolicy.due(
+                    now,
+                    lastDetectionAt,
+                    lastBackgroundDetectionAt,
+                    fastStartPriorityAtDetectionStart,
+                )
+            ) {
+                val selection = BackgroundDetectionPolicy.nextStage(
+                    ALL_STAGE_ORDER,
+                    backgroundDetectionCursor,
+                    candidates,
+                )
+                backgroundDetectionCursor = selection.nextCursor
+                val backgroundStage = selection.stage
+                if (backgroundStage != null) {
+                    lastBackgroundDetectionAt = now
+                    result = detector.detectFirst(listOf(backgroundStage), frame.mat)
+                    if (result != null) {
+                        detectionMatchedAtNanos = SystemClock.elapsedRealtimeNanos()
+                        logDiagnostic(
+                            "[BACKGROUND_DETECT] mode=ROTATION state=${result.state.name} " +
+                                "frameGeneration=${frame.generation}",
+                        )
+                    }
+                }
+            }
+
             if (result == null && now - lastDetectionAt >= recoveryInterval(group)) {
                 if (synchronized(lock) { progressRecoveryGate.isActive() }) return
                 result = detector.detectFirst(ALL_STAGE_ORDER, frame.mat)
@@ -1430,6 +1539,8 @@ class BotController(
         detectionActionFrameGeneration.set(frameGeneration)
         try {
         if (result.state != BotStage.ANTI_BOT) {
+            antiBotFollowUpActive = false
+            lastAntiBotFingerprint = null
             val generation = RoundResultStore.currentGeneration()
             if (RoundResultStore.recordAntiBotExited(generation)) {
                 val stats = RoundResultStore.snapshot()
@@ -3127,6 +3238,22 @@ class BotController(
     }
 
     private fun handleAntiBot(detector: StateDetector, frame: Mat, sourceWidth: Int, sourceHeight: Int) {
+        val fingerprint = popupFingerprint(frame, BotStage.ANTI_BOT)
+        val previousFingerprint = lastAntiBotFingerprint
+        if (
+            antiBotFollowUpActive &&
+            fingerprint != null &&
+            previousFingerprint != null &&
+            !PopupFingerprinting.isMeaningfullyDifferent(previousFingerprint, fingerprint)
+        ) {
+            logDiagnostic(
+                "[ANTI_BOT_FOLLOW_UP] action=WAIT reason=same_card_layout " +
+                    "frameGeneration=${detectionActionFrameGeneration.get() ?: -1L}",
+            )
+            lastStage = null
+            return
+        }
+
         val cards = listOf(
             LogicalPoint(346, 179), LogicalPoint(542, 179), LogicalPoint(738, 179),
             LogicalPoint(346, 435), LogicalPoint(542, 435), LogicalPoint(738, 435),
@@ -3142,6 +3269,9 @@ class BotController(
         val statsAfterDetection = RoundResultStore.snapshot()
         val event = if (detectionRecorded) statsAfterDetection.antiBotHistory.firstOrNull() else null
         val detectionIndex = event?.detectionIndex ?: 0
+        if (event != null && fingerprint != null) {
+            lastAntiBotFingerprint = fingerprint
+        }
         if (event != null) {
             logDiagnostic(
                 "[ANTI_BOT_STATS] challenges=${statsAfterDetection.antiBotChallengeCount} " +
@@ -3198,6 +3328,14 @@ class BotController(
             delayOrStop(randomMs(10_000, 15_000))
         }
         delayOrStop(randomMs(800, 1400))
+        antiBotFollowUpActive = event?.testIndexInChallenge in 1..2
+        if (!antiBotFollowUpActive) {
+            lastAntiBotFingerprint = null
+        }
+        logDiagnostic(
+            "[ANTI_BOT_FOLLOW_UP] active=$antiBotFollowUpActive " +
+                "challenge=${event?.challengeIndex ?: 0} test=${event?.testIndexInChallenge ?: 0}",
+        )
         lastStage = null
     }
 
@@ -4951,7 +5089,12 @@ class BotController(
 
     /** Caller holds lock and has already checked its own worker/callback/recovery authority. */
     private fun commitGroupLocked(next: DetectionGroup) {
+        val previous = group
         group = next
+        if (previous != next && next == DetectionGroup.IN_GAME) {
+            backgroundDetectionCursor = 0
+            lastBackgroundDetectionAt = 0L
+        }
         resetNoMatchEpisode("group_changed")
         listener.onGroupChanged(next.name)
         Log.i(CookieRunBotApplication.TAG, "[BOT] detection_group=${next.name}")
