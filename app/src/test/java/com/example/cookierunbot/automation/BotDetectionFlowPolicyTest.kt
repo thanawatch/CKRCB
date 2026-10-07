@@ -132,6 +132,47 @@ class BotDetectionFlowPolicyTest {
         assertEquals(DetectionGroup.POST_GAME, groupAfterRecoveryMainMenu(DetectionGroup.POST_GAME, false))
     }
 
+    @Test fun gameCompleteResultWaitGivesAntiBotPriorityOverResultCapture() {
+        assertEquals(
+            GameCompleteResultWaitDecision.HANDLE_ANTI_BOT,
+            gameCompleteResultWaitDecision(
+                readyForResultCapture = true,
+                antiBotMatched = true,
+                gameCompleteMatched = true,
+            ),
+        )
+    }
+
+    @Test fun gameCompleteResultWaitNeverCapturesBeforeSettleDelay() {
+        assertEquals(
+            GameCompleteResultWaitDecision.KEEP_WAITING,
+            gameCompleteResultWaitDecision(
+                readyForResultCapture = false,
+                antiBotMatched = false,
+                gameCompleteMatched = true,
+            ),
+        )
+    }
+
+    @Test fun gameCompleteResultWaitCapturesOnlyConfirmedGameCompleteFrame() {
+        assertEquals(
+            GameCompleteResultWaitDecision.CAPTURE_GAME_COMPLETE,
+            gameCompleteResultWaitDecision(
+                readyForResultCapture = true,
+                antiBotMatched = false,
+                gameCompleteMatched = true,
+            ),
+        )
+        assertEquals(
+            GameCompleteResultWaitDecision.KEEP_WAITING,
+            gameCompleteResultWaitDecision(
+                readyForResultCapture = true,
+                antiBotMatched = false,
+                gameCompleteMatched = false,
+            ),
+        )
+    }
+
     @Test fun gameCompleteFinishRequiresFreshPositiveMatch() {
         assertTrue(gameCompleteFinishAllowed(freshFrameAvailable = true, gameCompleteMatched = true))
         assertFalse(gameCompleteFinishAllowed(freshFrameAvailable = true, gameCompleteMatched = false))
