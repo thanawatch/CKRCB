@@ -58,3 +58,19 @@ internal fun mainMenuRecoveryDecision(matched: Boolean, elapsedMs: Long): MainMe
 
 internal fun gameCompleteFinishAllowed(freshFrameAvailable: Boolean, gameCompleteMatched: Boolean): Boolean =
     freshFrameAvailable && gameCompleteMatched
+internal enum class GameCompleteResultWaitDecision {
+    HANDLE_ANTI_BOT,
+    CAPTURE_GAME_COMPLETE,
+    KEEP_WAITING,
+}
+
+internal fun gameCompleteResultWaitDecision(
+    readyForResultCapture: Boolean,
+    antiBotMatched: Boolean,
+    gameCompleteMatched: Boolean,
+): GameCompleteResultWaitDecision = when {
+    antiBotMatched -> GameCompleteResultWaitDecision.HANDLE_ANTI_BOT
+    readyForResultCapture && gameCompleteMatched -> GameCompleteResultWaitDecision.CAPTURE_GAME_COMPLETE
+    else -> GameCompleteResultWaitDecision.KEEP_WAITING
+}
+
