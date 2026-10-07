@@ -32,6 +32,23 @@ class AntiBotLayoutTransitionGuardTest {
     }
 
     @Test
+    fun uniformSelectionTintOnTwoCardsDoesNotBecomeNewLayout() {
+        val before = layoutFrame(cardBase = 70)
+        val after = before.copyOf()
+        for (card in listOf(1, 4)) {
+            paintCardInterior(after, card) { x, y ->
+                val origin = 70 + card * 9 + (x / 11) + (y / 13)
+                (origin + 25).coerceAtMost(240)
+            }
+        }
+
+        val a = requireNotNull(AntiBotCardLayoutFingerprinting.sample(before, 1280, 720))
+        val b = requireNotNull(AntiBotCardLayoutFingerprinting.sample(after, 1280, 720))
+
+        assertFalse(AntiBotCardLayoutFingerprinting.isMeaningfullyDifferent(a, b))
+    }
+
+    @Test
     fun changedCardArtworkBecomesNewLayout() {
         val before = layoutFrame(cardBase = 70)
         val after = before.copyOf()
