@@ -1235,6 +1235,7 @@ class BotController(
                 )
             }
             val now = SystemClock.elapsedRealtime()
+            var forceFullRecoveryScan = false
             if (friendLifeScheduler.observeTime(now)) {
                 logDiagnostic("[FRIEND_LIFE_DUE] elapsedMs=$now pending=true")
             }
@@ -1274,11 +1275,12 @@ class BotController(
                     lastBackgroundDetectionAt = now
                     val confirmed = detector.detectFirst(listOf(pendingStage), frame.mat)
                     if (confirmed != null) {
-                        result = confirmed
+                        forceFullRecoveryScan = true
                         detectionMatchedAtNanos = SystemClock.elapsedRealtimeNanos()
                         logDiagnostic(
                             "[BACKGROUND_DETECT] mode=CONFIRMED_RECOVERY " +
-                                "state=${confirmed.state.name} frameGeneration=${frame.generation}",
+                                "state=${confirmed.state.name} action=ESCALATE_FULL_RECOVERY " +
+                                "frameGeneration=${frame.generation}",
                         )
                     } else {
                         logDiagnostic(
@@ -1357,13 +1359,20 @@ class BotController(
                 }
             }
 
-            if (result == null && now - lastDetectionAt >= recoveryInterval(group)) {
+            if (
+                result == null &&
+                (forceFullRecoveryScan || now - lastDetectionAt >= recoveryInterval(group))
+            ) {
                 if (synchronized(lock) { progressRecoveryGate.isActive() }) return
                 result = detector.detectFirst(ALL_STAGE_ORDER, frame.mat)
                 if (!isRunning() || synchronized(lock) { progressRecoveryGate.isActive() }) return
                 detectionMatchedAtNanos = SystemClock.elapsedRealtimeNanos()
                 lastDetectionAt = now
-                Log.i(CookieRunBotApplication.TAG, "[RECOVERY] Full stage scan group=$group")
+                Log.i(
+                    CookieRunBotApplication.TAG,
+                    "[RECOVERY] Full stage scan group=$group " +
+                        "reason=${if (forceFullRecoveryScan) "BACKGROUND_CONFIRMED" else "INTERVAL"}",
+                )
             }
             // PRE_GAME / POST_GAME only: auxiliary full-frame AND-probe before a legacy
             // GAME_COMPLETE result is recorded. Never scan the auxiliary pair in IN_GAME.
