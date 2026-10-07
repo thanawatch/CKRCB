@@ -68,6 +68,25 @@ class BackgroundDetectionPolicyTest {
     }
 
     @Test
+    fun handledGameStartAndRelayAreRemovedFromInGameScans() {
+        val stages = listOf(
+            BotStage.GAME_START,
+            BotStage.GAME_RELAY,
+            BotStage.GAME_COMPLETE,
+            BotStage.CONNECTION_LOST,
+        )
+
+        assertEquals(
+            listOf(BotStage.GAME_RELAY, BotStage.GAME_COMPLETE, BotStage.CONNECTION_LOST),
+            excludeHandledInGameStages(stages, gameStartHandled = true, gameRelayHandled = false),
+        )
+        assertEquals(
+            listOf(BotStage.GAME_COMPLETE, BotStage.CONNECTION_LOST),
+            excludeHandledInGameStages(stages, gameStartHandled = true, gameRelayHandled = true),
+        )
+    }
+
+    @Test
     fun productionInGameBackgroundListExcludesCriticalGameplayAndCloseButton() {
         val forbidden = setOf(
             BotStage.GAME_START,
