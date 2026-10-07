@@ -229,6 +229,7 @@ class BotController(
     private var antiBotFollowUpActive = false
     private var antiBotAwaitingExit = false
     private val antiBotLayoutTransitionGuard = AntiBotLayoutTransitionGuard()
+    private val antiBotExitConfirmationTracker = AntiBotExitConfirmationTracker()
     private var gameCompleteImageSaved = true
     private var gameCompleteDetectedElapsedRealtime = 0L
     private var mysteryBoxImageSaved = true
@@ -379,6 +380,7 @@ class BotController(
             antiBotFollowUpActive = false
             antiBotAwaitingExit = false
             antiBotLayoutTransitionGuard.reset()
+            antiBotExitConfirmationTracker.reset()
             gameCompleteImageSaved = true
             gameCompleteDetectedElapsedRealtime = 0L
             mysteryBoxImageSaved = true
@@ -1288,6 +1290,37 @@ class BotController(
             // Primary state matching always runs first. Background work starts only after
             // primary miss, so GAME_START and GAME_RELAY keep the shortest detection path.
             if (result == null &&
+                antiBotAwaitingExit &&
+                BackgroundDetectionPolicy.antiBotFollowUpDue(
+                    now,
+                    lastAntiBotFollowUpAt,
+                    fastStartPriorityAtDetectionStart,
+                )
+            ) {
+                lastAntiBotFollowUpAt = now
+                val antiBotStillVisible =
+                    detector.detectFirst(listOf(BotStage.ANTI_BOT), frame.mat) != null
+                val exitConfirmed = antiBotExitConfirmationTracker.observe(antiBotStillVisible)
+                logDiagnostic(
+                    "[ANTI_BOT_EXIT] visible=$antiBotStillVisible " +
+                        "confirmed=$exitConfirmed frameGeneration=${frame.generation}",
+                )
+                if (exitConfirmed) {
+                    antiBotAwaitingExit = false
+                    antiBotLayoutTransitionGuard.reset()
+                    val generation = RoundResultStore.currentGeneration()
+                    if (RoundResultStore.recordAntiBotExited(generation)) {
+                        val stats = RoundResultStore.snapshot()
+                        logDiagnostic(
+                            "[ANTI_BOT_STATS] challengeExitConfirmed=true " +
+                                "completedChallenges=${stats.antiBotCompletedChallengeCount} " +
+                                "nextState=IN_GAME_NO_MATCH",
+                        )
+                    }
+                }
+            }
+
+            if (result == null &&
                 antiBotFollowUpActive &&
                 BackgroundDetectionPolicy.antiBotFollowUpDue(
                     now,
@@ -1351,7 +1384,7 @@ class BotController(
                     options.detectRelic,
                     RELIC_STAGES,
                 )
-                val backgroundExcluded = if (antiBotFollowUpActive) {
+                val backgroundExcluded = if (antiBotFollowUpActive || antiBotAwaitingExit) {
                     candidates + BotStage.ANTI_BOT
                 } else {
                     candidates
@@ -1715,6 +1748,7 @@ class BotController(
             antiBotAwaitingExit = false
             lastAntiBotFollowUpAt = 0L
             antiBotLayoutTransitionGuard.reset()
+            antiBotExitConfirmationTracker.reset()
             val generation = RoundResultStore.currentGeneration()
             if (RoundResultStore.recordAntiBotExited(generation)) {
                 val stats = RoundResultStore.snapshot()
@@ -2826,6 +2860,7 @@ class BotController(
                 antiBotFollowUpActive = false
                 antiBotAwaitingExit = false
                 antiBotLayoutTransitionGuard.reset()
+                antiBotExitConfirmationTracker.reset()
                 gameStartDetectedForRound = false
                 fastStartPollDeadlineNanos = 0L
                 flushFastStartAttemptMetrics("NEW_ROUND")
@@ -3591,6 +3626,7 @@ class BotController(
         val postTestState = antiBotPostTestState(testIndex)
         antiBotFollowUpActive = postTestState.followUpActive
         antiBotAwaitingExit = postTestState.awaitingExit
+        antiBotExitConfirmationTracker.reset()
         lastAntiBotFollowUpAt = 0L
         logDiagnostic(
             "[ANTI_BOT_FOLLOW_UP] active=$antiBotFollowUpActive " +
