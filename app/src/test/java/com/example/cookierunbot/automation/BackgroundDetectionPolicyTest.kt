@@ -46,6 +46,56 @@ class BackgroundDetectionPolicyTest {
     }
 
     @Test
+    fun productionInGameBackgroundListExcludesCriticalGameplayAndCloseButton() {
+        val forbidden = setOf(
+            BotStage.GAME_START,
+            BotStage.GAME_RELAY,
+            BotStage.GAME_COMPLETE,
+            BotStage.CONNECTION_LOST,
+            BotStage.INACTIVE,
+            BotStage.CLOSE_BUTTON,
+        )
+
+        assertTrue(BotStage.ANTI_BOT in IN_GAME_BACKGROUND_RECOVERY_STAGES)
+        assertTrue(IN_GAME_BACKGROUND_RECOVERY_STAGES.none { it in forbidden })
+    }
+
+    @Test
+    fun productionPostRelayOrderAlternatesAntiBotWithRecoveryCandidates() {
+        val primary = setOf(
+            BotStage.GAME_RELAY,
+            BotStage.GAME_COMPLETE,
+            BotStage.CONNECTION_LOST,
+            BotStage.INACTIVE,
+        )
+        var cursor = 0
+        var antiBotTurn = true
+        val seen = mutableListOf<BotStage>()
+
+        repeat(4) {
+            val selection = BackgroundDetectionPolicy.nextAfterGameRelay(
+                orderedStages = IN_GAME_BACKGROUND_RECOVERY_STAGES,
+                cursor = cursor,
+                primaryStages = primary,
+                antiBotTurn = antiBotTurn,
+            )
+            cursor = selection.nextCursor
+            antiBotTurn = selection.nextAntiBotTurn
+            selection.stage?.let(seen::add)
+        }
+
+        assertEquals(
+            listOf(
+                BotStage.ANTI_BOT,
+                BotStage.OVERTAKE_BREAK_SCORE,
+                BotStage.ANTI_BOT,
+                BotStage.MYSTERY_BOX,
+            ),
+            seen,
+        )
+    }
+
+    @Test
     fun rotationSkipsPrimaryStatesAndFindsAntiBotFirst() {
         val order = listOf(
             BotStage.GAME_START,
