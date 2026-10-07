@@ -72,6 +72,15 @@ internal val IN_GAME_BACKGROUND_RECOVERY_STAGES = listOf(
     BotStage.PREVIOUS_RANK_RESULTS,
 )
 
+internal fun excludeHandledInGameStages(
+    stages: List<BotStage>,
+    gameStartHandled: Boolean,
+    gameRelayHandled: Boolean,
+): List<BotStage> = stages.filterNot { stage ->
+    (gameStartHandled && stage == BotStage.GAME_START) ||
+        (gameRelayHandled && stage == BotStage.GAME_RELAY)
+}
+
 internal data class BackgroundStageSelection(
     val stage: BotStage?,
     val nextCursor: Int,
@@ -1401,7 +1410,16 @@ class BotController(
                 (forceFullRecoveryScan || now - lastDetectionAt >= recoveryInterval(group))
             ) {
                 if (synchronized(lock) { progressRecoveryGate.isActive() }) return
-                result = detector.detectFirst(ALL_STAGE_ORDER, frame.mat)
+                val recoveryStages = if (group == DetectionGroup.IN_GAME) {
+                    excludeHandledInGameStages(
+                        ALL_STAGE_ORDER,
+                        gameStartHandled = gameStartDetectedForRound,
+                        gameRelayHandled = postRelayAntiBotPriorityActive,
+                    )
+                } else {
+                    ALL_STAGE_ORDER
+                }
+                result = detector.detectFirst(recoveryStages, frame.mat)
                 if (!isRunning() || synchronized(lock) { progressRecoveryGate.isActive() }) return
                 detectionMatchedAtNanos = SystemClock.elapsedRealtimeNanos()
                 lastDetectionAt = now
@@ -5386,8 +5404,12 @@ class BotController(
             if (fastStartPriority) {
                 FAST_START_PRIORITY + ALWAYS
             } else {
-                RedfingerPerformancePolicy.inGameCandidates(
-                    options.performanceProfile, gameStartDetectedForRound, IN_GAME,
+                excludeHandledInGameStages(
+                    RedfingerPerformancePolicy.inGameCandidates(
+                        options.performanceProfile, gameStartDetectedForRound, IN_GAME,
+                    ),
+                    gameStartHandled = gameStartDetectedForRound,
+                    gameRelayHandled = postRelayAntiBotPriorityActive,
                 ) + ALWAYS
             }
         }
