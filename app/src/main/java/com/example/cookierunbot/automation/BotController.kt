@@ -3369,20 +3369,44 @@ class BotController(
     }
 
     private fun handleAntiBot(detector: StateDetector, frame: Mat, sourceWidth: Int, sourceHeight: Int) {
-        val fingerprint = popupFingerprint(frame, BotStage.ANTI_BOT)
-        val previousFingerprint = lastAntiBotFingerprint
-        if (
-            antiBotFollowUpActive &&
-            fingerprint != null &&
-            previousFingerprint != null &&
-            !PopupFingerprinting.isMeaningfullyDifferent(previousFingerprint, fingerprint)
-        ) {
+        if (antiBotAwaitingExit) {
             logDiagnostic(
-                "[ANTI_BOT_FOLLOW_UP] action=WAIT reason=same_card_layout " +
+                "[ANTI_BOT_FOLLOW_UP] action=WAIT reason=awaiting_challenge_exit " +
                     "frameGeneration=${detectionActionFrameGeneration.get() ?: -1L}",
             )
             lastStage = null
             return
+        }
+
+        val layoutFingerprint = antiBotCardLayoutFingerprint(frame)
+        if (antiBotFollowUpActive) {
+            when (antiBotLayoutTransitionGuard.evaluateFollowUp(layoutFingerprint)) {
+                AntiBotLayoutDecision.SAME_ACCEPTED_LAYOUT -> {
+                    logDiagnostic(
+                        "[ANTI_BOT_FOLLOW_UP] action=WAIT reason=same_card_layout " +
+                            "frameGeneration=${detectionActionFrameGeneration.get() ?: -1L}",
+                    )
+                    lastStage = null
+                    return
+                }
+                AntiBotLayoutDecision.WAIT_FOR_STABLE_NEW_LAYOUT -> {
+                    logDiagnostic(
+                        "[ANTI_BOT_FOLLOW_UP] action=WAIT reason=new_layout_not_stable_yet " +
+                            "frameGeneration=${detectionActionFrameGeneration.get() ?: -1L}",
+                    )
+                    lastStage = null
+                    return
+                }
+                AntiBotLayoutDecision.FINGERPRINT_UNAVAILABLE -> {
+                    logDiagnostic(
+                        "[ANTI_BOT_FOLLOW_UP] action=WAIT reason=layout_fingerprint_unavailable " +
+                            "frameGeneration=${detectionActionFrameGeneration.get() ?: -1L}",
+                    )
+                    lastStage = null
+                    return
+                }
+                AntiBotLayoutDecision.ACCEPT_NEW_LAYOUT -> Unit
+            }
         }
 
         val cards = listOf(
@@ -3400,8 +3424,8 @@ class BotController(
         val statsAfterDetection = RoundResultStore.snapshot()
         val event = if (detectionRecorded) statsAfterDetection.antiBotHistory.firstOrNull() else null
         val detectionIndex = event?.detectionIndex ?: 0
-        if (event != null && fingerprint != null) {
-            lastAntiBotFingerprint = fingerprint
+        if (event != null) {
+            antiBotLayoutTransitionGuard.recordAccepted(layoutFingerprint)
         }
         if (event != null) {
             logDiagnostic(
@@ -3459,13 +3483,14 @@ class BotController(
             delayOrStop(randomMs(10_000, 15_000))
         }
         delayOrStop(randomMs(800, 1400))
-        antiBotFollowUpActive = event?.testIndexInChallenge?.let { it in 1..2 } == true
-        if (!antiBotFollowUpActive) {
-            lastAntiBotFingerprint = null
-        }
+        val testIndex = event?.testIndexInChallenge ?: 0
+        antiBotFollowUpActive = testIndex in 1..2
+        antiBotAwaitingExit = testIndex == 3
+        lastAntiBotFollowUpAt = 0L
         logDiagnostic(
             "[ANTI_BOT_FOLLOW_UP] active=$antiBotFollowUpActive " +
-                "challenge=${event?.challengeIndex ?: 0} test=${event?.testIndexInChallenge ?: 0}",
+                "awaitingExit=$antiBotAwaitingExit " +
+                "challenge=${event?.challengeIndex ?: 0} test=$testIndex",
         )
         lastStage = null
     }
