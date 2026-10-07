@@ -1252,6 +1252,10 @@ class BotController(
                 detector.detectFirst(candidates, frame.mat)
             }
             if (!isRunning() || synchronized(lock) { progressRecoveryGate.isActive() }) return
+            if (result != null && group == DetectionGroup.IN_GAME) {
+                pendingBackgroundConfirmationStage = null
+                pendingBackgroundConfirmationGeneration = -1L
+            }
             var detectionMatchedAtNanos = SystemClock.elapsedRealtimeNanos()
             if (profilingEnabled && fastStartPriorityAtDetectionStart) {
                 fastStartAttemptMetrics.record(
@@ -5302,9 +5306,17 @@ class BotController(
     private fun commitGroupLocked(next: DetectionGroup) {
         val previous = group
         group = next
-        if (previous != next && next == DetectionGroup.IN_GAME) {
-            backgroundDetectionCursor = 0
-            lastBackgroundDetectionAt = 0L
+        if (previous != next) {
+            pendingBackgroundConfirmationStage = null
+            pendingBackgroundConfirmationGeneration = -1L
+            if (next == DetectionGroup.IN_GAME) {
+                backgroundDetectionCursor = 0
+                lastBackgroundDetectionAt = 0L
+            } else {
+                postRelayAntiBotPriorityActive = false
+                postRelayAntiBotTurn = true
+                lastAntiBotFollowUpAt = 0L
+            }
         }
         resetNoMatchEpisode("group_changed")
         listener.onGroupChanged(next.name)
