@@ -3081,6 +3081,7 @@ class BotController(
         postRelayAntiBotTurn = true
         backgroundDetectionCursor = 0
         lastBackgroundDetectionAt = 0L
+        lastAntiBotFollowUpAt = 0L
         logDiagnostic(
             "[BACKGROUND_DETECT] postRelayAntiBotPriority=true pattern=ANTI_BOT_OTHER_REPEAT",
         )
