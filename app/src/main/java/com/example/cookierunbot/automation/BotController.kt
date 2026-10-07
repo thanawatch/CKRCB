@@ -1286,9 +1286,13 @@ class BotController(
                     result = detector.detectFirst(listOf(backgroundStage), frame.mat)
                     if (result != null) {
                         detectionMatchedAtNanos = SystemClock.elapsedRealtimeNanos()
+                        val backgroundMode = if (postRelayAntiBotPriorityActive) {
+                            "POST_RELAY_INTERLEAVE"
+                        } else {
+                            "ROTATION"
+                        }
                         logDiagnostic(
-                            "[BACKGROUND_DETECT] mode=" +
-                                if (postRelayAntiBotPriorityActive) "POST_RELAY_INTERLEAVE " else "ROTATION " +
+                            "[BACKGROUND_DETECT] mode=$backgroundMode " +
                                 "state=${result.state.name} frameGeneration=${frame.generation}",
                         )
                     }
