@@ -94,7 +94,7 @@ class AntiBotLayoutTransitionGuardTest {
     }
 
     private fun layoutFrame(cardBase: Int): ByteArray {
-        val frame = ByteArray(1280 * 720) { 10 }
+        val frame = ByteArray(1280 * 720) { 10.toByte() }
         repeat(6) { card ->
             paintCardInterior(frame, card) { x, y ->
                 (cardBase + card * 9 + (x / 11) + (y / 13)).coerceAtMost(240)
