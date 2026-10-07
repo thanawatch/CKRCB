@@ -73,6 +73,59 @@ class AntiBotLayoutTransitionGuardTest {
     }
 
     @Test
+    fun shuffledCardSlotsBecomeNewLayoutBelowWholeLayoutThreshold() {
+        val cardSampleSize = 16 * 20
+        val beforePixels = ByteArray(6 * cardSampleSize) { 128.toByte() }
+        repeat(cardSampleSize / 5) { index ->
+            beforePixels[index] = 100.toByte()
+            beforePixels[cardSampleSize + index] = 156.toByte()
+        }
+        val afterPixels = beforePixels.copyOf()
+        for (index in 0 until cardSampleSize) {
+            afterPixels[index] = beforePixels[cardSampleSize + index]
+            afterPixels[cardSampleSize + index] = beforePixels[index]
+        }
+
+        val before = AntiBotCardLayoutFingerprint(beforePixels)
+        val shuffled = AntiBotCardLayoutFingerprint(afterPixels)
+
+        assertTrue(AntiBotCardLayoutFingerprinting.isMeaningfullyDifferent(before, shuffled))
+
+        val guard = AntiBotLayoutTransitionGuard(requiredStableSamples = 2)
+        guard.recordAccepted(before)
+        assertEquals(
+            AntiBotLayoutDecision.WAIT_FOR_STABLE_NEW_LAYOUT,
+            guard.evaluateFollowUp(shuffled),
+        )
+        assertEquals(
+            AntiBotLayoutDecision.ACCEPT_NEW_LAYOUT,
+            guard.evaluateFollowUp(shuffled),
+        )
+    }
+
+    @Test
+    fun twoLocalizedCardChangesWithoutPermutationDoNotBecomeNewLayout() {
+        val cardSampleSize = 16 * 20
+        val beforePixels = ByteArray(6 * cardSampleSize) { 128.toByte() }
+        repeat(cardSampleSize / 5) { index ->
+            beforePixels[index] = 100.toByte()
+            beforePixels[cardSampleSize + index] = 156.toByte()
+        }
+        val afterPixels = beforePixels.copyOf()
+        repeat(cardSampleSize / 5) { index ->
+            afterPixels[index] = 118.toByte()
+            afterPixels[cardSampleSize + index] = 138.toByte()
+        }
+
+        assertFalse(
+            AntiBotCardLayoutFingerprinting.isMeaningfullyDifferent(
+                AntiBotCardLayoutFingerprint(beforePixels),
+                AntiBotCardLayoutFingerprint(afterPixels),
+            ),
+        )
+    }
+
+    @Test
     fun newLayoutMustBeStableAcrossTwoFreshSamples() {
         val guard = AntiBotLayoutTransitionGuard(requiredStableSamples = 2)
         val baseline = requireNotNull(

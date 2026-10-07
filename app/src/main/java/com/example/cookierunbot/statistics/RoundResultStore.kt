@@ -48,14 +48,18 @@ object RoundResultStore {
         round: Int = 0,
         selectedCards: List<Int> = emptyList(),
         detectedAt: Long = System.currentTimeMillis(),
+        continueCurrentChallenge: Boolean = false,
     ): Boolean = synchronized(lock) {
         if (generation != sessionGeneration) return@synchronized false
         val previous = antiBotHistory.firstOrNull()
-        val startsNewChallenge = previous == null ||
+        val mustStartNewChallenge = previous == null ||
             previous.testIndexInChallenge >= ANTI_BOT_TESTS_PER_CHALLENGE ||
             (previous.round > 0 && round > 0 && previous.round != round) ||
-            detectedAt - previous.detectedAt > ANTI_BOT_CHALLENGE_GAP_MS ||
             detectedAt < previous.detectedAt
+        val gapStartsNewChallenge = previous != null &&
+            !continueCurrentChallenge &&
+            detectedAt - previous.detectedAt > ANTI_BOT_CHALLENGE_GAP_MS
+        val startsNewChallenge = mustStartNewChallenge || gapStartsNewChallenge
         val challengeIndex = if (startsNewChallenge) {
             antiBotChallengeCount += 1
             antiBotChallengeCount

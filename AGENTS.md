@@ -103,7 +103,7 @@ Normal route:
 3. `GAME_START` and `GAME_RELAY` optionally use owned abilities. Relay can execute the isolated physical post-relay sequence once. `GameAutoTapper` provides none/fixed/continuous jump modes.
 4. Confirmed `GAME_COMPLETE` immediately records watchdog progress and commits `POST_GAME`, even if later result handling exits. It waits, requests round-result analysis, requires a fresh frame that still matches before Finish, and optionally saves result imagery.
 5. `MYSTERY_BOX` classification can update the same round contribution asynchronously. Reward popups perform their current tap(s), wait for a post-action frame, and return to generic PRE_GAME/POST_GAME redetection. They do not assume a fixed popup chain; visual fingerprints and a three-attempt instance guard limit repeated action on an unchanged popup.
-6. `CONNECTION_LOST` and `INACTIVE` tap Reload. They do not kill/restart either app. `ANTI_BOT` detects odd cards and taps their detected logical regions.
+6. `CONNECTION_LOST` and `INACTIVE` tap Reload. They do not kill/restart either app. `ANTI_BOT` detects odd cards and taps their detected logical regions. Its Test 1→2→3 follow-up guard fingerprints the six card interiors per slot: the existing global-layout change still qualifies, while same-artwork shuffles qualify only when moved slots closely match artwork from other baseline slots in a real permutation cycle; either result must remain stable on two fresh frames before the next test is accepted. While that follow-up is active, statistics keep the accepted Test 2/3 in the same challenge even if the legacy two-minute grouping gap is exceeded; a round change or completed Test 3 still starts a new challenge.
 
 ## 7. Gestures, callbacks, and fresh frames
 

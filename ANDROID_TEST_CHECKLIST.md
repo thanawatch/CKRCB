@@ -31,6 +31,7 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 - [ ] Test a device with a cutout/inset. Confirm the visible game viewport and physical gesture mapping share the same crop.
 - [ ] Validate MAINMENU detection while bot is stopped; verify the service's idle detector yields while bot runs.
 - [ ] Validate representative PRE_GAME, IN_GAME, and POST_GAME templates at current threshold/ROI; include scaled GAME_START/GAME_RELAY animation frames in Legacy. In explicitly enabled Redfinger, verify only scale 1.0 for both and no repeated GAME_START matching after it has been handled in that round.
+- [ ] Exercise Anti-bot Test 1→2→3 with the same artwork set shuffled into different card slots. Verify the shuffled layout is recognized from cross-slot artwork matches/permutation rather than generic two-card change, Test 2/3 advance only after two stable fresh frames, Test 1 highlight/animation is not double-tapped, and a delay beyond two minutes during an active follow-up does not split challenge statistics; changing rounds must still start a new challenge.
 - [ ] Confirm raw/normalized no-match pairs are saved only when debug images are enabled and only after watchdog delay; verify they cause no Telegram alert or automatic tap/restart.
 - [ ] Inspect memory during repeated capture restarts and long detection runs for unreleased Image/Mat growth.
 

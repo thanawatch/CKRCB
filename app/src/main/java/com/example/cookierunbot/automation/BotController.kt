@@ -3771,6 +3771,7 @@ class BotController(
             statisticsGeneration,
             round = roundNumber,
             selectedCards = selectedCards,
+            continueCurrentChallenge = antiBotFollowUpActive,
         )
         val statsAfterDetection = RoundResultStore.snapshot()
         val event = if (detectionRecorded) statsAfterDetection.antiBotHistory.firstOrNull() else null

@@ -50,17 +50,24 @@ internal enum class AntiBotLayoutDecision {
  *
  * Sampling stays inside each card so border/highlight animation is ignored. Each card sample is
  * mean-normalized, making uniform selection tint/brightness changes much less likely to look like
- * a new test layout.
+ * a new test layout. In addition to the whole-layout ratio, the comparison can recognize a stable
+ * permutation of the same artwork: a moved slot must closely match artwork from another baseline
+ * slot, and those mappings must form a real cycle. This catches shuffled tests without treating
+ * two selected-card highlights as a new layout.
  */
 internal object AntiBotCardLayoutFingerprinting {
     private const val SAMPLE_WIDTH = 16
     private const val SAMPLE_HEIGHT = 20
+    private const val CARD_SAMPLE_SIZE = SAMPLE_WIDTH * SAMPLE_HEIGHT
     private const val CARD_WIDTH = 183
     private const val CARD_HEIGHT = 241
     private const val INSET_X = 28
     private const val INSET_Y = 30
     private const val PIXEL_DELTA = 18
-    private const val CHANGE_RATIO = 0.12
+    private const val GLOBAL_CHANGE_RATIO = 0.12
+    private const val MOVED_SLOT_CHANGE_RATIO = 0.12
+    private const val SAME_ARTWORK_MATCH_RATIO = 0.08
+    private const val REORDER_ADVANTAGE_RATIO = 0.04
 
     private val CARD_ORIGINS = listOf(
         346 to 179, 542 to 179, 738 to 179,
@@ -115,16 +122,89 @@ internal object AntiBotCardLayoutFingerprinting {
         before: AntiBotCardLayoutFingerprint,
         after: AntiBotCardLayoutFingerprint,
     ): Boolean {
-        if (before.pixels.size != after.pixels.size || before.pixels.isEmpty()) return true
+        val expectedSize = CARD_ORIGINS.size * CARD_SAMPLE_SIZE
+        if (
+            before.pixels.size != after.pixels.size ||
+            before.pixels.size != expectedSize
+        ) {
+            return true
+        }
+
+        val sameSlotDifferences = DoubleArray(CARD_ORIGINS.size) { cardIndex ->
+            cardDifferenceRatio(before, cardIndex, after, cardIndex)
+        }
+        if (sameSlotDifferences.average() >= GLOBAL_CHANGE_RATIO) return true
+
+        return hasReorderedCardCycle(before, after, sameSlotDifferences)
+    }
+
+    private fun hasReorderedCardCycle(
+        before: AntiBotCardLayoutFingerprint,
+        after: AntiBotCardLayoutFingerprint,
+        sameSlotDifferences: DoubleArray,
+    ): Boolean {
+        val mapping = IntArray(CARD_ORIGINS.size) { -1 }
+        for (candidateIndex in CARD_ORIGINS.indices) {
+            val ownDifference = sameSlotDifferences[candidateIndex]
+            if (ownDifference < MOVED_SLOT_CHANGE_RATIO) continue
+
+            var bestBaselineIndex = -1
+            var bestDifference = Double.POSITIVE_INFINITY
+            for (baselineIndex in CARD_ORIGINS.indices) {
+                if (baselineIndex == candidateIndex) continue
+                val difference = cardDifferenceRatio(
+                    before,
+                    baselineIndex,
+                    after,
+                    candidateIndex,
+                )
+                if (difference < bestDifference) {
+                    bestDifference = difference
+                    bestBaselineIndex = baselineIndex
+                }
+            }
+
+            if (
+                bestBaselineIndex >= 0 &&
+                bestDifference <= SAME_ARTWORK_MATCH_RATIO &&
+                ownDifference - bestDifference >= REORDER_ADVANTAGE_RATIO
+            ) {
+                mapping[candidateIndex] = bestBaselineIndex
+            }
+        }
+
+        for (start in mapping.indices) {
+            if (mapping[start] < 0) continue
+            val seen = BooleanArray(mapping.size)
+            var current = start
+            var steps = 0
+            while (current in mapping.indices && mapping[current] >= 0 && !seen[current]) {
+                seen[current] = true
+                current = mapping[current]
+                steps += 1
+                if (current == start && steps >= 2) return true
+            }
+        }
+        return false
+    }
+
+    private fun cardDifferenceRatio(
+        before: AntiBotCardLayoutFingerprint,
+        beforeCardIndex: Int,
+        after: AntiBotCardLayoutFingerprint,
+        afterCardIndex: Int,
+    ): Double {
+        val beforeStart = beforeCardIndex * CARD_SAMPLE_SIZE
+        val afterStart = afterCardIndex * CARD_SAMPLE_SIZE
         var changed = 0
-        for (index in before.pixels.indices) {
+        for (offset in 0 until CARD_SAMPLE_SIZE) {
             val delta = abs(
-                (before.pixels[index].toInt() and 0xff) -
-                    (after.pixels[index].toInt() and 0xff),
+                (before.pixels[beforeStart + offset].toInt() and 0xff) -
+                    (after.pixels[afterStart + offset].toInt() and 0xff),
             )
             if (delta >= PIXEL_DELTA) changed += 1
         }
-        return changed.toDouble() / before.pixels.size >= CHANGE_RATIO
+        return changed.toDouble() / CARD_SAMPLE_SIZE
     }
 }
 

@@ -190,6 +190,54 @@ class RoundStatisticsTest {
         assertEquals(listOf(2, 1), gap.antiBotHistory.map { it.challengeIndex })
     }
 
+    @Test fun antiBotActiveFollowUpKeepsChallengeAcrossLongGap() {
+        val generation = RoundResultStore.startNewSession()
+        RoundResultStore.recordAntiBotDetected(
+            generation,
+            round = 40,
+            selectedCards = listOf(3, 6),
+            detectedAt = 1_000L,
+        )
+        RoundResultStore.recordAntiBotDetected(
+            generation,
+            round = 40,
+            selectedCards = listOf(5, 6),
+            detectedAt = 122_001L,
+            continueCurrentChallenge = true,
+        )
+        RoundResultStore.recordAntiBotDetected(
+            generation,
+            round = 40,
+            selectedCards = listOf(2, 4),
+            detectedAt = 243_500L,
+            continueCurrentChallenge = true,
+        )
+
+        val continued = RoundResultStore.snapshot()
+        assertEquals(1, continued.antiBotChallengeCount)
+        assertEquals(listOf(1, 1, 1), continued.antiBotHistory.map { it.challengeIndex })
+        assertEquals(listOf(3, 2, 1), continued.antiBotHistory.map { it.testIndexInChallenge })
+
+        val nextGeneration = RoundResultStore.startNewSession()
+        RoundResultStore.recordAntiBotDetected(
+            nextGeneration,
+            round = 40,
+            selectedCards = listOf(1, 2),
+            detectedAt = 1_000L,
+        )
+        RoundResultStore.recordAntiBotDetected(
+            nextGeneration,
+            round = 41,
+            selectedCards = listOf(3, 4),
+            detectedAt = 122_001L,
+            continueCurrentChallenge = true,
+        )
+        val roundChanged = RoundResultStore.snapshot()
+        assertEquals(2, roundChanged.antiBotChallengeCount)
+        assertEquals(listOf(2, 1), roundChanged.antiBotHistory.map { it.challengeIndex })
+        assertEquals(listOf(1, 1), roundChanged.antiBotHistory.map { it.testIndexInChallenge })
+    }
+
     @Test fun antiBotChallengeCompletesOnlyAfterAllThreeTestsComplete() {
         val generation = RoundResultStore.startNewSession()
         (1..3).forEach { test ->
