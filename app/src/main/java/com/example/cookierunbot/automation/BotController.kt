@@ -87,16 +87,23 @@ internal object BackgroundDetectionPolicy {
     const val GRACE_MS = 2_000L
     const val INTERVAL_MS = 500L
     const val ANTI_BOT_FOLLOW_UP_INTERVAL_MS = 500L
+    const val ANTI_BOT_OTHER_RECOVERY_INTERVAL_MS = 1_000L
 
     fun due(
         nowMs: Long,
         lastMatchedAtMs: Long,
         lastBackgroundAtMs: Long,
         fastStartPriority: Boolean,
+        antiBotFollowUpActive: Boolean = false,
     ): Boolean {
         if (fastStartPriority) return false
-        if (nowMs - lastMatchedAtMs < GRACE_MS) return false
-        return lastBackgroundAtMs == 0L || nowMs - lastBackgroundAtMs >= INTERVAL_MS
+        if (!antiBotFollowUpActive && nowMs - lastMatchedAtMs < GRACE_MS) return false
+        val intervalMs = if (antiBotFollowUpActive) {
+            ANTI_BOT_OTHER_RECOVERY_INTERVAL_MS
+        } else {
+            INTERVAL_MS
+        }
+        return lastBackgroundAtMs == 0L || nowMs - lastBackgroundAtMs >= intervalMs
     }
 
     fun antiBotFollowUpDue(
@@ -1327,6 +1334,7 @@ class BotController(
                     lastDetectionAt,
                     lastBackgroundDetectionAt,
                     fastStartPriorityAtDetectionStart,
+                    antiBotFollowUpActive,
                 )
             ) {
                 val backgroundStages = filterRelicStages(
