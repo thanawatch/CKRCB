@@ -132,45 +132,60 @@ class BotDetectionFlowPolicyTest {
         assertEquals(DetectionGroup.POST_GAME, groupAfterRecoveryMainMenu(DetectionGroup.POST_GAME, false))
     }
 
-    @Test fun gameCompleteResultWaitGivesAntiBotPriorityOverResultCapture() {
-        assertEquals(
-            GameCompleteResultWaitDecision.HANDLE_ANTI_BOT,
-            gameCompleteResultWaitDecision(
-                readyForResultCapture = true,
-                antiBotMatched = true,
-                gameCompleteMatched = true,
+    @Test fun gameCompleteResultProbeUsesRealFixedInterval() {
+        assertTrue(
+            fixedIntervalProbeDue(
+                nowMs = 1_000L,
+                lastProbeAtMs = 0L,
+                intervalMs = 500L,
+            ),
+        )
+        assertFalse(
+            fixedIntervalProbeDue(
+                nowMs = 1_499L,
+                lastProbeAtMs = 1_000L,
+                intervalMs = 500L,
+            ),
+        )
+        assertTrue(
+            fixedIntervalProbeDue(
+                nowMs = 1_500L,
+                lastProbeAtMs = 1_000L,
+                intervalMs = 500L,
             ),
         )
     }
 
-    @Test fun gameCompleteResultWaitNeverCapturesBeforeSettleDelay() {
-        assertEquals(
-            GameCompleteResultWaitDecision.KEEP_WAITING,
-            gameCompleteResultWaitDecision(
-                readyForResultCapture = false,
-                antiBotMatched = false,
-                gameCompleteMatched = true,
-            ),
-        )
+    @Test fun gameCompleteResultRequiresTwoConsecutiveFreshMatches() {
+        val tracker = GameCompleteResultStabilityTracker(requiredConsecutiveMatches = 2)
+
+        assertFalse(tracker.observe(matched = true))
+        assertTrue(tracker.observe(matched = true))
     }
 
-    @Test fun gameCompleteResultWaitCapturesOnlyConfirmedGameCompleteFrame() {
-        assertEquals(
-            GameCompleteResultWaitDecision.CAPTURE_GAME_COMPLETE,
-            gameCompleteResultWaitDecision(
-                readyForResultCapture = true,
-                antiBotMatched = false,
-                gameCompleteMatched = true,
-            ),
-        )
-        assertEquals(
-            GameCompleteResultWaitDecision.KEEP_WAITING,
-            gameCompleteResultWaitDecision(
-                readyForResultCapture = true,
-                antiBotMatched = false,
-                gameCompleteMatched = false,
-            ),
-        )
+    @Test fun gameCompleteResultStabilityResetsOnAnyMiss() {
+        val tracker = GameCompleteResultStabilityTracker(requiredConsecutiveMatches = 2)
+
+        assertFalse(tracker.observe(matched = true))
+        assertFalse(tracker.observe(matched = false))
+        assertFalse(tracker.observe(matched = true))
+        assertTrue(tracker.observe(matched = true))
+    }
+
+    @Test fun postGameInterruptRequiresSameStageTwice() {
+        val tracker = PostGameInterruptTracker(requiredConsecutiveMatches = 2)
+
+        assertEquals(null, tracker.observe(BotStage.MYSTERY_BOX))
+        assertEquals(BotStage.MYSTERY_BOX, tracker.observe(BotStage.MYSTERY_BOX))
+    }
+
+    @Test fun postGameInterruptDoesNotConfirmAcrossDifferentStates() {
+        val tracker = PostGameInterruptTracker(requiredConsecutiveMatches = 2)
+
+        assertEquals(null, tracker.observe(BotStage.MYSTERY_BOX))
+        assertEquals(null, tracker.observe(BotStage.MAINMENU))
+        assertEquals(BotStage.MAINMENU, tracker.observe(BotStage.MAINMENU))
+        assertEquals(null, tracker.observe(null))
     }
 
     @Test fun gameCompleteFinishRequiresFreshPositiveMatch() {
