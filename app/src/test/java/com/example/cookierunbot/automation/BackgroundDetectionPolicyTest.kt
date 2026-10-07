@@ -100,6 +100,52 @@ class BackgroundDetectionPolicyTest {
         )
     }
 
+
+    @Test
+    fun postRelayRotationAlternatesAntiBotWithOtherBackgroundStates() {
+        val order = listOf(
+            BotStage.GAME_START,
+            BotStage.GAME_RELAY,
+            BotStage.ANTI_BOT,
+            BotStage.GAME_COMPLETE,
+            BotStage.MAINMENU,
+            BotStage.PURCHASE_ITEM,
+            BotStage.LEVEL_UP,
+        )
+        val primary = setOf(
+            BotStage.GAME_START,
+            BotStage.GAME_RELAY,
+            BotStage.GAME_COMPLETE,
+        )
+        var cursor = 0
+        var antiBotTurn = true
+        val seen = mutableListOf<BotStage>()
+
+        repeat(6) {
+            val selection = BackgroundDetectionPolicy.nextAfterGameRelay(
+                orderedStages = order,
+                cursor = cursor,
+                primaryStages = primary,
+                antiBotTurn = antiBotTurn,
+            )
+            cursor = selection.nextCursor
+            antiBotTurn = selection.nextAntiBotTurn
+            selection.stage?.let(seen::add)
+        }
+
+        assertEquals(
+            listOf(
+                BotStage.ANTI_BOT,
+                BotStage.MAINMENU,
+                BotStage.ANTI_BOT,
+                BotStage.PURCHASE_ITEM,
+                BotStage.ANTI_BOT,
+                BotStage.LEVEL_UP,
+            ),
+            seen,
+        )
+    }
+
     @Test
     fun antiBotFollowUpUsesLowFixedFrequency() {
         assertFalse(
