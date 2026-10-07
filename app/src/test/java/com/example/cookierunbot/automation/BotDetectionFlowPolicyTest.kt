@@ -132,6 +132,28 @@ class BotDetectionFlowPolicyTest {
         assertEquals(DetectionGroup.POST_GAME, groupAfterRecoveryMainMenu(DetectionGroup.POST_GAME, false))
     }
 
+    @Test fun gameCompleteResultInterruptListExcludesAntiBotButKeepsPostGameRecoveryStates() {
+        val stages = postGameResultInterruptStages(
+            alwaysStages = listOf(BotStage.CONNECTION_LOST, BotStage.INACTIVE),
+            postGameStages = listOf(
+                BotStage.ANTI_BOT,
+                BotStage.MYSTERY_BOX,
+                BotStage.MAINMENU,
+            ),
+        )
+
+        assertEquals(
+            listOf(
+                BotStage.CONNECTION_LOST,
+                BotStage.INACTIVE,
+                BotStage.MYSTERY_BOX,
+                BotStage.MAINMENU,
+            ),
+            stages,
+        )
+        assertFalse(stages.contains(BotStage.ANTI_BOT))
+    }
+
     @Test fun gameCompleteResultProbeUsesRealFixedInterval() {
         assertTrue(
             fixedIntervalProbeDue(
