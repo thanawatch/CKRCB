@@ -58,19 +58,66 @@ internal fun mainMenuRecoveryDecision(matched: Boolean, elapsedMs: Long): MainMe
 
 internal fun gameCompleteFinishAllowed(freshFrameAvailable: Boolean, gameCompleteMatched: Boolean): Boolean =
     freshFrameAvailable && gameCompleteMatched
-internal enum class GameCompleteResultWaitDecision {
-    HANDLE_ANTI_BOT,
-    CAPTURE_GAME_COMPLETE,
-    KEEP_WAITING,
+
+internal fun fixedIntervalProbeDue(
+    nowMs: Long,
+    lastProbeAtMs: Long,
+    intervalMs: Long,
+): Boolean {
+    require(intervalMs > 0L)
+    return lastProbeAtMs == 0L || nowMs - lastProbeAtMs >= intervalMs
 }
 
-internal fun gameCompleteResultWaitDecision(
-    readyForResultCapture: Boolean,
-    antiBotMatched: Boolean,
-    gameCompleteMatched: Boolean,
-): GameCompleteResultWaitDecision = when {
-    antiBotMatched -> GameCompleteResultWaitDecision.HANDLE_ANTI_BOT
-    readyForResultCapture && gameCompleteMatched -> GameCompleteResultWaitDecision.CAPTURE_GAME_COMPLETE
-    else -> GameCompleteResultWaitDecision.KEEP_WAITING
+internal class GameCompleteResultStabilityTracker(
+    private val requiredConsecutiveMatches: Int = 2,
+) {
+    init {
+        require(requiredConsecutiveMatches >= 2)
+    }
+
+    private var consecutiveMatches = 0
+
+    fun reset() {
+        consecutiveMatches = 0
+    }
+
+    fun observe(matched: Boolean): Boolean {
+        if (!matched) {
+            consecutiveMatches = 0
+            return false
+        }
+        consecutiveMatches += 1
+        return consecutiveMatches >= requiredConsecutiveMatches
+    }
+}
+
+internal class PostGameInterruptTracker(
+    private val requiredConsecutiveMatches: Int = 2,
+) {
+    init {
+        require(requiredConsecutiveMatches >= 2)
+    }
+
+    private var pendingStage: BotStage? = null
+    private var consecutiveMatches = 0
+
+    fun reset() {
+        pendingStage = null
+        consecutiveMatches = 0
+    }
+
+    fun observe(stage: BotStage?): BotStage? {
+        if (stage == null) {
+            reset()
+            return null
+        }
+        if (stage != pendingStage) {
+            pendingStage = stage
+            consecutiveMatches = 1
+            return null
+        }
+        consecutiveMatches += 1
+        return stage.takeIf { consecutiveMatches >= requiredConsecutiveMatches }
+    }
 }
 
