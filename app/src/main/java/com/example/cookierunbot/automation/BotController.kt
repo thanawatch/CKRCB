@@ -1851,6 +1851,15 @@ class BotController(
             }
             BotStage.ENTER_LEAGUE -> rewardPopup(result.state, "ENTER_LEAGUE", AutomationConfig.ENTER_LEAGUE_ACCEPT, sourceWidth, sourceHeight, frameGeneration)
             BotStage.LEAGUE_RESULTS -> rewardPopup(result.state, "LEAGUE_RESULTS", AutomationConfig.LEAGUE_RESULTS_ACCEPT, sourceWidth, sourceHeight, frameGeneration)
+            BotStage.LEAGUE_ENDED_RESTART -> rewardPopup(
+                result.state,
+                "LEAGUE_ENDED_RESTART",
+                LeagueEndedRestartPolicy.CONFIRM_POINT,
+                sourceWidth,
+                sourceHeight,
+                frameGeneration,
+                jitter = 0,
+            )
             BotStage.PREVIOUS_RANK_RESULTS -> rewardPopup(result.state, "PREVIOUS_RANK_RESULTS", AutomationConfig.PREVIOUS_RANK_ACCEPT, sourceWidth, sourceHeight, frameGeneration)
             BotStage.OVERTAKE_BREAK_SCORE -> popup("OVERTAKE_BREAK_SCORE", AutomationConfig.OVERTAKE_ACCEPT, sourceWidth, sourceHeight, DetectionGroup.POST_GAME, true)
             BotStage.TOO_MANY_TREASURES -> rewardPopup(result.state, "TOO_MANY_TREASURES", AutomationConfig.TOO_MANY_TREASURES_ACCEPT, sourceWidth, sourceHeight, frameGeneration)
@@ -6371,6 +6380,7 @@ class BotController(
             BotStage.DAILY_NEW,
             BotStage.ENTER_LEAGUE,
             BotStage.LEAGUE_RESULTS,
+            BotStage.LEAGUE_ENDED_RESTART,
             BotStage.PREVIOUS_RANK_RESULTS,
             BotStage.TOO_MANY_TREASURES,
             BotStage.RELIC_COMPLETE,
@@ -6386,7 +6396,7 @@ class BotController(
             BotStage.CONGRATULATIONS, BotStage.LEVEL_UP, BotStage.RELIC_COMPLETE,
             BotStage.RELIC_CLAIM, BotStage.DAILY_CHECKIN, BotStage.DAILY_CHECKIN_BOOST_SET,
             BotStage.DAILY_TREASURE, BotStage.DAILY_NEW, BotStage.ENTER_LEAGUE,
-            BotStage.LEAGUE_RESULTS, BotStage.PREVIOUS_RANK_RESULTS,
+            BotStage.LEAGUE_RESULTS, BotStage.LEAGUE_ENDED_RESTART, BotStage.PREVIOUS_RANK_RESULTS,
             BotStage.TOO_MANY_TREASURES, BotStage.PARTY_RUN, BotStage.PARTY_RUN_SEASON_REWARDS,
             BotStage.TIME_DEAL, BotStage.PREVIOUS_RESULTS, BotStage.GAME_SETTINGS,
             BotStage.MAINMENU, BotStage.PURCHASE_ITEM,

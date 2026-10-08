@@ -73,6 +73,7 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 
 - [ ] Start Bot waits for fresh capture and connected Accessibility, then begins in PRE_GAME.
 - [ ] MAINMENU is revalidated before Friend Life, Quick Lives, or Start Game. Present a blocking popup during revalidation and confirm stale menu work aborts.
+- [ ] Show the League-ended restart popup on a normalized 1280×720 PRE_GAME and POST_GAME screen. Verify `LEAGUE_ENDED_RESTART_1.png` matches inside ROI `(330,160)-(934,412)`, the bot taps logical Confirm `(640,458)` with zero jitter, then waits for a fresh frame and redetects. Verify the same template is not scanned or dispatched while the detection group is IN_GAME.
 - [ ] PURCHASE_ITEM: validate Play, selected boost found path, 30-second boost timeout path, and retry behavior.
 - [ ] Validate Fast Start priority window, Cookie Relay, optional post-relay sequence, fixed jump count, continuous jumping, and Stop cancellation.
 - [ ] GAME_COMPLETE immediately changes to POST_GAME, resets progress, analyzes results off-loop, requires a fresh re-match before Finish, and honors result-image preference.

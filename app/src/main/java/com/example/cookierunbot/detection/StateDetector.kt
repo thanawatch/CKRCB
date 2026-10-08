@@ -7,6 +7,7 @@ import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.automation.BotStage
 import com.example.cookierunbot.automation.DualGameCompleteSendLifePolicy
+import com.example.cookierunbot.automation.LeagueEndedRestartPolicy
 import com.example.cookierunbot.automation.PerformanceProfile
 import com.example.cookierunbot.automation.RedfingerPerformancePolicy
 import android.os.SystemClock
@@ -560,6 +561,7 @@ class StateDetector(
             BotStage.DAILY_NEW,
             BotStage.ENTER_LEAGUE,
             BotStage.LEAGUE_RESULTS,
+            BotStage.LEAGUE_ENDED_RESTART,
             BotStage.ANTI_BOT,
             BotStage.CONNECTION_LOST,
             BotStage.INACTIVE,
@@ -590,6 +592,12 @@ class StateDetector(
             BotStage.DAILY_NEW to Rect(432, 12, 849 - 432, 78 - 12),
             BotStage.ENTER_LEAGUE to Rect(318, 235, 962 - 318, 384 - 235),
             BotStage.LEAGUE_RESULTS to Rect(512, 52, 779 - 512, 105 - 52),
+            BotStage.LEAGUE_ENDED_RESTART to Rect(
+                LeagueEndedRestartPolicy.ROI_X,
+                LeagueEndedRestartPolicy.ROI_Y,
+                LeagueEndedRestartPolicy.ROI_WIDTH,
+                LeagueEndedRestartPolicy.ROI_HEIGHT,
+            ),
             BotStage.ANTI_BOT to Rect(300, 5, 690, 115),
             BotStage.CONNECTION_LOST to Rect(351, 203, 936 - 351, 405 - 203),
             BotStage.INACTIVE to Rect(358, 247, 934 - 358, 372 - 247),
@@ -620,6 +628,7 @@ private val TEMPLATE_PATHS_BY_STAGE = mapOf(
             BotStage.DAILY_NEW to listOf("templates/DAILY_NEW_1.png"),
             BotStage.ENTER_LEAGUE to listOf("templates/ENTER_LEAGUE_1.png"),
             BotStage.LEAGUE_RESULTS to listOf("templates/LEAGUE_RESULTS_1.png"),
+            BotStage.LEAGUE_ENDED_RESTART to listOf("templates/" + LeagueEndedRestartPolicy.TEMPLATE),
             BotStage.ANTI_BOT to listOf(
                 "templates/ANTI_BOT_1.png",
                 "templates/ANTI_BOT_SLIDING_1.png",
@@ -654,6 +663,7 @@ private val TEMPLATE_PATHS_BY_STAGE = mapOf(
             BotStage.DAILY_NEW to listOf(1.0),
             BotStage.ENTER_LEAGUE to listOf(1.0),
             BotStage.LEAGUE_RESULTS to listOf(1.0),
+            BotStage.LEAGUE_ENDED_RESTART to listOf(1.0),
             BotStage.ANTI_BOT to listOf(1.0),
             BotStage.CONNECTION_LOST to listOf(1.0),
             BotStage.INACTIVE to listOf(1.0),

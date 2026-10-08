@@ -19,6 +19,7 @@ enum class BotStage {
     DAILY_NEW,
     ENTER_LEAGUE,
     LEAGUE_RESULTS,
+    LEAGUE_ENDED_RESTART,
     ANTI_BOT,
     CONNECTION_LOST,
     INACTIVE,
