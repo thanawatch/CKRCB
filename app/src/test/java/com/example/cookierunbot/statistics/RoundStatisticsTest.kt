@@ -129,6 +129,14 @@ class RoundStatisticsTest {
         assertTrue(RoundResultStore.snapshot().sessionRuntimeMs < 1_000L)
     }
 
+    @Test fun sessionRuntimeFormatterSwitchesToDaysAtTwentyFourHours() {
+        assertEquals("23h 59m 59s", formatSessionRuntime(86_399_000L))
+        assertEquals("1 day", formatSessionRuntime(86_400_000L))
+        assertEquals("1 day 1h 15m", formatSessionRuntime(90_900_000L))
+        assertEquals("2 days", formatSessionRuntime(172_800_000L))
+        assertEquals("3 days 30m", formatSessionRuntime(261_000_000L))
+    }
+
     @Test fun antiBotSessionCountersTrackOnlyCurrentGenerationAndReset() {
         val first = RoundResultStore.startNewSession()
         assertTrue(RoundResultStore.recordAntiBotDetected(first, 1, listOf(2, 6)))

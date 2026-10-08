@@ -71,7 +71,7 @@ Recovery is handed to `BotController` and executed on its recovery executor. A c
 
 ## Statistics, storage, and diagnostics audit
 
-`RoundResultCollector` owns one analyzer executor and snapshots `RoundResultStore.sessionGeneration()`. It uses `ResultNumberDetector` and `MysteryBoxClassifier`; results from an old session generation are discarded. `RoundResultStore` synchronizes access, retains 50 recent rounds, and maintains aggregate contribution records so replacement updates contribute only a delta.
+`RoundResultCollector` owns one analyzer executor and snapshots `RoundResultStore.sessionGeneration()`. It uses `ResultNumberDetector` and `MysteryBoxClassifier`; results from an old session generation are discarded. `RoundResultStore` synchronizes access, retains 50 recent rounds, and maintains aggregate contribution records so replacement updates contribute only a delta. `SessionRuntimeFormatter` is presentation-only and is shared by the Statistics summary, overlay Session Time, and Telegram `/stats`: it switches at 24 hours to day-aware text while the underlying `sessionRuntimeMs` continues monotonically within the session. Round-duration and Watchdog formatting remain separate.
 
 `PublicImageStore` uses MediaStore/public collections on modern Android and legacy public paths where applicable. Results go to `Pictures/CookieRunBot/results`; no-match pairs go to `Pictures/CookieRunBot/debug`. `DebugLogStore` bounds memory at 500 messages. `RuntimeDiagnosticsLogger` emits throttled health/DETECT_STALL context. `PersistentTrace` writes/rotates an app-specific cold-start trace. None of these diagnostic signals authorize recovery actions beyond the explicitly wired progress watchdog.
 

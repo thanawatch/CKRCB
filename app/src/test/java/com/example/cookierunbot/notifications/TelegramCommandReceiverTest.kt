@@ -58,6 +58,15 @@ class TelegramCommandReceiverTest {
         assertTrue(shouldProcessTelegramUpdate(42L, 43L))
     }
 
+    @Test fun statsReplyUsesDayAwareSessionRuntime() {
+        val reply = formatStatsReply(
+            statistics(rounds = 75, totalBoxes = 17).copy(
+                sessionRuntimeMs = 90_900_000L,
+            ),
+        )
+        assertTrue(reply.contains("Runtime: 1 day 1h 15m"))
+    }
+
     @Test fun statisticsAndBoxRepliesUseCumulativeSnapshotValues() {
         val stats = statistics(rounds = 75, totalBoxes = 17)
         val sessionReply = formatStatsReply(stats)

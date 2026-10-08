@@ -29,6 +29,7 @@ import android.widget.Toast
 import com.example.cookierunbot.CookieRunBotApplication
 import com.example.cookierunbot.capture.LatestFrameProvider
 import com.example.cookierunbot.statistics.RoundResultStore
+import com.example.cookierunbot.statistics.formatSessionRuntime
 import com.example.cookierunbot.diagnostics.RobotLog as Log
 import android.util.DisplayMetrics
 import java.text.NumberFormat
@@ -580,8 +581,7 @@ class BotControlOverlay(private val context: Context) {
         statsRounds.text = "Rounds: ${stats.rounds}"
         statsCoins.text = "Coins: ${formatter.format(stats.totalCoins)}"
         statsXp.text = "XP: ${formatter.format(stats.totalXp)}"
-        val totalSeconds = stats.sessionRuntimeMs / 1000
-        statsTime.text = "Time: %02d:%02d".format(totalSeconds / 60, totalSeconds % 60)
+        statsTime.text = "Time: ${formatSessionRuntime(stats.sessionRuntimeMs)}"
         statsBoxCounts["wood"]?.text = stats.woodBoxes.toString()
         statsBoxCounts["silver"]?.text = stats.silverBoxes.toString()
         statsBoxCounts["gold"]?.text = stats.goldBoxes.toString()

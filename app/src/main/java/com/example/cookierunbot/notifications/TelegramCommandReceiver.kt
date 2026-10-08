@@ -12,6 +12,7 @@ import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.capture.LatestFrameProvider
 import com.example.cookierunbot.statistics.RoundResult
 import com.example.cookierunbot.statistics.RoundResultStore
+import com.example.cookierunbot.statistics.formatSessionRuntime
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -250,7 +251,7 @@ internal fun formatStatusReply(
 }
 
 internal fun formatStatsReply(stats: com.example.cookierunbot.statistics.SessionStatistics): String {
-    return "📊 RobotRun Session\n\nRuntime: ${formatDuration(stats.sessionRuntimeMs)}\nRounds: ${stats.rounds}\n\n" +
+    return "📊 RobotRun Session\n\nRuntime: ${formatSessionRuntime(stats.sessionRuntimeMs)}\nRounds: ${stats.rounds}\n\n" +
         "Coins: ${stats.totalCoins.formatNumber()}\nXP: ${stats.totalXp.formatNumber()}\n\n" +
         "Mystery Boxes: ${stats.totalBoxes}\nWood: ${stats.woodBoxes}\nSilver: ${stats.silverBoxes}\n" +
         "Gold: ${stats.goldBoxes}\nRainbow: ${stats.rainbowBoxes}\n\n" +

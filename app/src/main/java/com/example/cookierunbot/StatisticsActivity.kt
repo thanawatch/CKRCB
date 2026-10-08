@@ -15,6 +15,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import com.example.cookierunbot.statistics.RoundResultStore
+import com.example.cookierunbot.statistics.formatSessionRuntime
 import java.text.SimpleDateFormat
 import java.text.NumberFormat
 import java.util.Date
@@ -50,7 +51,7 @@ class StatisticsActivity : ComponentActivity() {
         summaryValues[0].text = "${stats.rounds} รอบ"
         summaryValues[1].text = number(stats.totalCoins)
         summaryValues[2].text = number(stats.totalXp)
-        summaryValues[3].text = duration(stats.sessionRuntimeMs)
+        summaryValues[3].text = formatSessionRuntime(stats.sessionRuntimeMs)
         boxValues["wood"]?.text = stats.woodBoxes.toString()
         boxValues["silver"]?.text = stats.silverBoxes.toString()
         boxValues["gold"]?.text = stats.goldBoxes.toString()

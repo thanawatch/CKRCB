@@ -83,7 +83,7 @@ Watchdog's separate full-frame `CONFIRM_SEND_LIFE_1.png` recovery match uses **0
 
 ## Statistics, images, and logs
 
-A new Start Bot creates a new statistics session. Result OCR/classification runs on a separate executor and cannot write across session generations. Up to 50 recent rounds are kept, while cumulative totals use contribution replacement so late Mystery Box classification does not double-count.
+A new Start Bot creates a new statistics session. Result OCR/classification runs on a separate executor and cannot write across session generations. Up to 50 recent rounds are kept, while cumulative totals use contribution replacement so late Mystery Box classification does not double-count. Session Runtime is displayed consistently in Statistics, the overlay, and Telegram stats: below 24 hours it uses hour/minute/second units; exactly 24 hours becomes `1 day`, and longer sessions show `N day(s)` plus remaining hours/minutes. This only changes presentation—the session timer continues counting normally.
 
 - Result images: public `Pictures/CookieRunBot/results/`
 - No-match raw/normalized pairs: public `Pictures/CookieRunBot/debug/`

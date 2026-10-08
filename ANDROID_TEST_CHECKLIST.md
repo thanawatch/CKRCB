@@ -122,6 +122,7 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 ## Statistics, storage, and diagnostics
 
 - [ ] Each Start Bot creates a new statistics session; opening/closing Statistics does not reset it.
+- [ ] Verify Session Runtime is identical in Statistics, overlay Session Time, and Telegram `/stats`: `23h 59m 59s` before the boundary, `1 day` at exactly 24h, `1 day 1h 15m` at 25h15m, and plural `2 days` at 48h. Confirm the display conversion does not reset `sessionRuntimeMs`, Watchdog age, or round durations.
 - [ ] Verify score/coins/XP, round duration, box grades, recent-history limit (50), cumulative totals, and stale old-session analysis rejection.
 - [ ] Toggle debug/result image switches during a run and confirm live save behavior.
 - [ ] Verify result images in `Pictures/CookieRunBot/results/` and no-match pairs in `Pictures/CookieRunBot/debug/` (including legacy storage behavior where supported).
