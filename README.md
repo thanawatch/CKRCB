@@ -2,7 +2,7 @@
 
 RobotRun is a native Android automation app for Cookie Run Classic. With explicit user permission it captures the screen through MediaProjection, normalizes the game viewport to 1280×720, identifies current screens with OpenCV template matching, and dispatches configured taps/swipes through an AccessibilityService.
 
-The current Android source is authoritative. **Coding agents:** start with [AGENTS.md](AGENTS.md) and the dated [DEVELOPMENT_HANDOFF.md](DEVELOPMENT_HANDOFF.md); use [PORTING_STATUS.md](PORTING_STATUS.md) for the current capability map, [PORTING_AUDIT.md](PORTING_AUDIT.md) for call flows, [REDFINGER_PERFORMANCE_PROFILE.md](REDFINGER_PERFORMANCE_PROFILE.md) for the opt-in profile, and [ANDROID_TEST_CHECKLIST.md](ANDROID_TEST_CHECKLIST.md) for unverified phone checks. When changing a feature, update the affected guides in the same change rather than leaving incompatible command lists or version labels.
+The current Android source/tests are authoritative for implementation. **Coding agents:** [AGENTS.md](AGENTS.md) is the mandatory first read and the repository-level source of truth for invariants/change boundaries. Inspect the relevant current source and callers next; only then use the dated [DEVELOPMENT_HANDOFF.md](DEVELOPMENT_HANDOFF.md) for product context, [PORTING_STATUS.md](PORTING_STATUS.md) for the capability map, [PORTING_AUDIT.md](PORTING_AUDIT.md) for call flows, [REDFINGER_PERFORMANCE_PROFILE.md](REDFINGER_PERFORMANCE_PROFILE.md) for the opt-in profile, and [ANDROID_TEST_CHECKLIST.md](ANDROID_TEST_CHECKLIST.md) for unverified phone checks. When changing behavior, update the affected guides in the same change.
 
 ## Requirements and build
 

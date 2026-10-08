@@ -1,8 +1,31 @@
 # AI coding-agent guide
 
+> **Mandatory new-agent entry point.** Read this file first. For actual implementation, the checked-out source/tests are authoritative; for user-required invariants and “do not change casually” constraints, this file is the repository-level source of truth. `DEVELOPMENT_HANDOFF.md` is a dated context snapshot and must not override newer source or this guide.
+
+## 0. New-agent fast start
+
+Use this order before editing anything:
+
+1. Read **`AGENTS.md`** completely enough to cover the requested subsystem.
+2. Inspect the current `master` source, all callers, and focused JVM tests for that subsystem. Never infer current behavior from a past chat, commit, or handoff text alone.
+3. Read **`DEVELOPMENT_HANDOFF.md`** for product context and deliberate exclusions, then **`PORTING_STATUS.md`** / **`PORTING_AUDIT.md`** for capability and call-flow context.
+4. If behavior changes, update the affected docs and **`ANDROID_TEST_CHECKLIST.md`** in the same change. A code-only behavior change is incomplete.
+5. Do not claim Gradle/APK/device verification unless it was actually run.
+
+Current high-risk invariants that should stop an agent from making speculative changes:
+
+- The detector/action coordinate system is logical **1280×720** with dynamic `contentRect`; do not invent physical offsets or bypass `CoordinateMapper` except the explicitly documented legacy exceptions.
+- `CONNECTION_LOST` and `INACTIVE` are **Reload-only**. No random recovery, force-stop, process kill, or silent game restart.
+- `LOGIN` is **not** in `ALWAYS`. It is primary in PRE_GAME/POST_GAME, background/recovery-only in IN_GAME, and absent from the Fast Start priority scan. Its current flow is: detect `LOGIN_1.png` in ROI `(390,570)-(890,700)` → tap detected center → wait 5 s → tap Google `(657,294)` → search `LOGIN_ACCOUNT_PICKER_1.png` in ROI `(270,75)-(1010,285)` for ≤60 s → if found tap profile `(323,299)`, otherwise end Login flow without another tap → PRE_GAME.
+- `GAME_COMPLETE` records watchdog progress immediately at confirmed detection and ends round duration there; do not postpone that reset to Finish/result handling.
+- Anti-bot remains a three-test challenge. Preserve template/ROI/threshold and odd-card detection. Same-artwork shuffles use slot/permutation recognition plus two stable fresh frames; a 60 s stalled follow-up may bypass only the layout guard after three fresh ANTI_BOT confirmations, never while awaiting exit after Test 3.
+- Friend Life and Quick Lives are separate. Friend Life watchdog progress is only a **successful SEND_BUTTON gesture callback**. Do not add speculative post-send disappearance checks or extra scans to “prove” success.
+- Fast Start / GAME_START / GAME_RELAY behavior and Redfinger scale policy are performance-sensitive. Do not add a new primary IN_GAME detector or broad multi-scale scan without explicit justification.
+- A gesture being accepted is not proof that it completed. Callback-sensitive workflows must preserve successful completion + fresh-frame semantics and must not act after Stop/run-generation invalidation.
+
 ## 1. Source of truth and working rules
 
-This repository is the native Android **RobotRun** automation app for Cookie Run Classic. The current files under `app/src/main/` are authoritative. Read the relevant Kotlin, manifest, resources, assets, and tests before changing behavior; documentation is an index, not a substitute for call-site inspection. **Start a new agent session with [DEVELOPMENT_HANDOFF.md](DEVELOPMENT_HANDOFF.md)** for the current product baseline, deliberate exclusions, Telegram/updater status, Redfinger profile and verification limitations. This file remains the operational guide; the handoff is a dated snapshot, not a replacement for current source.
+This repository is the native Android **RobotRun** automation app for Cookie Run Classic. The current files under `app/src/main/` are authoritative for implementation. Read the relevant Kotlin, manifest, resources, assets, and tests before changing behavior; documentation is an operational map, not a substitute for call-site inspection. Use [DEVELOPMENT_HANDOFF.md](DEVELOPMENT_HANDOFF.md) only after this guide for product context, deliberate exclusions, Telegram/updater status, Redfinger profile and verification limitations. If documentation conflicts, resolve against current source/tests and the invariants in this guide rather than silently choosing an older description.
 
 - Work only in this repository unless the task explicitly says otherwise. Inspect `git status` first and preserve unrelated edits.
 - Keep changes narrow. Never commit tokens, Chat IDs, captured screens, logs containing user data, signing material, or generated `build/`, `.gradle/`, `.kotlin/`, or IDE files.

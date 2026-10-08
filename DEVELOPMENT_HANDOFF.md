@@ -1,6 +1,6 @@
 # RobotRun development handoff — 2026-09-27
 
-> **For a new coding agent:** Read [AGENTS.md](AGENTS.md) first, then this snapshot, then the actual source and tests for the requested area. This handoff describes current implementation and user-required development constraints; it is not permission to alter an unrelated working flow. The source on the checked-out branch is authoritative if this snapshot becomes stale.
+> **For a new coding agent:** Read [AGENTS.md](AGENTS.md) first. Treat it as the repository-level source of truth for invariants and change boundaries. Then inspect the actual source/callers/tests for the requested area; those are authoritative for current implementation. Read this handoff only as dated product context. If this snapshot conflicts with AGENTS.md or newer source/tests, do not follow the stale handoff text.
 
 ## Project identity and current release baseline
 
