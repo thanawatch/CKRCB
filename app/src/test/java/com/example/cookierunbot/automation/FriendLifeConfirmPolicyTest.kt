@@ -24,6 +24,14 @@ class FriendLifeConfirmPolicyTest {
         assertNull(friendSendTapProgressReason("CONFIRM_2_ORPHAN", gestureSucceeded = true))
     }
 
+    @Test fun successfulFriendConfirmGestureRearmsTheSixtySecondTracker() {
+        assertTrue(friendLifeConfirmTapResetsStuckTimer("CONFIRM_1", gestureSucceeded = true))
+        assertTrue(friendLifeConfirmTapResetsStuckTimer("CONFIRM_2", gestureSucceeded = true))
+        assertTrue(friendLifeConfirmTapResetsStuckTimer("CONFIRM_2_ORPHAN", gestureSucceeded = true))
+        assertTrue(!friendLifeConfirmTapResetsStuckTimer("SEND_BUTTON", gestureSucceeded = true))
+        assertTrue(!friendLifeConfirmTapResetsStuckTimer("CONFIRM_1", gestureSucceeded = false))
+    }
+
     @Test fun orphanConfirmTapsOnlyOnceUntilThePopupDisappears() {
         assertEquals(
             FriendLifeConfirmPolicy.OrphanDecision.TAP_ONCE,

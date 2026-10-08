@@ -5,11 +5,15 @@ internal object StuckSendLifeConfirmPolicy {
     const val STUCK_DURATION_MS = 60_000L
     const val CALLBACK_TIMEOUT_MS = 3_000L
     const val PROBE_INTERVAL_MS = 1_500L
+    const val PRE_ACTION_RECHECK_TIMEOUT_MS = 1_000L
 
     fun eligibleGroup(group: DetectionGroup): Boolean =
         group == DetectionGroup.PRE_GAME || group == DetectionGroup.POST_GAME
 
     fun highConfidence(score: Double): Boolean = score >= MATCH_THRESHOLD
+
+    fun shouldRecheckBeforeStateAction(group: DetectionGroup, tracking: Boolean): Boolean =
+        tracking && eligibleGroup(group)
 
     fun center(x: Int, y: Int, width: Int, height: Int): LogicalPoint? =
         if (x < 0 || y < 0 || width <= 0 || height <= 0) null
@@ -26,6 +30,8 @@ internal data class StuckSendLifeConfirmObservation(
 internal class StuckSendLifeConfirmTracker {
     private var firstSeenAtMs = -1L
     private var lastSeenAtMs = -1L
+
+    fun isTracking(): Boolean = firstSeenAtMs >= 0L && lastSeenAtMs >= 0L
 
     fun reset(): Boolean {
         val wasTracking = firstSeenAtMs >= 0L || lastSeenAtMs >= 0L

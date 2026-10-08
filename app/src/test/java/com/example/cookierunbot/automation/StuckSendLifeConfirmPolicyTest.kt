@@ -121,13 +121,43 @@ class StuckSendLifeConfirmPolicyTest {
 
     @Test fun explicitResetStartsANewMinute() {
         val tracker = StuckSendLifeConfirmTracker()
+        assertFalse(tracker.isTracking())
         tracker.observe(DetectionGroup.POST_GAME, 1_000L, 0.99)
+        assertTrue(tracker.isTracking())
         assertTrue(tracker.reset())
+        assertFalse(tracker.isTracking())
 
         val restarted = tracker.observe(DetectionGroup.POST_GAME, 2_000L, 0.99)
         assertTrue(restarted.startedNewEpisode)
         assertEquals(0L, restarted.elapsedMs)
         assertFalse(restarted.shouldTap)
+    }
+
+    @Test fun trackedConfirmRequiresFreshPreActionRecheckOnlyInEligibleGroups() {
+        assertTrue(
+            StuckSendLifeConfirmPolicy.shouldRecheckBeforeStateAction(
+                DetectionGroup.PRE_GAME,
+                tracking = true,
+            ),
+        )
+        assertTrue(
+            StuckSendLifeConfirmPolicy.shouldRecheckBeforeStateAction(
+                DetectionGroup.POST_GAME,
+                tracking = true,
+            ),
+        )
+        assertFalse(
+            StuckSendLifeConfirmPolicy.shouldRecheckBeforeStateAction(
+                DetectionGroup.IN_GAME,
+                tracking = true,
+            ),
+        )
+        assertFalse(
+            StuckSendLifeConfirmPolicy.shouldRecheckBeforeStateAction(
+                DetectionGroup.PRE_GAME,
+                tracking = false,
+            ),
+        )
     }
 
     @Test fun followUpWaitsForOldConfirmToDisappearBeforeTappingAgain() {

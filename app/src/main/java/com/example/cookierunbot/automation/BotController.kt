@@ -1524,6 +1524,16 @@ class BotController(
                     )
                 }
             }
+            val detectedStateBeforeAction = result?.state
+            if (detectedStateBeforeAction != null &&
+                guardTrackedStuckSendLifeConfirmBeforeStateAction(
+                    detector = detector,
+                    detectedState = detectedStateBeforeAction,
+                    afterGeneration = frame.generation,
+                )
+            ) {
+                return
+            }
             logDailyNewPostTapResult(detector, frame, result)
             logPartyRunSeasonRewardsPostTapResult(detector, frame, result)
             // DAILY_NEW diagnostics when in PRE_GAME
@@ -2077,6 +2087,82 @@ class BotController(
             "[STATE_REDETECT] previous=TIME_DEAL baselineGeneration=$postCallbackBaseline " +
                 "action=wait_in_detector_loop",
         )
+    }
+
+    private fun guardTrackedStuckSendLifeConfirmBeforeStateAction(
+        detector: StateDetector,
+        detectedState: BotStage,
+        afterGeneration: Long,
+    ): Boolean {
+        val guardGroup = group
+        if (!StuckSendLifeConfirmPolicy.shouldRecheckBeforeStateAction(
+                guardGroup,
+                stuckSendLifeConfirmTracker.isTracking(),
+            )
+        ) return false
+
+        logDiagnostic(
+            "[STUCK_SEND_LIFE_CONFIRM_GUARD] state=${detectedState.name} " +
+                "action=WAIT_FRESH_RECHECK afterGeneration=$afterGeneration",
+        )
+        val fresh = LatestFrameProvider.awaitNextSnapshot(
+            afterGeneration,
+            StuckSendLifeConfirmPolicy.PRE_ACTION_RECHECK_TIMEOUT_MS,
+        )
+        if (fresh == null) {
+            logDiagnostic(
+                "[STUCK_SEND_LIFE_CONFIRM_GUARD] state=${detectedState.name} " +
+                    "action=DEFER_STATE reason=no_fresh_frame",
+            )
+            listener.onStateChanged("WAITING_FOR_STUCK_SEND_LIFE_CONFIRM_RECHECK")
+            return true
+        }
+
+        try {
+            if (!isRunning() || synchronized(lock) { progressRecoveryGate.isActive() }) return true
+            val currentGroup = group
+            if (!StuckSendLifeConfirmPolicy.eligibleGroup(currentGroup)) {
+                val reset = stuckSendLifeConfirmTracker.reset()
+                logDiagnostic(
+                    "[STUCK_SEND_LIFE_CONFIRM_GUARD] state=${detectedState.name} " +
+                        "action=DEFER_STATE reason=group_changed group=${currentGroup.name} " +
+                        "trackerReset=$reset",
+                )
+                return true
+            }
+
+            val confirm = detector.detectTemplate(
+                fresh.mat,
+                FriendLifeConfirmPolicy.TEMPLATE,
+                Rect(0, 0, fresh.mat.cols(), fresh.mat.rows()),
+                StuckSendLifeConfirmPolicy.MATCH_THRESHOLD,
+            )
+            observeWorkflowStuckSendLifeConfirmMatch(
+                confirm,
+                "PRE_ACTION_RECHECK",
+                SystemClock.elapsedRealtime(),
+            )
+            if (confirm.matched) {
+                logDiagnostic(
+                    "[STUCK_SEND_LIFE_CONFIRM_GUARD] state=${detectedState.name} " +
+                        "confirmStillVisible=true score=${format(confirm.score)} " +
+                        "frameGeneration=${fresh.generation} action=TAP_CONFIRM_FIRST",
+                )
+                handleStuckSendLifeConfirmPopup(confirm, fresh)
+                return true
+            }
+
+            logDiagnostic(
+                "[STUCK_SEND_LIFE_CONFIRM_GUARD] state=${detectedState.name} " +
+                    "confirmStillVisible=false score=${format(confirm.score)} " +
+                    "frameGeneration=${fresh.generation} action=RESET_AND_REDETECT_STATE",
+            )
+            lastStage = null
+            listener.onStateChanged("WAITING_FOR_${currentGroup.name}")
+            return true
+        } finally {
+            fresh.mat.release()
+        }
     }
 
     private fun observeWorkflowStuckSendLifeConfirm(
@@ -5097,6 +5183,15 @@ class BotController(
             return FriendLifeTapStepResult(false, null, "${step.lowercase()}_gesture_failed")
         }
         if (!isRunning()) return FriendLifeTapStepResult(false, null, "bot_stopped")
+        if (friendLifeConfirmTapResetsStuckTimer(step, gestureSucceeded = true)) {
+            val reset = stuckSendLifeConfirmTracker.reset()
+            if (reset) {
+                logDiagnostic(
+                    "[STUCK_SEND_LIFE_CONFIRM] action=RESET " +
+                        "reason=friend_life_confirm_gesture_success step=$step",
+                )
+            }
+        }
         val progressUpdate = applyFriendSendTapProgress(
             scheduler = friendLifeScheduler,
             step = step,
@@ -6354,6 +6449,15 @@ class BotController(
         )
     }
 }
+
+internal fun friendLifeConfirmTapResetsStuckTimer(
+    step: String,
+    gestureSucceeded: Boolean,
+): Boolean = gestureSucceeded && (
+    step == "CONFIRM_1" ||
+        step == "CONFIRM_2" ||
+        step == "CONFIRM_2_ORPHAN"
+    )
 
 internal fun friendSendTapProgressReason(
     step: String,

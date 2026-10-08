@@ -75,7 +75,7 @@ Android accepting `dispatchGesture()` is not the same as completion. Actions are
 
 ## Friend Life, Quick Lives, and progress recovery
 
-Scheduled Friend Life first becomes due the user-selected number of whole minutes after Start Bot (default 61), then again that interval after each successful scheduled run, and like a queued manual test starts only from a revalidated MAINMENU. It searches the leaderboard, visually verifies each naturalized scroll, scans Send buttons, and checks interrupt states between Send and two confirmations. It has independent no-progress/top-search/absolute bounds. A successful Send-button gesture immediately counts as game progress.
+Scheduled Friend Life first becomes due the user-selected number of whole minutes after Start Bot (default 61), then again that interval after each successful scheduled run, and like a queued manual test starts only from a revalidated MAINMENU. It searches the leaderboard, visually verifies each naturalized scroll, scans Send buttons, and checks interrupt states between Send and two confirmations. It has independent no-progress/top-search/absolute bounds. A successful Send-button gesture immediately counts as game progress. Successful Friend Life confirmation gestures re-arm the separate 60-second high-confidence stuck-Confirm timer. Outside Friend Life/Quick Lives, once a high-confidence Confirm has been tracked, any other PRE_GAME/POST_GAME state match is held behind a fresh-frame Confirm recheck: a still-visible Confirm is tapped first, while a disappeared Confirm resets the tracker and forces the state to be freshly detected again.
 
 Quick Receive/Send Lives is a separate after-round mailbox workflow with its own templates, callback/fresh-frame rules, interrupts, and timeout.
 

@@ -87,6 +87,8 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 - [ ] Verify top search, send-region scanning, Send/confirmation interrupt checks, relic filtering, and bottom completion.
 - [ ] Verify swipe acceptance alone is not progress: unchanged verification ROI drives the 30-second no-progress abort; also exercise absolute/top-search bounds where practical.
 - [ ] Confirm only the **successful Send-button gesture callback** resets game progress, before confirmations. Ensure no new post-CONFIRM_2 button disappearance/extra verification or changed Friend Life swipe/scroll thresholds were introduced.
+- [ ] Start the 60-second high-confidence stuck-Confirm timer, then successfully tap Friend Life `CONFIRM_1`, `CONFIRM_2`, and orphan Confirm in representative runs; verify each successful gesture re-arms the timer so a later Confirm starts from 0 rather than inheriting the prior popup's elapsed time.
+- [ ] Outside Friend Life/Quick Lives, first establish a high-confidence full-frame Confirm candidate, then make another PRE_GAME/POST_GAME template (especially PURCHASE_ITEM) visible behind it. Verify the state action is withheld until a strictly newer frame rechecks Confirm. If Confirm is still >=0.95, Confirm is tapped first and the old state action never dispatches; if Confirm has disappeared, the old state result is discarded and that state must be detected again before acting.
 - [ ] Force a scheduled failure and verify pending work respects the 15-minute retry-not-before.
 - [ ] Test Quick Receive/Send Lives independently: all-received, none-to-receive, confirmation, interrupt, timeout, and next-round reset paths.
 
