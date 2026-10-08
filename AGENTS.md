@@ -66,7 +66,7 @@ This repository is the native Android **RobotRun** automation app for Cookie Run
 | Overnight diagnostics | `diagnostics/RobotLog.kt`, `OvernightLogArchive.kt`, `OvernightLogPolicy.kt`, `IncidentManager.kt`, `LogPackageBuilder.kt`; `capture/IncidentVideoRecorder.kt`, `IncidentVideoTiming.kt`; `notifications/TelegramLogDelivery.kt`; [docs/OVERNIGHT_DIAGNOSTICS.md](docs/OVERNIGHT_DIAGNOSTICS.md) |
 | Round statistics | `statistics/RoundResultCollector.kt`, `RoundResultStore.kt`, `ResultNumberDetector.kt`, `MysteryBoxClassifier.kt` |
 | Public images and diagnostics | `PublicImageStore.kt`, `ResultImageSaver.kt`, `NoMatchDebugFrameSaver.kt`, `RuntimeDiagnosticsLogger.kt`, `diagnostics/` |
-| Build/release automation | `app/build.gradle.kts`, `gradle/wrapper/gradle-wrapper.properties`, `.github/workflows/build-apk.yml` |
+| Build/release automation | `app/build.gradle.kts`, `gradle/wrapper/gradle-wrapper.properties`, `.github/workflows/build-apk.yml`, `.github/workflows/cleanup-artifacts.yml` |
 
 ## 4. What Start Bot actually does
 

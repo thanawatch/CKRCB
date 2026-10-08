@@ -1,0 +1,53 @@
+name: Cleanup Artifacts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  cleanup:
+    name: Delete all Actions artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Delete all artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # Collect every ID before deleting anything so pagination cannot shift
+          # while artifacts are being removed.
+          mapfile -t artifact_ids < <(
+            gh api --paginate "repos/${GH_REPO}/actions/artifacts?per_page=100" \
+              --jq '.artifacts[].id'
+          )
+
+          if [ "${#artifact_ids[@]}" -eq 0 ]; then
+            echo "No artifacts found."
+            {
+              echo "### Cleanup Artifacts"
+              echo "No artifacts were found."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          deleted=0
+          for artifact_id in "${artifact_ids[@]}"; do
+            gh api --method DELETE "repos/${GH_REPO}/actions/artifacts/${artifact_id}"
+            deleted=$((deleted + 1))
+          done
+
+          echo "Deleted ${deleted} artifact(s)."
+          {
+            echo "### Cleanup Artifacts"
+            echo "Deleted **${deleted}** artifact(s)."
+            echo
+            echo "Workflow runs and logs were not deleted."
+          } >> "$GITHUB_STEP_SUMMARY"

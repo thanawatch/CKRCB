@@ -10,6 +10,7 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 - [ ] `git diff --check`
 - [ ] Review test reports under `app/build/reports/tests/` and lint output; do not commit generated artifacts.
 - [ ] Confirm the APK exists at `app/build/outputs/apk/debug/app-debug.apk`.
+- [ ] Run **Cleanup Artifacts** manually with at least two existing artifacts; verify all artifact IDs are deleted, the run completes successfully, prior workflow runs/logs remain visible, and repository source/workflows are unchanged. Repeat with zero artifacts and verify it exits successfully.
 - [ ] Run the manual GitHub Actions workflow; verify `apksigner` checks the original signed APK first. The downloaded Artifact ZIP name and the single APK extracted from it must both identify versionName, versionCode, short commit, run number, and run attempt; a rerun must produce a distinguishable filename. Check the copied APK matches the original hash and signing certificate, and that no app `versionCode` or runtime logic was changed just to rename a build.
 - [ ] For a changed feature or release baseline, verify affected `AGENTS.md`, `DEVELOPMENT_HANDOFF.md`, `PORTING_STATUS.md`, `PORTING_AUDIT.md`, `README.md`, this checklist, and applicable Redfinger/calibration docs have matching command lists, version names and constraints. Do not mark a test as run solely because a test file or workflow was committed.
 
