@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.BitmapFactory
 import org.opencv.android.Utils
 import org.opencv.core.Core
+import org.opencv.core.CvType
 import org.opencv.core.Mat
 import org.opencv.core.Rect
 import org.opencv.core.Point
@@ -38,14 +39,23 @@ internal object MysteryBoxScanPolicy {
     internal const val EXTREME_FALLBACK_SCALE = 1.15
     private const val MAX_VISIBLE_BOXES = 4
     private const val EXTREME_WEAK_SCORE = 0.75
+    // If every detection we already have is this confident, the match is clean and
+    // real — scanning 15 more scale/grade variants only adds noise, which is how a
+    // single real box was ending up reported as 2-4 boxes (or the wrong grade).
+    private const val HIGH_CONFIDENCE_SCORE = 0.85
+
+    private fun allHighConfidence(detections: List<BoxDetection>): Boolean =
+        detections.isNotEmpty() && detections.all { it.score >= HIGH_CONFIDENCE_SCORE }
 
     fun shouldRunNearFallback(fastPathDetections: List<BoxDetection>): Boolean {
+        if (allHighConfidence(fastPathDetections)) return false
         if (fastPathDetections.size <= 2) return true
         if (fastPathDetections.size >= MAX_VISIBLE_BOXES) return false
         return fastPathDetections.minOfOrNull { it.score }?.let { it < EXTREME_WEAK_SCORE } ?: true
     }
 
     fun shouldRunFarProbe(nearDetections: List<BoxDetection>): Boolean {
+        if (allHighConfidence(nearDetections)) return false
         if (nearDetections.size <= 2) return true
         if (nearDetections.size >= MAX_VISIBLE_BOXES) return false
         return nearDetections.minOfOrNull { it.score }?.let { it < EXTREME_WEAK_SCORE } ?: true
@@ -55,6 +65,7 @@ internal object MysteryBoxScanPolicy {
         beforeFarProbeCount: Int,
         farProbeDetections: List<BoxDetection>,
     ): Boolean {
+        if (allHighConfidence(farProbeDetections)) return false
         if (farProbeDetections.size >= MAX_VISIBLE_BOXES) return false
         val weakest = farProbeDetections.minOfOrNull { it.score } ?: Double.NEGATIVE_INFINITY
         return farProbeDetections.size <= 2 ||
@@ -70,48 +81,195 @@ private data class BoxTemplateVariant(
     val alphaMask: Mat,
 )
 
+private data class BoxBaseTemplate(val grade: String, val bgr: Mat, val alphaMask: Mat)
+
+// Fixed canvas every grade's raw asset gets normalized to at load time, regardless of
+// whatever size the source PNG actually is. This is what lets buildDiscriminativeMask
+// (and every size-sensitive check downstream) assume all 4 grades line up pixel-for-
+// pixel without requiring the asset files themselves to be pre-cropped to match.
+private val TEMPLATE_TARGET_SIZE = Size(170.0, 150.0)
+private const val CORE_ALPHA_THRESHOLD = 199.0 // keeps alpha >= 200; excludes soft glow falloff
+
+// Centers a fixed-size (TEMPLATE_TARGET_SIZE) crop on the "solid" part of the box --
+// near-opaque pixels (alpha >= 200), ignoring soft glow/sparkle halo that differs in
+// extent per grade. Works on any input size/aspect ratio; always returns the same
+// output size. See the earlier discussion: a plain "crop to any non-transparent pixel"
+// bounding box still came out a different size per grade because higher-rarity boxes
+// have more glow bleeding past the box edge -- centroid-of-the-core does not.
+private fun normalizeToFixedSize(rgba: Mat, targetSize: Size): Mat {
+    val targetW = targetSize.width.toInt()
+    val targetH = targetSize.height.toInt()
+
+    val rawAlpha = Mat()
+    val coreMask = Mat()
+    val padded = Mat()
+    try {
+        Core.extractChannel(rgba, rawAlpha, 3)
+        Imgproc.threshold(rawAlpha, coreMask, CORE_ALPHA_THRESHOLD, 255.0, Imgproc.THRESH_BINARY)
+
+        var moments = Imgproc.moments(coreMask, true)
+        if (moments.m00 <= 0.0) {
+            // No near-opaque pixels at all (unexpected) -- fall back to any non-transparent pixel.
+            Imgproc.threshold(rawAlpha, coreMask, 0.0, 255.0, Imgproc.THRESH_BINARY)
+            moments = Imgproc.moments(coreMask, true)
+        }
+        val cx = if (moments.m00 > 0.0) moments.m10 / moments.m00 else rgba.cols() / 2.0
+        val cy = if (moments.m00 > 0.0) moments.m01 / moments.m00 else rgba.rows() / 2.0
+
+        // Pad generously so the fixed window always fits, regardless of how close the
+        // core is to an edge in any particular source image.
+        val pad = maxOf(targetW, targetH)
+        Core.copyMakeBorder(
+            rgba, padded, pad, pad, pad, pad, Core.BORDER_CONSTANT, Scalar(0.0, 0.0, 0.0, 0.0),
+        )
+
+        val cxP = cx + pad
+        val cyP = cy + pad
+        var x0 = Math.round(cxP - targetW / 2.0).toInt()
+        var y0 = Math.round(cyP - targetH / 2.0).toInt()
+        x0 = x0.coerceIn(0, padded.cols() - targetW)
+        y0 = y0.coerceIn(0, padded.rows() - targetH)
+
+        return padded.submat(Rect(x0, y0, targetW, targetH)).clone()
+    } finally {
+        rawAlpha.release()
+        coreMask.release()
+        padded.release()
+    }
+}
+
+// Pixels whose color varies by less than this across all 4 grades are treated as
+// "shared geometry" (box outline, corner studs) rather than grade-distinctive content.
+// 15.0 is the measured cross-grade std-dev at the outline/stud pixels in the real
+// templates (median std-dev on genuinely distinctive face pixels was ~40).
+private const val DISCRIMINATIVE_STD_THRESHOLD = 15.0
+
+// Pixels that are opaque in every grade AND vary across grades (the face color/texture),
+// excluding shared hardware like the outline and corner studs. Masking matchTemplate
+// with this instead of the raw alpha mask stops every grade from getting a "free" score
+// boost from matching the ~7% of pixels that are identical no matter which grade it is.
+// Requires all templates to be the same size/alignment (true once normalized).
+private fun buildDiscriminativeMask(bases: List<BoxBaseTemplate>): Mat? {
+    if (bases.size < 2) return null
+    val size = bases[0].bgr.size()
+    if (bases.any { it.bgr.size() != size }) return null // not aligned; skip the refinement
+
+    val commonOpaque = bases[0].alphaMask.clone()
+    for (i in 1 until bases.size) {
+        Core.bitwise_and(commonOpaque, bases[i].alphaMask, commonOpaque)
+    }
+
+    val floats = bases.map { Mat().also { f -> it.bgr.convertTo(f, CvType.CV_32FC3) } }
+    val n = floats.size.toDouble()
+    val sum = Mat.zeros(size, CvType.CV_32FC3)
+    floats.forEach { Core.add(sum, it, sum) }
+    val mean = Mat()
+    Core.divide(sum, Scalar(n, n, n), mean)
+
+    val sumSq = Mat.zeros(size, CvType.CV_32FC3)
+    val diff = Mat()
+    val sq = Mat()
+    floats.forEach { f ->
+        Core.subtract(f, mean, diff)
+        Core.multiply(diff, diff, sq)
+        Core.add(sumSq, sq, sumSq)
+    }
+    val variance = Mat()
+    Core.divide(sumSq, Scalar(n, n, n), variance)
+
+    val channels = mutableListOf<Mat>()
+    Core.split(variance, channels)
+    val varSum = Mat.zeros(size, CvType.CV_32F)
+    channels.forEach { Core.add(varSum, it, varSum) }
+    val avgVariance = Mat()
+    Core.divide(varSum, Scalar(3.0), avgVariance)
+    val std = Mat()
+    Core.sqrt(avgVariance, std)
+
+    val discriminative = Mat()
+    Core.compare(std, Scalar(DISCRIMINATIVE_STD_THRESHOLD), discriminative, Core.CMP_GE)
+
+    val result = Mat()
+    Core.bitwise_and(commonOpaque, discriminative, result)
+
+    floats.forEach { it.release() }
+    channels.forEach { it.release() }
+    listOf(commonOpaque, sum, mean, sumSq, diff, sq, variance, varSum, avgVariance, std, discriminative)
+        .forEach { it.release() }
+
+    return result
+}
+
 class MysteryBoxClassifier(context: Context) : AutoCloseable {
     private val templateVariants = mutableListOf<BoxTemplateVariant>().apply {
+        val bases = mutableListOf<BoxBaseTemplate>()
         listOf("wood", "silver", "gold", "rainbow").forEach { grade ->
             runCatching {
                 context.assets.open("templates/BOX_${grade.uppercase()}.png").use { input ->
                     val bitmap = requireNotNull(BitmapFactory.decodeStream(input))
-                    val rgba = Mat()
+                    val rawRgba = Mat()
+                    var rgba: Mat? = null
                     val baseBgr = Mat()
                     val baseMask = Mat()
                     try {
-                        Utils.bitmapToMat(bitmap, rgba)
-                        Imgproc.cvtColor(rgba, baseBgr, Imgproc.COLOR_RGBA2BGR)
-                        Core.extractChannel(rgba, baseMask, 3)
+                        Utils.bitmapToMat(bitmap, rawRgba)
+                        // Raw asset can be any size/aspect ratio -- normalize before anything
+                        // else touches it, so every downstream step (scale variants, the
+                        // cross-grade discriminative mask) can assume identical dimensions.
+                        val normalized = normalizeToFixedSize(rawRgba, TEMPLATE_TARGET_SIZE)
+                        rgba = normalized
+                        Imgproc.cvtColor(normalized, baseBgr, Imgproc.COLOR_RGBA2BGR)
+                        Core.extractChannel(normalized, baseMask, 3)
                         Imgproc.threshold(baseMask, baseMask, 1.0, 255.0, Imgproc.THRESH_BINARY)
                         check(Core.countNonZero(baseMask) > 0) {
                             "Mystery Box alpha mask is empty for grade=$grade"
                         }
-
-                        SCALES.forEach { scale ->
-                            val variantBgr: Mat
-                            val variantMask: Mat
-                            if (scale == MysteryBoxScanPolicy.FAST_SCALE) {
-                                variantBgr = baseBgr.clone()
-                                variantMask = baseMask.clone()
-                            } else {
-                                variantBgr = Mat()
-                                variantMask = Mat()
-                                val size = Size(baseBgr.cols() * scale, baseBgr.rows() * scale)
-                                Imgproc.resize(baseBgr, variantBgr, size, 0.0, 0.0, Imgproc.INTER_LINEAR)
-                                Imgproc.resize(baseMask, variantMask, size, 0.0, 0.0, Imgproc.INTER_NEAREST)
-                            }
-                            add(BoxTemplateVariant(grade, scale, variantBgr, variantMask))
-                        }
+                        bases.add(BoxBaseTemplate(grade, baseBgr.clone(), baseMask.clone()))
                     } finally {
+                        rgba?.release()
                         baseMask.release()
                         baseBgr.release()
-                        rgba.release()
+                        rawRgba.release()
                         bitmap.recycle()
                     }
                 }
             }
         }
+
+        // Shared across all grades; null (falls back to each grade's plain alpha mask)
+        // if asset loading failed or the templates aren't uniformly sized/aligned.
+        val discriminativeMask = buildDiscriminativeMask(bases)
+
+        bases.forEach { base ->
+            val effectiveMask = Mat()
+            try {
+                if (discriminativeMask != null) {
+                    Core.bitwise_and(base.alphaMask, discriminativeMask, effectiveMask)
+                } else {
+                    base.alphaMask.copyTo(effectiveMask)
+                }
+
+                SCALES.forEach { scale ->
+                    val variantBgr: Mat
+                    val variantMask: Mat
+                    if (scale == MysteryBoxScanPolicy.FAST_SCALE) {
+                        variantBgr = base.bgr.clone()
+                        variantMask = effectiveMask.clone()
+                    } else {
+                        variantBgr = Mat()
+                        variantMask = Mat()
+                        val size = Size(base.bgr.cols() * scale, base.bgr.rows() * scale)
+                        Imgproc.resize(base.bgr, variantBgr, size, 0.0, 0.0, Imgproc.INTER_LINEAR)
+                        Imgproc.resize(effectiveMask, variantMask, size, 0.0, 0.0, Imgproc.INTER_NEAREST)
+                    }
+                    add(BoxTemplateVariant(base.grade, scale, variantBgr, variantMask))
+                }
+            } finally {
+                effectiveMask.release()
+            }
+        }
+        bases.forEach { it.alphaMask.release(); it.bgr.release() }
+        discriminativeMask?.release()
     }
     private val fastPathVariants =
         templateVariants.filter { it.scale == MysteryBoxScanPolicy.FAST_SCALE }
@@ -287,7 +445,12 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
 
     companion object {
         internal const val MATCH_THRESHOLD = 0.60
-        internal val SCALES = listOf(0.95, 1.00, 1.05, 1.10, 1.15)
+        // Only scale 1.0 is scanned now -- the near/0.95-1.05/far-1.10/extreme-1.15
+        // fallback stages still exist in MysteryBoxScanPolicy and still get *called*,
+        // but their variant lists come out empty (nothing in templateVariants has those
+        // scales anymore), so collectVariants() on them is a harmless no-op. Add scales
+        // back here if real on-device scale variance ever shows up in the logs.
+        internal val SCALES = listOf(1.00)
         private val ROI = Rect(192, 144, 896, 396)
         private const val MAX_LOCAL_CANDIDATES_PER_SCALE = 8
         internal const val NMS_IOU_THRESHOLD = 0.30
