@@ -692,8 +692,8 @@ class TelegramNotifier(context: Context) {
     }
 
     /**
-     * Mystery-box result delivery is gated by the existing Startup Options result-image switch,
-     * not Telegram's generic debug-image preference. The original destination is revalidated.
+     * Mystery-box result delivery is gated by its dedicated Startup Options switch,
+     * not the local result-image save switch or Telegram's generic debug-image preference.
      */
     fun notifyResultImage(
         png: ByteArray,
