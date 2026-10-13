@@ -84,7 +84,7 @@ class GameAutoTapper(private val actionExecutor: ActionExecutor) {
                 Log.i(CookieRunBotApplication.TAG, "[AUTO TAP] Auto Jump started")
                 while (!stopRequested.get()) {
                     tapRandomJumpUntilAccepted(local.tapIntervalMs.toLong())
-                    sleepCancellable(local.tapIntervalMs.toLong())
+                    sleepCancellable(randomAutoActionIntervalMs(local.tapIntervalMs, local.tapIntervalMaxMs))
                 }
             }
         } catch (_: InterruptedException) {
