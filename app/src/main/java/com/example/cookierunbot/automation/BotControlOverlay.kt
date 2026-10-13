@@ -63,6 +63,7 @@ class BotControlOverlay(private val context: Context) {
     private val quickLivesMinutes = EditText(context)
     private val saveDebugImages = Switch(context)
     private val saveResultImages = Switch(context)
+    private val mysteryBoxTelegramImages = Switch(context)
     private val antiBotTelegramImages = Switch(context)
     private val jumpFixed = Switch(context)
     private val jumpContinuous = Switch(context)
@@ -272,7 +273,12 @@ class BotControlOverlay(private val context: Context) {
         }
         panel.addView(quickLivesMinutes, matchWidth())
         addSwitch(saveDebugImages, "Save NO_MATCH Debug Images", options.saveDebugImages)
-        addSwitch(saveResultImages, "Save / Send GAME_COMPLETE / MYSTERY_BOX Images", options.saveResultImages)
+        addSwitch(saveResultImages, "Save GAME_COMPLETE / MYSTERY_BOX Images", options.saveResultImages)
+        addSwitch(
+            mysteryBoxTelegramImages,
+            "Send MYSTERY_BOX Analysis to Telegram",
+            options.sendMysteryBoxImagesToTelegram,
+        )
         addSwitch(
             antiBotTelegramImages,
             "Send Anti-bot image to Telegram",
@@ -284,10 +290,12 @@ class BotControlOverlay(private val context: Context) {
                 saveDebugImages.isChecked,
                 saveResultImages.isChecked,
                 antiBotTelegramImages.isChecked,
+                mysteryBoxTelegramImages.isChecked,
             )
         }
         saveDebugImages.setOnCheckedChangeListener(saveImageOptions)
         saveResultImages.setOnCheckedChangeListener(saveImageOptions)
+        mysteryBoxTelegramImages.setOnCheckedChangeListener(saveImageOptions)
         antiBotTelegramImages.setOnCheckedChangeListener(saveImageOptions)
 
         panel.addView(TextView(context).apply {
@@ -462,6 +470,7 @@ class BotControlOverlay(private val context: Context) {
             quickLivesIntervalMinutes = quickLivesIntervalMinutes,
             saveDebugImages = saveDebugImages.isChecked,
             saveResultImages = saveResultImages.isChecked,
+            sendMysteryBoxImagesToTelegram = mysteryBoxTelegramImages.isChecked,
             jumpMode = jumpMode,
             fixedJumpCount = if (jumpMode == JumpMode.FIXED_COUNT) count else 0,
             tapIntervalMs = if (jumpMode == JumpMode.NONE) 250 else tapInterval,
