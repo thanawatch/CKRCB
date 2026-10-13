@@ -1,6 +1,6 @@
 # RobotRun Android
 
-RobotRun is a native Android automation app for Cookie Run Classic. With explicit user permission it captures the screen through MediaProjection, normalizes the game viewport to 1280×720, identifies current screens with OpenCV template matching, and dispatches configured taps/swipes through an AccessibilityService.
+RobotRun is a native Android automation app for the target game. With explicit user permission it captures the screen through MediaProjection, normalizes the game viewport to 1280×720, identifies current screens with OpenCV template matching, and dispatches configured taps/swipes through an AccessibilityService.
 
 The current Android source/tests are authoritative for implementation. **Coding agents:** [AGENTS.md](AGENTS.md) is the mandatory first read and the repository-level source of truth for invariants/change boundaries. Inspect the relevant current source and callers next; only then use the dated [DEVELOPMENT_HANDOFF.md](DEVELOPMENT_HANDOFF.md) for product context, [PORTING_STATUS.md](PORTING_STATUS.md) for the capability map, [PORTING_AUDIT.md](PORTING_AUDIT.md) for call flows, [REDFINGER_PERFORMANCE_PROFILE.md](REDFINGER_PERFORMANCE_PROFILE.md) for the opt-in profile, and [ANDROID_TEST_CHECKLIST.md](ANDROID_TEST_CHECKLIST.md) for unverified phone checks. When changing behavior, update the affected guides in the same change.
 
@@ -29,7 +29,7 @@ The app module optionally signs the debug build with a CI keystore only when all
 2. Grant **Display over other apps** so the floating bubble can be shown.
 3. Optionally grant battery-optimization exemption to reduce background interruption.
 4. Press **Start Screen Capture** and accept Android's MediaProjection prompt. On Android 13+, allow notifications for the required foreground-service notification.
-5. Open Cookie Run Classic, open the floating **BOT** bubble, configure options, and press **Start Bot**.
+5. Open the target game, open the floating **BOT** bubble, configure options, and press **Start Bot**.
 6. **Stop Bot** stops automation. **Stop Screen Capture** independently tears down capture and also stops the bot/dismisses the overlay.
 
 Permissions remain user-controlled. RobotRun cannot silently enable Accessibility, overlay, MediaProjection, notification, or battery settings.
