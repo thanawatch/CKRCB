@@ -5757,8 +5757,8 @@ class BotController(
             val summary = buildString {
                 append("📦 Mystery Box Analysis — Round $round\n")
                 append("Detected: ${detections.size} box(es)\n")
-                append("Wood: ${counts["wood"]} | Silver: ${counts["silver"]} | ")
-                append("Gold: ${counts["gold"]} | Rainbow: ${counts["rainbow"]}")
+                append("Wood: ${counts.getValue("wood")} | Silver: ${counts.getValue("silver")} | ")
+                append("Gold: ${counts.getValue("gold")} | Rainbow: ${counts.getValue("rainbow")}")
                 if (detailLines.isNotEmpty()) {
                     append("\n\n")
                     append(detailLines.joinToString("\n"))
