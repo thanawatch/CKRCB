@@ -411,7 +411,7 @@ class ScreenCaptureManager(
         buffer.rewind()
         val tightRowBytes = width * RGBA_CHANNELS
         // Most RGBA_8888 devices expose tightly packed rows. Copy the whole plane
-        // in one bulk operation instead of issuing one JNI/ByteBuffer copy per row.
+        // in one bulk operation instead of issuing one ByteBuffer copy per row.
         if (pixelStride == RGBA_CHANNELS && rowStride == tightRowBytes) {
             buffer.get(destination, 0, tightRowBytes * height)
             return
