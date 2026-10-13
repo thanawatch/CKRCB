@@ -79,6 +79,7 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 - [ ] Validate Fast Start priority window, Cookie Relay, optional post-relay sequence, fixed jump count, continuous jumping, and Stop cancellation.
 - [ ] GAME_COMPLETE immediately changes to POST_GAME, resets progress, analyzes results off-loop, requires a fresh re-match before Finish, and honors result-image preference.
 - [ ] Validate Mystery Box late update changes the existing round without double-counting aggregates.
+- [ ] In Telegram `/all` (and `/stats`), verify exact counts of rounds with 1, 2, 3, 4, and 5 Mystery Boxes. Confirm a late box classification moves the round from its old bucket to the new bucket, new Start Bot resets all five counts, rounds beyond the latest 50 still contribute, and a round with 0 or more than 5 boxes does not enter these five buckets.
 - [ ] Validate reward popup redetection and unchanged-popup attempt guard; do not expect a hard-coded next-popup chain.
 - [ ] Validate Connection Lost and Inactive only tap Reload and never restart/kill either application.
 

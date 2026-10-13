@@ -87,7 +87,7 @@ If Actions artifact storage quota prevents a signed APK upload, open **Actions �
 
 ## Statistics, images, and logs
 
-A new Start Bot creates a new statistics session. Result OCR/classification runs on a separate executor and cannot write across session generations. Up to 50 recent rounds are kept, while cumulative totals use contribution replacement so late Mystery Box classification does not double-count. Session Runtime is displayed consistently in Statistics, the overlay, and Telegram stats: below 24 hours it uses hour/minute/second units; exactly 24 hours becomes `1 day`, and longer sessions show `N day(s)` plus remaining hours/minutes. This only changes presentation—the session timer continues counting normally.
+A new Start Bot creates a new statistics session. Result OCR/classification runs on a separate executor and cannot write across session generations. Up to 50 recent rounds are kept, while cumulative totals use contribution replacement so late Mystery Box classification does not double-count. Telegram `/stats` (also included in `/all`) shows how many rounds produced exactly 1, 2, 3, 4, or 5 Mystery Boxes in the current session; these counts include rounds older than the 50-round history and are adjusted when late classification changes a round. Session Runtime is displayed consistently in Statistics, the overlay, and Telegram stats: below 24 hours it uses hour/minute/second units; exactly 24 hours becomes `1 day`, and longer sessions show `N day(s)` plus remaining hours/minutes. This only changes presentation—the session timer continues counting normally.
 
 - Result images: public `Pictures/CookieRunBot/results/`
 - No-match raw/normalized pairs: public `Pictures/CookieRunBot/debug/`
