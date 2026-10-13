@@ -49,7 +49,10 @@ There is no Redfinger device attached to the build environment, so no phone FPS 
 claimed. The implementation records the measurements needed for an A/B run:
 
 * `[CAPTURE PERF]`: plane copy, RGBA Mat population, normalization, publication, end-to-end capture
-  preparation, actual rolling FPS, and whether the exact-size path qualified.
+  preparation, callback-to-callback gap, actual rolling FPS, and whether the exact-size path qualified.
+  `[CAPTURE] thread priority updated` confirms that only Redfinger Optimized sessions raise the capture
+  thread to Android's display priority; other profiles use the default priority. Tightly packed RGBA
+  planes use one bulk buffer copy, while padded rows retain the row-wise fallback.
 * `[MATCH PERF]`: per-scale and total matching time for GAME_START and GAME_RELAY, sampled only in
   the optimized profile at most once per stage per five seconds. GAME_START and GAME_RELAY each report only 1.0. Actual evaluated scales are retained
   with each sample; Logcat and the in-app exported debug log receive them from a separate executor.
@@ -63,8 +66,8 @@ claimed. The implementation records the measurements needed for an A/B run:
   and frame sequence. Each message explicitly states that the interval throttles diagnostics,
   not detection.
 * `[FAST_PATH]`: existing capture-to-publish, capture-to-detect, detect-to-action,
-  capture-to-dispatch, and capture-to-accessibility-callback latency. The optimized profile
-  also includes these samples in the in-app exported debug log.
+  capture-to-dispatch, and capture-to-accessibility-callback latency, plus the snapshot-clone duration
+  before detection. The optimized profile also includes these samples in the in-app exported debug log.
 
 No GitHub check runs existed for reviewed SHA `a9fefb9fd5`. The commands and results for this follow-up
 are reported in the PR comment/description rather than inferred from CI. Device measurements remain to
