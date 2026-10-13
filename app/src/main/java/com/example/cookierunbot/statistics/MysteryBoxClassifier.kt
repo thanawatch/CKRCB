@@ -79,7 +79,7 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
     private val templateVariants = mutableListOf<BoxTemplateVariant>().apply {
         listOf("wood", "silver", "gold", "rainbow").forEach { grade ->
             runCatching {
-                context.assets.open("templates/BOX_${grade.uppercase()}.png").use { input ->
+                context.assets.open("templates/BOX_${grade.uppercase()}.PNG").use { input ->
                     val bitmap = requireNotNull(BitmapFactory.decodeStream(input))
                     val rgba = Mat()
                     val baseBgr = Mat()
