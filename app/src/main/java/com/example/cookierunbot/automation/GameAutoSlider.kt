@@ -84,7 +84,7 @@ class GameAutoSlider(private val actionExecutor: ActionExecutor) {
                 Log.i(CookieRunBotApplication.TAG, "[AUTO SLIDE] Auto Slide started")
                 while (!stopRequested.get()) {
                     tapRandomSlideUntilAccepted(local.slideIntervalMs.toLong())
-                    sleepCancellable(local.slideIntervalMs.toLong())
+                    sleepCancellable(randomAutoActionIntervalMs(local.slideIntervalMs, local.slideIntervalMaxMs))
                 }
             }
         } catch (_: InterruptedException) {
