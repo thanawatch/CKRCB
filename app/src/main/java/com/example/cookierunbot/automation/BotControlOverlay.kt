@@ -69,10 +69,12 @@ class BotControlOverlay(private val context: Context) {
     private val jumpContinuous = Switch(context)
     private val fixedCount = EditText(context)
     private val interval = EditText(context)
+    private val intervalMax = EditText(context)
     private val slideFixed = Switch(context)
     private val slideContinuous = Switch(context)
     private val fixedSlideCount = EditText(context)
     private val slideInterval = EditText(context)
+    private val slideIntervalMax = EditText(context)
     private var calibrationTool: CoordinateCalibrationOverlay? = null
     private var attached = false
     private var expanded = false
@@ -312,14 +314,22 @@ class BotControlOverlay(private val context: Context) {
             setHintTextColor(Color.LTGRAY)
         }
         interval.apply {
-            hint = "Tap interval 100-1000 ms"
+            hint = "Minimum interval (100-10000 ms)"
             inputType = android.text.InputType.TYPE_CLASS_NUMBER
             setText(options.tapIntervalMs.toString())
             setTextColor(Color.WHITE)
             setHintTextColor(Color.LTGRAY)
         }
+        intervalMax.apply {
+            hint = "Maximum interval (100-10000 ms)"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setText(options.tapIntervalMaxMs.toString())
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.LTGRAY)
+        }
         panel.addView(fixedCount, matchWidth())
         panel.addView(interval, matchWidth())
+        panel.addView(intervalMax, matchWidth())
 
         panel.addView(TextView(context).apply {
             text = "Slide mode (both off = no slide)"
@@ -335,14 +345,22 @@ class BotControlOverlay(private val context: Context) {
             setHintTextColor(Color.LTGRAY)
         }
         slideInterval.apply {
-            hint = "Slide interval 100-1000 ms"
+            hint = "Minimum interval (100-10000 ms)"
             inputType = android.text.InputType.TYPE_CLASS_NUMBER
             setText(options.slideIntervalMs.toString())
             setTextColor(Color.WHITE)
             setHintTextColor(Color.LTGRAY)
         }
+        slideIntervalMax.apply {
+            hint = "Maximum interval (100-10000 ms)"
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setText(options.slideIntervalMaxMs.toString())
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.LTGRAY)
+        }
         panel.addView(fixedSlideCount, matchWidth())
         panel.addView(slideInterval, matchWidth())
+        panel.addView(slideIntervalMax, matchWidth())
 
         cookieRelay.setOnCheckedChangeListener { _, checked ->
             postRelay.isEnabled = checked
@@ -446,8 +464,10 @@ class BotControlOverlay(private val context: Context) {
         }
         val count = fixedCount.text.toString().toIntOrNull() ?: 0
         val tapInterval = interval.text.toString().toIntOrNull() ?: 250
+        val tapIntervalMax = intervalMax.text.toString().toIntOrNull() ?: tapInterval
         val slideCount = fixedSlideCount.text.toString().toIntOrNull() ?: 0
         val slideTapInterval = slideInterval.text.toString().toIntOrNull() ?: 250
+        val slideTapIntervalMax = slideIntervalMax.text.toString().toIntOrNull() ?: slideTapInterval
         val friendIntervalMinutes = friendLifeMinutes.text.toString().trim().toIntOrNull()
             ?: throw IllegalArgumentException("Friend Life interval must be 1-1440 minutes")
         val quickLivesIntervalMinutes = quickLivesMinutes.text.toString().trim().toIntOrNull()
@@ -474,9 +494,11 @@ class BotControlOverlay(private val context: Context) {
             jumpMode = jumpMode,
             fixedJumpCount = if (jumpMode == JumpMode.FIXED_COUNT) count else 0,
             tapIntervalMs = if (jumpMode == JumpMode.NONE) 250 else tapInterval,
+            tapIntervalMaxMs = if (jumpMode == JumpMode.NONE) 250 else tapIntervalMax,
             slideMode = slideMode,
             fixedSlideCount = if (slideMode == SlideMode.FIXED_COUNT) slideCount else 0,
             slideIntervalMs = if (slideMode == SlideMode.NONE) 250 else slideTapInterval,
+            slideIntervalMaxMs = if (slideMode == SlideMode.NONE) 250 else slideTapIntervalMax,
             sendAntiBotImagesToTelegram = antiBotTelegramImages.isChecked,
         )
     }
@@ -496,8 +518,10 @@ class BotControlOverlay(private val context: Context) {
         boostGroup.visibility = if (desiredBoost.isChecked) View.VISIBLE else View.GONE
         fixedCount.isEnabled = jumpFixed.isChecked
         interval.isEnabled = jumpFixed.isChecked || jumpContinuous.isChecked
+        intervalMax.isEnabled = jumpFixed.isChecked || jumpContinuous.isChecked
         fixedSlideCount.isEnabled = slideFixed.isChecked
         slideInterval.isEnabled = slideFixed.isChecked || slideContinuous.isChecked
+        slideIntervalMax.isEnabled = slideFixed.isChecked || slideContinuous.isChecked
     }
 
     private fun updateStatus() {
