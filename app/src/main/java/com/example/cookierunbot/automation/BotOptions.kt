@@ -32,6 +32,7 @@ data class BotOptions(
     val receiveSendLivesAfterEachGame: Boolean = false,
     val saveDebugImages: Boolean = true,
     val saveResultImages: Boolean = true,
+    val sendMysteryBoxImagesToTelegram: Boolean = false,
     val jumpMode: JumpMode = JumpMode.NONE,
     val fixedJumpCount: Int = 0,
     val tapIntervalMs: Int = 250,
