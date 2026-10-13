@@ -5713,8 +5713,8 @@ class BotController(
     }
 
     private fun sendMysteryBoxAnalysis(round: Int, frame: Mat, scan: BoxScanResult) {
-        if (!BotOptionsStore.shouldSaveResultImages(context)) {
-            logDiagnostic("[TELEGRAM_BOX_RESULT] skipped=true round=$round reason=result_images_disabled")
+        if (!BotOptionsStore.shouldSendMysteryBoxImagesToTelegram(context)) {
+            logDiagnostic("[TELEGRAM_BOX_RESULT] skipped=true round=$round reason=telegram_box_option_disabled")
             return
         }
         var annotated: Mat? = null
@@ -5771,7 +5771,7 @@ class BotController(
                 png = png,
                 filename = "mystery_boxes_round_${round}.png",
                 caption = summary.take(1024),
-                isStillEnabled = { BotOptionsStore.shouldSaveResultImages(context) },
+                isStillEnabled = { BotOptionsStore.shouldSendMysteryBoxImagesToTelegram(context) },
             )
         } catch (error: Exception) {
             logDiagnostic(
