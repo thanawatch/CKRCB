@@ -169,6 +169,9 @@ class TelegramNotifier(context: Context) {
 
     fun sendText(text: String) = enqueue { config -> sendTextBlocking(config, text, manualTest = false) }
 
+    /** Returns the current Telegram debug-image preference for watchdog delivery decisions. */
+    fun isDebugImageEnabled(): Boolean = TelegramConfigStore.load(appContext).sendDebugImages
+
     fun sendTestMessage(text: String, callback: (TelegramSendResult) -> Unit) {
         val config = TelegramConfigStore.load(appContext)
         logConfig(config)
