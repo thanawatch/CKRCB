@@ -294,7 +294,7 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
     }
 
     companion object {
-        internal const val MATCH_THRESHOLD = 0.60
+        internal const val MATCH_THRESHOLD = 0.80
         internal val SCALES = listOf(0.95, 1.00, 1.05, 1.10, 1.15)
         private val ROI = Rect(192, 144, 896, 396)
         private const val MAX_LOCAL_CANDIDATES_PER_SCALE = 8
