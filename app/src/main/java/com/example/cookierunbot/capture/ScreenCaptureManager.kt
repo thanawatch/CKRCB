@@ -12,6 +12,7 @@ import android.media.projection.MediaProjectionManager
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Build
+import android.os.Process
 import android.os.SystemClock
 import com.example.cookierunbot.diagnostics.RobotLog as Log
 import android.util.DisplayMetrics
@@ -49,6 +50,8 @@ class ScreenCaptureManager(
     private var currentFps = 0.0
     private var lastCaptureLogNanos = 0L
     private var lastPersistentTraceNanos = 0L
+    private var lastFrameArrivalNanos = 0L
+    private var appliedCapturePriority: PerformanceProfile? = null
 
     fun start(resultCode: Int, permissionData: Intent) {
         check(mediaProjection == null) { "MediaProjection is already running" }
@@ -76,6 +79,9 @@ class ScreenCaptureManager(
         val height = displayHeight
         densityDpi = context.resources.displayMetrics.densityDpi
 
+        // MediaProjection callbacks feed the detector in real time. Keep the default
+        // priority for ordinary sessions; the Redfinger profile raises this thread
+        // only while that profile is active (see applyCaptureThreadPriority below).
         val thread = HandlerThread("screen-capture").apply { start() }
         val handler = Handler(thread.looper)
 
@@ -197,7 +203,16 @@ class ScreenCaptureManager(
 
     private fun consumeLatestImage(image: Image) {
         val frameCapturedAtNanos = SystemClock.elapsedRealtimeNanos()
-        val measurePerformance = CapturePerformanceProfile.active == PerformanceProfile.REDFINGER_OPTIMIZED
+        val activeProfile = CapturePerformanceProfile.active
+        applyCaptureThreadPriority(activeProfile)
+        val previousArrivalNanos = lastFrameArrivalNanos
+        lastFrameArrivalNanos = frameCapturedAtNanos
+        val frameArrivalGapMs = if (previousArrivalNanos > 0L) {
+            (frameCapturedAtNanos - previousArrivalNanos).coerceAtLeast(0L) / 1_000_000.0
+        } else {
+            0.0
+        }
+        val measurePerformance = activeProfile == PerformanceProfile.REDFINGER_OPTIMIZED
         val plane = image.planes.firstOrNull() ?: return
         val width = image.width
         val height = image.height
@@ -263,7 +278,8 @@ class ScreenCaptureManager(
                     "rgba_mat=${millis(matCreatedAtNanos - planeCopiedAtNanos)}ms " +
                     "normalize=${millis(normalizedAtNanos - matCreatedAtNanos)}ms " +
                     "publish=${millis(publishedAtNanos - normalizedAtNanos)}ms " +
-                    "total=${millis(publishedAtNanos - frameCapturedAtNanos)}ms",
+                    "total=${millis(publishedAtNanos - frameCapturedAtNanos)}ms " +
+                    "callback_gap=${String.format(java.util.Locale.US, "%.2f", frameArrivalGapMs)}ms",
                     // The path marker makes device-side before/after captures comparable.
             )
             if (measurePerformance) Log.i(CookieRunBotApplication.TAG, "[CAPTURE PERF] exact_size_fast_path=$exactSizeFastPath fps=${String.format(java.util.Locale.US, "%.2f", currentFps)}")
@@ -359,6 +375,27 @@ class ScreenCaptureManager(
         return "(${rect.x},${rect.y},${rect.x + rect.width},${rect.y + rect.height})"
     }
 
+    private fun applyCaptureThreadPriority(profile: PerformanceProfile) {
+        if (appliedCapturePriority == profile) return
+        val priority = if (profile == PerformanceProfile.REDFINGER_OPTIMIZED) {
+            Process.THREAD_PRIORITY_DISPLAY
+        } else {
+            Process.THREAD_PRIORITY_DEFAULT
+        }
+        runCatching { Process.setThreadPriority(priority) }
+            .onFailure { error ->
+                Log.w(
+                    CookieRunBotApplication.TAG,
+                    "[CAPTURE] Unable to set capture thread priority=$priority: ${error.message}",
+                )
+            }
+        appliedCapturePriority = profile
+        Log.i(
+            CookieRunBotApplication.TAG,
+            "[CAPTURE] thread priority updated profile=$profile priority=$priority",
+        )
+    }
+
     private fun copyPlaneToTightRgba(
         buffer: ByteBuffer,
         width: Int,
@@ -368,8 +405,14 @@ class ScreenCaptureManager(
         destination: ByteArray,
     ) {
         buffer.rewind()
+        val tightRowBytes = width * RGBA_CHANNELS
+        // Most RGBA_8888 devices expose tightly packed rows. Copy the whole plane
+        // in one bulk operation instead of issuing one JNI/ByteBuffer copy per row.
+        if (pixelStride == RGBA_CHANNELS && rowStride == tightRowBytes) {
+            buffer.get(destination, 0, tightRowBytes * height)
+            return
+        }
         if (pixelStride == RGBA_CHANNELS) {
-            val tightRowBytes = width * RGBA_CHANNELS
             repeat(height) { row ->
                 buffer.position(row * rowStride)
                 buffer.get(destination, row * tightRowBytes, tightRowBytes)
