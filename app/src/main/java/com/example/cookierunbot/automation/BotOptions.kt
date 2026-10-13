@@ -36,10 +36,12 @@ data class BotOptions(
     val jumpMode: JumpMode = JumpMode.NONE,
     val fixedJumpCount: Int = 0,
     val tapIntervalMs: Int = 250,
+    val tapIntervalMaxMs: Int = 1500,
     val quickLivesIntervalMinutes: Int = QUICK_LIVES_DEFAULT_INTERVAL_MINUTES,
     val slideMode: SlideMode = SlideMode.NONE,
     val fixedSlideCount: Int = 0,
     val slideIntervalMs: Int = 250,
+    val slideIntervalMaxMs: Int = 1500,
     val sendAntiBotImagesToTelegram: Boolean = false,
 ) {
     init {
@@ -49,11 +51,15 @@ data class BotOptions(
         require(quickLivesIntervalMinutes in QUICK_LIVES_MIN_INTERVAL_MINUTES..QUICK_LIVES_MAX_INTERVAL_MINUTES) {
             "Receive/Send Lives interval must be 1-1440 minutes"
         }
-        require(tapIntervalMs in 100..1000) { "Tap interval must be 100-1000 ms" }
+        require(tapIntervalMs in AUTO_ACTION_MIN_INTERVAL_MS..AUTO_ACTION_MAX_INTERVAL_MS) { "Tap minimum interval must be 100-10000 ms" }
+        require(tapIntervalMaxMs in AUTO_ACTION_MIN_INTERVAL_MS..AUTO_ACTION_MAX_INTERVAL_MS) { "Tap maximum interval must be 100-10000 ms" }
+        require(tapIntervalMaxMs >= tapIntervalMs) { "Tap maximum interval must be greater than or equal to minimum interval" }
         require(jumpMode != JumpMode.FIXED_COUNT || fixedJumpCount > 0) {
             "Fixed jump count must be positive"
         }
-        require(slideIntervalMs in 100..1000) { "Slide interval must be 100-1000 ms" }
+        require(slideIntervalMs in AUTO_ACTION_MIN_INTERVAL_MS..AUTO_ACTION_MAX_INTERVAL_MS) { "Slide minimum interval must be 100-10000 ms" }
+        require(slideIntervalMaxMs in AUTO_ACTION_MIN_INTERVAL_MS..AUTO_ACTION_MAX_INTERVAL_MS) { "Slide maximum interval must be 100-10000 ms" }
+        require(slideIntervalMaxMs >= slideIntervalMs) { "Slide maximum interval must be greater than or equal to minimum interval" }
         require(slideMode != SlideMode.FIXED_COUNT || fixedSlideCount > 0) {
             "Fixed slide count must be positive"
         }
@@ -63,6 +69,15 @@ data class BotOptions(
     }
 }
 
+
+const val AUTO_ACTION_MIN_INTERVAL_MS = 100
+const val AUTO_ACTION_MAX_INTERVAL_MS = 10_000
+
+internal fun randomAutoActionIntervalMs(minMs: Int, maxMs: Int): Long {
+    require(minMs in AUTO_ACTION_MIN_INTERVAL_MS..AUTO_ACTION_MAX_INTERVAL_MS)
+    require(maxMs in minMs..AUTO_ACTION_MAX_INTERVAL_MS)
+    return if (minMs == maxMs) minMs.toLong() else kotlin.random.Random.nextLong(minMs.toLong(), maxMs.toLong() + 1L)
+}
 
 const val QUICK_LIVES_DEFAULT_INTERVAL_MINUTES = 1
 const val QUICK_LIVES_MIN_INTERVAL_MINUTES = 1
