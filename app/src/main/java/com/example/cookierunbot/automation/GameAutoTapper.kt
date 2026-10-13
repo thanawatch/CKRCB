@@ -66,7 +66,7 @@ class GameAutoTapper(private val actionExecutor: ActionExecutor) {
             Log.i(CookieRunBotApplication.TAG, "[AUTO TAP] Started")
             Log.i(CookieRunBotApplication.TAG, "[AUTO TAP] Mode: ${local.jumpMode}")
             Log.i(CookieRunBotApplication.TAG, "[AUTO TAP] Base=(108,600)")
-            Log.i(CookieRunBotApplication.TAG, "[AUTO TAP] Interval=${local.tapIntervalMs}ms")
+            Log.i(CookieRunBotApplication.TAG, "[AUTO TAP] Interval=${local.tapIntervalMs}-${local.tapIntervalMaxMs}ms (random)")
             Log.i(CookieRunBotApplication.TAG, "[AUTO TAP] Radius=100 phone px")
 
             if (local.jumpMode == JumpMode.FIXED_COUNT) {
@@ -75,7 +75,7 @@ class GameAutoTapper(private val actionExecutor: ActionExecutor) {
                 repeat(local.fixedJumpCount) {
                     if (stopRequested.get()) return
                     tapRandomJumpUntilAccepted(local.tapIntervalMs.toLong())
-                    sleepCancellable(local.tapIntervalMs.toLong())
+                    sleepCancellable(randomAutoActionIntervalMs(local.tapIntervalMs, local.tapIntervalMaxMs))
                 }
                 synchronized(lock) { finishedForRound = true }
                 Log.i(CookieRunBotApplication.TAG, "[AUTO TAP] Jump by Count completed")
