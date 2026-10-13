@@ -170,7 +170,7 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
                 if (!minimum.minVal.isFinite()) return bestScore
                 val score = 1.0 - minimum.minVal.coerceIn(0.0, 1.0)
                 bestScore = maxOf(bestScore, score)
-                if (score < MATCH_THRESHOLD) return bestScore
+                if (score < thresholdForGrade(grade)) return bestScore
 
                 val x = minimum.minLoc.x.toInt()
                 val y = minimum.minLoc.y.toInt()
@@ -207,7 +207,18 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
     }
 
     companion object {
-        internal const val MATCH_THRESHOLD = 0.80
+        internal const val WOOD_MATCH_THRESHOLD = 0.85
+        internal const val SILVER_MATCH_THRESHOLD = 0.95
+        internal const val GOLD_MATCH_THRESHOLD = 0.95
+        internal const val RAINBOW_MATCH_THRESHOLD = 0.95
+
+        internal fun thresholdForGrade(grade: String): Double = when (grade.lowercase()) {
+            "wood" -> WOOD_MATCH_THRESHOLD
+            "silver" -> SILVER_MATCH_THRESHOLD
+            "gold" -> GOLD_MATCH_THRESHOLD
+            "rainbow" -> RAINBOW_MATCH_THRESHOLD
+            else -> SILVER_MATCH_THRESHOLD
+        }
         internal val SCALES = listOf(1.00)
         private val ROI = Rect(192, 144, 896, 396)
         private const val MAX_LOCAL_CANDIDATES_PER_SCALE = 8
