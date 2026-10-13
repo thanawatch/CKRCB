@@ -5752,13 +5752,13 @@ class BotController(
                     color,
                     2,
                 )
-                "@@{index + 1}. $gradeLabel | Scale: $scaleText | Score: $scoreText"
+                "${index + 1}. $gradeLabel | Scale: $scaleText | Score: $scoreText"
             }
             val summary = buildString {
                 append("📦 Mystery Box Analysis — Round $round\n")
-                append("Detected: @@{detections.size} box(es)\n")
-                append("Wood: @@{counts["wood"]} | Silver: @@{counts["silver"]} | ")
-                append("Gold: @@{counts["gold"]} | Rainbow: @@{counts["rainbow"]}")
+                append("Detected: ${detections.size} box(es)\n")
+                append("Wood: ${counts["wood"]} | Silver: ${counts["silver"]} | ")
+                append("Gold: ${counts["gold"]} | Rainbow: ${counts["rainbow"]}")
                 if (detailLines.isNotEmpty()) {
                     append("\n\n")
                     append(detailLines.joinToString("\n"))
@@ -5769,14 +5769,14 @@ class BotController(
             val png = TelegramScreenshotEncoder.encodeNormalizedPng(outputFrame)
             telegramNotifier.notifyResultImage(
                 png = png,
-                filename = "mystery_boxes_round_@@{round}.png",
+                filename = "mystery_boxes_round_${round}.png",
                 caption = summary.take(1024),
                 isStillEnabled = { BotOptionsStore.shouldSaveResultImages(context) },
             )
         } catch (error: Exception) {
             logDiagnostic(
                 "[TELEGRAM_BOX_RESULT] queued=false round=$round " +
-                    "reason=encode_failed type=@@{error.javaClass.simpleName}",
+                    "reason=encode_failed type=${error.javaClass.simpleName}",
             )
         } finally {
             annotated?.release()

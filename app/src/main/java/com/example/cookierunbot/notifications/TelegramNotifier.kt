@@ -726,22 +726,22 @@ class TelegramNotifier(context: Context) {
                         runCatching {
                             sendPhotoBlocking(currentConfig, png, filename, caption)
                         }.getOrElse { error ->
-                            TelegramSendResult(false, "exception:@@{error.javaClass.simpleName}")
+                            TelegramSendResult(false, "exception:${error.javaClass.simpleName}")
                         }
                     }
                 }
                 log(
-                    "[TELEGRAM_BOX_RESULT] success=@@{result.success} " +
-                        "code=@@{result.httpCode ?: "none"} reason=@@{result.reason}",
+                    "[TELEGRAM_BOX_RESULT] success=${result.success} " +
+                        "code=${result.httpCode ?: "none"} reason=${result.reason}",
                 )
                 runCatching { callback(result) }
                     .onFailure { error ->
-                        log("[TELEGRAM_CALLBACK] success=false type=@@{error.javaClass.simpleName}")
+                        log("[TELEGRAM_CALLBACK] success=false type=${error.javaClass.simpleName}")
                     }
             }
             true
         } catch (error: Exception) {
-            log("[TELEGRAM_BOX_RESULT] queued=false reason=queue_rejected type=@@{error.javaClass.simpleName}")
+            log("[TELEGRAM_BOX_RESULT] queued=false reason=queue_rejected type=${error.javaClass.simpleName}")
             false
         }
     }
