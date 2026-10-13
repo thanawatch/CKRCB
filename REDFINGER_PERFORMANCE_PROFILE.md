@@ -48,8 +48,11 @@ loads its configured templates once. Matching does not exit early among a stage'
 There is no Redfinger device attached to the build environment, so no phone FPS or CPU result is
 claimed. The implementation records the measurements needed for an A/B run:
 
-* `[CAPTURE PERF]`: plane copy, RGBA Mat population, normalization, publication, end-to-end capture
-  preparation, callback-to-callback gap, actual rolling FPS, and whether the exact-size path qualified.
+* `[CAPTURE PERF]`: plane copy, separate `mat_create` and `mat_put` timings (with their
+  combined `rgba_mat` duration retained for comparison), normalization, publication, end-to-end
+  capture preparation, callback-start gap, actual rolling FPS, and whether the exact-size path qualified.
+  `callback_start_gap` is the interval between local callback-processing start timestamps; it is not
+  a producer frame timestamp and must be interpreted together with `total`, `fps`, and `frame_age`.
   `[CAPTURE] thread priority updated` confirms that only Redfinger Optimized sessions raise the capture
   thread to Android's display priority; other profiles use the default priority. Tightly packed RGBA
   planes use one bulk buffer copy, while padded rows retain the row-wise fallback.

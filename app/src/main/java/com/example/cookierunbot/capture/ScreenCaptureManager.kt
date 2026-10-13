@@ -233,9 +233,13 @@ class ScreenCaptureManager(
         )
         val planeCopiedAtNanos = if (measurePerformance) SystemClock.elapsedRealtimeNanos() else 0L
 
+        // Keep Mat allocation and pixel upload timings separate. create() is usually a
+        // no-op for steady dimensions, while put() copies the full RGBA payload.
+        val matCreateStartedAtNanos = if (measurePerformance) SystemClock.elapsedRealtimeNanos() else 0L
         sourceRgba.create(height, width, CvType.CV_8UC4)
-        sourceRgba.put(0, 0, tightRgbaBytes)
         val matCreatedAtNanos = if (measurePerformance) SystemClock.elapsedRealtimeNanos() else 0L
+        sourceRgba.put(0, 0, tightRgbaBytes)
+        val matPutCompletedAtNanos = if (measurePerformance) SystemClock.elapsedRealtimeNanos() else 0L
         val transform = activeTransform?.takeIf {
             it.sourceWidth == width && it.sourceHeight == height
         } ?: updateContentTransform(width, height, "frame-size-change")
@@ -279,11 +283,13 @@ class ScreenCaptureManager(
             if (measurePerformance) Log.i(
                 CookieRunBotApplication.TAG,
                 "[CAPTURE PERF] plane_copy=${millis(planeCopiedAtNanos - frameCapturedAtNanos)}ms " +
-                    "rgba_mat=${millis(matCreatedAtNanos - planeCopiedAtNanos)}ms " +
-                    "normalize=${millis(normalizedAtNanos - matCreatedAtNanos)}ms " +
+                    "mat_create=${millis(matCreatedAtNanos - matCreateStartedAtNanos)}ms " +
+                    "mat_put=${millis(matPutCompletedAtNanos - matCreatedAtNanos)}ms " +
+                    "rgba_mat=${millis(matPutCompletedAtNanos - planeCopiedAtNanos)}ms " +
+                    "normalize=${millis(normalizedAtNanos - matPutCompletedAtNanos)}ms " +
                     "publish=${millis(publishedAtNanos - normalizedAtNanos)}ms " +
                     "total=${millis(publishedAtNanos - frameCapturedAtNanos)}ms " +
-                    "callback_gap=${String.format(java.util.Locale.US, "%.2f", frameArrivalGapMs)}ms",
+                    "callback_start_gap=${String.format(java.util.Locale.US, "%.2f", frameArrivalGapMs)}ms",
                     // The path marker makes device-side before/after captures comparable.
             )
             if (measurePerformance) Log.i(CookieRunBotApplication.TAG, "[CAPTURE PERF] exact_size_fast_path=$exactSizeFastPath fps=${String.format(java.util.Locale.US, "%.2f", currentFps)}")
