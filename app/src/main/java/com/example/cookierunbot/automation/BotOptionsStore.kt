@@ -24,9 +24,11 @@ object BotOptionsStore {
             .putString("jump_mode", options.jumpMode.name)
             .putInt("fixed_jump_count", options.fixedJumpCount)
             .putInt("tap_interval_ms", options.tapIntervalMs)
+            .putInt("tap_interval_max_ms", options.tapIntervalMaxMs)
             .putString("slide_mode", options.slideMode.name)
             .putInt("fixed_slide_count", options.fixedSlideCount)
             .putInt("slide_interval_ms", options.slideIntervalMs)
+            .putInt("slide_interval_max_ms", options.slideIntervalMaxMs)
             .putBoolean("anti_bot_image_telegram", options.sendAntiBotImagesToTelegram)
             .apply()
     }
@@ -79,6 +81,14 @@ object BotOptionsStore {
                 } else {
                     preferences.getInt("tap_interval_ms", 250)
                 },
+                tapIntervalMaxMs = if (preferences.contains("tap_interval_max_ms")) {
+                    preferences.getInt("tap_interval_max_ms", 1500)
+                } else if (preferences.contains("tap_interval_ms")) {
+                    // Preserve the fixed interval for existing installs until the user selects a range.
+                    preferences.getInt("tap_interval_ms", 250)
+                } else {
+                    1500
+                },
                 slideMode = slideMode,
                 fixedSlideCount = if (slideMode == SlideMode.FIXED_COUNT) {
                     preferences.getInt("fixed_slide_count", 10)
@@ -89,6 +99,14 @@ object BotOptionsStore {
                     250
                 } else {
                     preferences.getInt("slide_interval_ms", 250)
+                },
+                slideIntervalMaxMs = if (preferences.contains("slide_interval_max_ms")) {
+                    preferences.getInt("slide_interval_max_ms", 1500)
+                } else if (preferences.contains("slide_interval_ms")) {
+                    // Preserve the fixed interval for existing installs until the user selects a range.
+                    preferences.getInt("slide_interval_ms", 250)
+                } else {
+                    1500
                 },
                 sendAntiBotImagesToTelegram = preferences.getBoolean(
                     "anti_bot_image_telegram",
