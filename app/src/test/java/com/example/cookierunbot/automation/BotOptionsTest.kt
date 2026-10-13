@@ -27,6 +27,43 @@ class BotOptionsTest {
     }
 
     @Test
+    fun randomJumpAndSlideIntervalsUseIndependentMillisecondRanges() {
+        val options = BotOptions(
+            jumpMode = JumpMode.CONTINUOUS,
+            tapIntervalMs = 500,
+            tapIntervalMaxMs = 1500,
+            slideMode = SlideMode.CONTINUOUS,
+            slideIntervalMs = 1000,
+            slideIntervalMaxMs = 2500,
+        )
+        assertEquals(500, options.tapIntervalMs)
+        assertEquals(1500, options.tapIntervalMaxMs)
+        assertEquals(1000, options.slideIntervalMs)
+        assertEquals(2500, options.slideIntervalMaxMs)
+
+        repeat(100) {
+            val jumpDelay = randomAutoActionIntervalMs(500, 1500)
+            val slideDelay = randomAutoActionIntervalMs(1000, 2500)
+            org.junit.Assert.assertTrue(jumpDelay in 500L..1500L)
+            org.junit.Assert.assertTrue(slideDelay in 1000L..2500L)
+        }
+        assertEquals(250L, randomAutoActionIntervalMs(250, 250))
+    }
+
+    @Test
+    fun randomIntervalsRejectInvalidRanges() {
+        assertThrows(IllegalArgumentException::class.java) {
+            BotOptions(tapIntervalMs = 500, tapIntervalMaxMs = 499)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            BotOptions(slideIntervalMs = 10_001, slideIntervalMaxMs = 10_001)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            randomAutoActionIntervalMs(1000, 500)
+        }
+    }
+
+    @Test
     fun slideTargetMatchesNormalizedSlideButtonLabel() {
         assertEquals(LogicalPoint(1115, 619), AutomationConfig.AUTO_SLIDE)
         assertEquals(100.0, AutomationConfig.AUTO_SLIDE_PHONE_RADIUS, 0.0)
