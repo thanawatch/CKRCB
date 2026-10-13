@@ -20,6 +20,7 @@ object BotOptionsStore {
             .putInt("quick_lives_interval_minutes", options.quickLivesIntervalMinutes)
             .putBoolean("save_debug_images", options.saveDebugImages)
             .putBoolean("save_result_images", options.saveResultImages)
+            .putBoolean("send_mystery_box_images_telegram", options.sendMysteryBoxImagesToTelegram)
             .putString("jump_mode", options.jumpMode.name)
             .putInt("fixed_jump_count", options.fixedJumpCount)
             .putInt("tap_interval_ms", options.tapIntervalMs)
@@ -66,6 +67,7 @@ object BotOptionsStore {
                 ),
                 saveDebugImages = preferences.getBoolean("save_debug_images", true),
                 saveResultImages = preferences.getBoolean("save_result_images", true),
+                sendMysteryBoxImagesToTelegram = preferences.getBoolean("send_mystery_box_images_telegram", false),
                 jumpMode = jumpMode,
                 fixedJumpCount = if (jumpMode == JumpMode.FIXED_COUNT) {
                     preferences.getInt("fixed_jump_count", 10)
@@ -102,6 +104,7 @@ object BotOptionsStore {
         saveDebugImages: Boolean,
         saveResultImages: Boolean,
         sendAntiBotImagesToTelegram: Boolean? = null,
+        sendMysteryBoxImagesToTelegram: Boolean? = null,
     ) {
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit()
             .putBoolean("save_debug_images", saveDebugImages)
@@ -109,6 +112,9 @@ object BotOptionsStore {
             .apply {
                 sendAntiBotImagesToTelegram?.let {
                     putBoolean("anti_bot_image_telegram", it)
+                }
+                sendMysteryBoxImagesToTelegram?.let {
+                    putBoolean("send_mystery_box_images_telegram", it)
                 }
             }
             .apply()
@@ -125,6 +131,10 @@ object BotOptionsStore {
     fun shouldSendAntiBotImagesToTelegram(context: Context): Boolean =
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
             .getBoolean("anti_bot_image_telegram", false)
+
+    fun shouldSendMysteryBoxImagesToTelegram(context: Context): Boolean =
+        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+            .getBoolean("send_mystery_box_images_telegram", false)
 
     private inline fun <reified T : Enum<T>> enumValueOrDefault(value: String?, default: T): T =
         value?.let { runCatching { enumValueOf<T>(it) }.getOrNull() } ?: default
