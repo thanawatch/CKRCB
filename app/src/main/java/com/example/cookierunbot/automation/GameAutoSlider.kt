@@ -66,7 +66,7 @@ class GameAutoSlider(private val actionExecutor: ActionExecutor) {
             Log.i(CookieRunBotApplication.TAG, "[AUTO SLIDE] Started")
             Log.i(CookieRunBotApplication.TAG, "[AUTO SLIDE] Mode: ${local.slideMode}")
             Log.i(CookieRunBotApplication.TAG, "[AUTO SLIDE] Base=(1115,619)")
-            Log.i(CookieRunBotApplication.TAG, "[AUTO SLIDE] Interval=${local.slideIntervalMs}ms")
+            Log.i(CookieRunBotApplication.TAG, "[AUTO SLIDE] Interval=${local.slideIntervalMs}-${local.slideIntervalMaxMs}ms (random)")
             Log.i(CookieRunBotApplication.TAG, "[AUTO SLIDE] Radius=100 phone px")
 
             if (local.slideMode == SlideMode.FIXED_COUNT) {
@@ -75,7 +75,7 @@ class GameAutoSlider(private val actionExecutor: ActionExecutor) {
                 repeat(local.fixedSlideCount) {
                     if (stopRequested.get()) return
                     tapRandomSlideUntilAccepted(local.slideIntervalMs.toLong())
-                    sleepCancellable(local.slideIntervalMs.toLong())
+                    sleepCancellable(randomAutoActionIntervalMs(local.slideIntervalMs, local.slideIntervalMaxMs))
                 }
                 synchronized(lock) { finishedForRound = true }
                 Log.i(CookieRunBotApplication.TAG, "[AUTO SLIDE] Slide by Count completed")
