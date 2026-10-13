@@ -89,6 +89,8 @@ class ScreenCaptureManager(
         captureThread = thread
         captureHandler = handler
         fpsWindowStartNanos = SystemClock.elapsedRealtimeNanos()
+        lastFrameArrivalNanos = 0L
+        appliedCapturePriority = null
         createCaptureResources(width, height, "started")
 
         val managerDisplay = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
@@ -134,6 +136,8 @@ class ScreenCaptureManager(
         captureThread = null
         expectedWidth = 0
         expectedHeight = 0
+        lastFrameArrivalNanos = 0L
+        appliedCapturePriority = null
         activeTransform = null
         ContentGeometryRegistry.clear()
         sourceRgba.release()
