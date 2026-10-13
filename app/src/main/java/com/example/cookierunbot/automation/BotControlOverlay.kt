@@ -272,7 +272,7 @@ class BotControlOverlay(private val context: Context) {
         }
         panel.addView(quickLivesMinutes, matchWidth())
         addSwitch(saveDebugImages, "Save NO_MATCH Debug Images", options.saveDebugImages)
-        addSwitch(saveResultImages, "Save GAME_COMPLETE / MYSTERY_BOX Images", options.saveResultImages)
+        addSwitch(saveResultImages, "Save / Send GAME_COMPLETE / MYSTERY_BOX Images", options.saveResultImages)
         addSwitch(
             antiBotTelegramImages,
             "Send Anti-bot image to Telegram",
