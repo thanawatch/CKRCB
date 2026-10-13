@@ -1656,6 +1656,7 @@ class BotController(
                     FastPathTiming(
                         frameCapturedAtNanos = frame.capturedAtNanos,
                         latestFramePublishedAtNanos = frame.publishedAtNanos,
+                        snapshotCloneDurationNanos = frame.cloneDurationNanos,
                         detectionStartedAtNanos = detectionStartedAtNanos,
                         detectionMatchedAtNanos = detectionMatchedAtNanos,
                     ),
@@ -5986,6 +5987,7 @@ class BotController(
         val dispatchedAtNanos = result.gestureDispatchedAtNanos
         val fastPathMessage = "[FAST_PATH] $stage " +
             "frame_age=${ms(actionRequestedAtNanos - timing.frameCapturedAtNanos)}ms " +
+            "snapshot_clone=${ms(timing.snapshotCloneDurationNanos)}ms " +
             "capture_to_publish=${ms(timing.latestFramePublishedAtNanos - timing.frameCapturedAtNanos)}ms " +
             "capture_to_detect=${ms(timing.detectionStartedAtNanos - timing.frameCapturedAtNanos)}ms " +
             "publish_to_detect=${ms(timing.detectionStartedAtNanos - timing.latestFramePublishedAtNanos)}ms " +
@@ -6603,6 +6605,7 @@ private data class MainMenuRevalidation(
 private data class FastPathTiming(
     val frameCapturedAtNanos: Long,
     val latestFramePublishedAtNanos: Long,
+    val snapshotCloneDurationNanos: Long,
     val detectionStartedAtNanos: Long,
     val detectionMatchedAtNanos: Long,
 )
