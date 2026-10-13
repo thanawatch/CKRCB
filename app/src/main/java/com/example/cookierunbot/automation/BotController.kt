@@ -5719,7 +5719,8 @@ class BotController(
         }
         var annotated: Mat? = null
         try {
-            annotated = frame.clone()
+            val outputFrame = frame.clone()
+            annotated = outputFrame
             val detections = scan.detections
             val grades = listOf("wood", "silver", "gold", "rainbow")
             val counts = grades.associateWith { grade -> detections.count { it.grade == grade } }
@@ -5740,10 +5741,10 @@ class BotController(
                 val scaleText = String.format(Locale.US, "%.2f", detection.scale)
                 val scoreText = String.format(Locale.US, "%.4f", detection.score)
                 val color = colors[detection.grade] ?: Scalar(0.0, 255.0, 0.0, 255.0)
-                Imgproc.rectangle(annotated, detection.rect, color, 3)
+                Imgproc.rectangle(outputFrame, detection.rect, color, 3)
                 val textY = (detection.rect.y - 8).coerceAtLeast(22)
                 Imgproc.putText(
-                    annotated,
+                    outputFrame,
                     "$gradeLabel S=$scaleText score=$scoreText",
                     Point(detection.rect.x.toDouble(), textY.toDouble()),
                     Imgproc.FONT_HERSHEY_SIMPLEX,
@@ -5765,7 +5766,7 @@ class BotController(
                     append("\n\nNo boxes were accepted by the classifier.")
                 }
             }
-            val png = TelegramScreenshotEncoder.encodeNormalizedPng(annotated)
+            val png = TelegramScreenshotEncoder.encodeNormalizedPng(outputFrame)
             telegramNotifier.notifyResultImage(
                 png = png,
                 filename = "mystery_boxes_round_@@{round}.png",
