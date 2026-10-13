@@ -8,7 +8,10 @@ import com.example.cookierunbot.diagnostics.DebugLogStore
 import org.opencv.core.Mat
 import java.util.concurrent.Executors
 
-class RoundResultCollector(context: Context) {
+class RoundResultCollector(
+    context: Context,
+    private val onMysteryBoxScan: (round: Int, frame: Mat, scan: BoxScanResult) -> Unit = { _, _, _ -> },
+) {
     private val executor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "round-result-analysis")
     }
@@ -192,6 +195,14 @@ class RoundResultCollector(context: Context) {
                     logStaleBox(round, 1, analysisGeneration)
                     return@execute
                 }
+                runCatching { onMysteryBoxScan(round, ownedFrame, scan) }
+                    .onFailure { error ->
+                        Log.e(
+                            CookieRunBotApplication.TAG,
+                            "[TELEGRAM_BOX_RESULT] image preparation failed round=$round",
+                            error,
+                        )
+                    }
                 log("[BOX_RESULT] round=$round boxes=$grades boxCount=${grades.size}")
                 logResult(round)
             } finally { ownedFrame.release() }

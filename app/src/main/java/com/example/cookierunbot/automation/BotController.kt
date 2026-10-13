@@ -19,6 +19,7 @@ import com.example.cookierunbot.diagnostics.IncidentManager
 import com.example.cookierunbot.diagnostics.PersistentTrace
 import com.example.cookierunbot.diagnostics.DebugLogStore
 import com.example.cookierunbot.statistics.RoundResultCollector
+import com.example.cookierunbot.statistics.BoxScanResult
 import com.example.cookierunbot.statistics.RoundResultStore
 import com.example.cookierunbot.statistics.AntiBotEvidenceStatus
 import com.example.cookierunbot.statistics.MysteryBoxPhasePolicy
@@ -26,6 +27,8 @@ import com.example.cookierunbot.notifications.TelegramNotifier
 import com.example.cookierunbot.notifications.TelegramScreenshotEncoder
 import org.opencv.core.Mat
 import org.opencv.core.Rect
+import org.opencv.core.Point
+import org.opencv.core.Scalar
 import org.opencv.imgproc.Imgproc
 import java.util.Locale
 import java.util.concurrent.CountDownLatch
@@ -198,7 +201,9 @@ class BotController(
     private val recoveryExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "game-progress-recovery")
     }
-    private val roundResultCollector = RoundResultCollector(context.applicationContext)
+    private val roundResultCollector = RoundResultCollector(context.applicationContext) { round, frame, scan ->
+        sendMysteryBoxAnalysis(round, frame, scan)
+    }
     private var executor: ExecutorService? = null
     private var running = false
     @Volatile private var workerAlive = false
@@ -5704,6 +5709,76 @@ class BotController(
             )
         } finally {
             gray.release()
+        }
+    }
+
+    private fun sendMysteryBoxAnalysis(round: Int, frame: Mat, scan: BoxScanResult) {
+        if (!BotOptionsStore.shouldSaveResultImages(context)) {
+            logDiagnostic("[TELEGRAM_BOX_RESULT] skipped=true round=$round reason=result_images_disabled")
+            return
+        }
+        var annotated: Mat? = null
+        try {
+            annotated = frame.clone()
+            val detections = scan.detections
+            val grades = listOf("wood", "silver", "gold", "rainbow")
+            val counts = grades.associateWith { grade -> detections.count { it.grade == grade } }
+            val labels = mapOf(
+                "wood" to "WOOD",
+                "silver" to "SILVER",
+                "gold" to "GOLD",
+                "rainbow" to "RAINBOW",
+            )
+            val colors = mapOf(
+                "wood" to Scalar(255.0, 170.0, 40.0, 255.0),
+                "silver" to Scalar(235.0, 235.0, 235.0, 255.0),
+                "gold" to Scalar(255.0, 215.0, 0.0, 255.0),
+                "rainbow" to Scalar(255.0, 0.0, 220.0, 255.0),
+            )
+            val detailLines = detections.mapIndexed { index, detection ->
+                val gradeLabel = labels[detection.grade] ?: detection.grade.uppercase(Locale.US)
+                val scaleText = String.format(Locale.US, "%.2f", detection.scale)
+                val scoreText = String.format(Locale.US, "%.4f", detection.score)
+                val color = colors[detection.grade] ?: Scalar(0.0, 255.0, 0.0, 255.0)
+                Imgproc.rectangle(annotated, detection.rect, color, 3)
+                val textY = (detection.rect.y - 8).coerceAtLeast(22)
+                Imgproc.putText(
+                    annotated,
+                    "$gradeLabel S=$scaleText score=$scoreText",
+                    Point(detection.rect.x.toDouble(), textY.toDouble()),
+                    Imgproc.FONT_HERSHEY_SIMPLEX,
+                    0.55,
+                    color,
+                    2,
+                )
+                "@@{index + 1}. $gradeLabel | Scale: $scaleText | Score: $scoreText"
+            }
+            val summary = buildString {
+                append("📦 Mystery Box Analysis — Round $round\n")
+                append("Detected: @@{detections.size} box(es)\n")
+                append("Wood: @@{counts["wood"]} | Silver: @@{counts["silver"]} | ")
+                append("Gold: @@{counts["gold"]} | Rainbow: @@{counts["rainbow"]}")
+                if (detailLines.isNotEmpty()) {
+                    append("\n\n")
+                    append(detailLines.joinToString("\n"))
+                } else {
+                    append("\n\nNo boxes were accepted by the classifier.")
+                }
+            }
+            val png = TelegramScreenshotEncoder.encodeNormalizedPng(annotated)
+            telegramNotifier.notifyResultImage(
+                png = png,
+                filename = "mystery_boxes_round_@@{round}.png",
+                caption = summary.take(1024),
+                isStillEnabled = { BotOptionsStore.shouldSaveResultImages(context) },
+            )
+        } catch (error: Exception) {
+            logDiagnostic(
+                "[TELEGRAM_BOX_RESULT] queued=false round=$round " +
+                    "reason=encode_failed type=@@{error.javaClass.simpleName}",
+            )
+        } finally {
+            annotated?.release()
         }
     }
 

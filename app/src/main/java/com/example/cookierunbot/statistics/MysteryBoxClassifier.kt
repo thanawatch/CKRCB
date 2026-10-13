@@ -11,7 +11,12 @@ import org.opencv.core.Scalar
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
 
-data class BoxDetection(val grade: String, val score: Double, val rect: Rect)
+data class BoxDetection(
+    val grade: String,
+    val score: Double,
+    val rect: Rect,
+    val scale: Double = 1.0,
+)
 data class BoxScanResult(
     val candidateCount: Int,
     val detections: List<BoxDetection>,
@@ -214,6 +219,7 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
                     variant.bgr,
                     variant.alphaMask,
                     variant.grade,
+                    variant.scale,
                     output,
                 )
                 if (bestScore > (bestScores[variant.grade] ?: Double.NEGATIVE_INFINITY)) {
@@ -232,6 +238,7 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
         templateBgr: Mat,
         alphaMask: Mat,
         grade: String,
+        scale: Double,
         output: MutableList<BoxDetection>,
     ): Double {
         val result = Mat()
@@ -257,6 +264,7 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
                     grade,
                     score,
                     Rect(ROI.x + x, ROI.y + y, templateBgr.cols(), templateBgr.rows()),
+                    scale,
                 )
                 // Suppress almost one whole box around the winning peak. The masked matcher
                 // can produce secondary peaks from the same physical box well beyond half a

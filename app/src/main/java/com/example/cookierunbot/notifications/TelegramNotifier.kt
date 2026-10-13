@@ -691,9 +691,62 @@ class TelegramNotifier(context: Context) {
         }
     }
 
-    fun isDebugImageEnabled(): Boolean = TelegramConfigStore.load(appContext).let { config ->
-        config.enabled && config.isValid && config.sendDebugImages
+    /**
+     * Mystery-box result delivery is gated by the existing Startup Options result-image switch,
+     * not Telegram's generic debug-image preference. The original destination is revalidated.
+     */
+    fun notifyResultImage(
+        png: ByteArray,
+        filename: String,
+        caption: String,
+        isStillEnabled: () -> Boolean,
+        callback: (TelegramSendResult) -> Unit = {},
+    ): Boolean {
+        val config = TelegramConfigStore.load(appContext)
+        logConfig(config)
+        if (!runCatching { isStillEnabled() }.getOrDefault(false)) {
+            log("[TELEGRAM_BOX_RESULT] queued=false reason=feature_disabled")
+            return false
+        }
+        if (!config.enabled || !config.isValid) {
+            val reason = if (!config.enabled) "telegram_disabled" else "invalid_config"
+            log("[TELEGRAM_BOX_RESULT] queued=false reason=$reason")
+            return false
+        }
+        val target = TelegramCommandReplyTarget.from(config)
+        return try {
+            executor.execute {
+                val result = if (!runCatching { isStillEnabled() }.getOrDefault(false)) {
+                    TelegramSendResult(false, "feature_disabled")
+                } else {
+                    val currentConfig = TelegramConfigStore.load(appContext)
+                    if (!target.matches(currentConfig)) {
+                        TelegramSendResult(false, "config_changed")
+                    } else {
+                        runCatching {
+                            sendPhotoBlocking(currentConfig, png, filename, caption)
+                        }.getOrElse { error ->
+                            TelegramSendResult(false, "exception:@@{error.javaClass.simpleName}")
+                        }
+                    }
+                }
+                log(
+                    "[TELEGRAM_BOX_RESULT] success=@@{result.success} " +
+                        "code=@@{result.httpCode ?: "none"} reason=@@{result.reason}",
+                )
+                runCatching { callback(result) }
+                    .onFailure { error ->
+                        log("[TELEGRAM_CALLBACK] success=false type=@@{error.javaClass.simpleName}")
+                    }
+            }
+            true
+        } catch (error: Exception) {
+            log("[TELEGRAM_BOX_RESULT] queued=false reason=queue_rejected type=@@{error.javaClass.simpleName}")
+            false
+        }
     }
+
+
 
     private fun enqueue(block: (TelegramConfig) -> Unit) {
         val config = TelegramConfigStore.load(appContext)
