@@ -18,6 +18,7 @@ object RoundResultStore {
     private var silverBoxes = 0
     private var goldBoxes = 0
     private var rainbowBoxes = 0
+    private val roundsByBoxCount = (1..5).associateWith { 0 }.toMutableMap()
     private var antiBotChallengeCount = 0
     private var antiBotCompletedChallengeCount = 0
     private val completedAntiBotChallenges = mutableSetOf<Int>()
@@ -34,6 +35,7 @@ object RoundResultStore {
         cumulativeByRound.clear()
         totalCoins = 0; totalXp = 0; totalBoxes = 0
         woodBoxes = 0; silverBoxes = 0; goldBoxes = 0; rainbowBoxes = 0
+        roundsByBoxCount.keys.forEach { roundsByBoxCount[it] = 0 }
         antiBotChallengeCount = 0; antiBotCompletedChallengeCount = 0
         completedAntiBotChallenges.clear()
         antiBotDetectedCount = 0; antiBotCompletedTestCount = 0
@@ -182,6 +184,7 @@ object RoundResultStore {
             silverBoxes = silverBoxes,
             goldBoxes = goldBoxes,
             rainbowBoxes = rainbowBoxes,
+            roundsByBoxCount = roundsByBoxCount.toMap(),
             lastRound = history.firstOrNull(),
             history = history,
             sessionRuntimeMs = if (sessionStartedAt == 0L) 0L else
@@ -205,6 +208,7 @@ object RoundResultStore {
         sessionGeneration = 0L
         totalCoins = 0; totalXp = 0; totalBoxes = 0
         woodBoxes = 0; silverBoxes = 0; goldBoxes = 0; rainbowBoxes = 0
+        roundsByBoxCount.keys.forEach { roundsByBoxCount[it] = 0 }
         antiBotChallengeCount = 0; antiBotCompletedChallengeCount = 0
         completedAntiBotChallenges.clear()
         antiBotDetectedCount = 0; antiBotCompletedTestCount = 0
@@ -221,12 +225,16 @@ object RoundResultStore {
         totalCoins += value.coins; totalXp += value.xp; totalBoxes += value.totalBoxes
         woodBoxes += value.wood; silverBoxes += value.silver
         goldBoxes += value.gold; rainbowBoxes += value.rainbow
+        if (value.boxCount in 1..5) roundsByBoxCount[value.boxCount] =
+            (roundsByBoxCount[value.boxCount] ?: 0) + 1
     }
 
     private fun subtract(value: RoundContribution) {
         totalCoins -= value.coins; totalXp -= value.xp; totalBoxes -= value.totalBoxes
         woodBoxes -= value.wood; silverBoxes -= value.silver
         goldBoxes -= value.gold; rainbowBoxes -= value.rainbow
+        if (value.boxCount in 1..5) roundsByBoxCount[value.boxCount] =
+            ((roundsByBoxCount[value.boxCount] ?: 0) - 1).coerceAtLeast(0)
     }
 }
 
@@ -234,6 +242,7 @@ private data class RoundContribution(
     val coins: Int,
     val xp: Int,
     val totalBoxes: Int,
+    val boxCount: Int,
     val wood: Int,
     val silver: Int,
     val gold: Int,
@@ -241,6 +250,7 @@ private data class RoundContribution(
 ) {
     fun copyWithBoxes(boxes: List<String>) = copy(
         totalBoxes = boxes.size,
+        boxCount = boxes.size,
         wood = boxes.count { it == "wood" },
         silver = boxes.count { it == "silver" },
         gold = boxes.count { it == "gold" },
@@ -252,6 +262,7 @@ private data class RoundContribution(
             result.coins ?: 0,
             result.xp ?: 0,
             result.boxCount,
+            result.boxCount.coerceAtLeast(0),
             result.boxes.count { it == "wood" },
             result.boxes.count { it == "silver" },
             result.boxes.count { it == "gold" },

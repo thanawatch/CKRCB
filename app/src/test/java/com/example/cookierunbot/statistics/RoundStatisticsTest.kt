@@ -366,6 +366,54 @@ class RoundStatisticsTest {
         assertEquals(6, stats.totalXp)
     }
 
+    @Test fun roundsByBoxCountTrackExactCountsAndLateBoxReplacement() {
+        val generation = RoundResultStore.startNewSession()
+        (1..5).forEach { count ->
+            RoundResultStore.upsert(
+                result(count, coins = count, xp = count).copy(
+                    boxes = List(count) { "wood" },
+                    boxCount = count,
+                ),
+                generation,
+            )
+        }
+        RoundResultStore.upsert(
+            result(6, coins = 6, xp = 6).copy(boxes = List(6) { "silver" }, boxCount = 6),
+            generation,
+        )
+        var stats = RoundResultStore.snapshot()
+        assertEquals(mapOf(1 to 1, 2 to 1, 3 to 1, 4 to 1, 5 to 1), stats.roundsByBoxCount)
+        assertTrue(RoundResultStore.updateBoxes(1, listOf("wood", "silver", "gold"), generation))
+        stats = RoundResultStore.snapshot()
+        assertEquals(mapOf(1 to 0, 2 to 1, 3 to 2, 4 to 1, 5 to 1), stats.roundsByBoxCount)
+        RoundResultStore.upsert(
+            result(2, coins = 2, xp = 2).copy(boxes = List(5) { "rainbow" }, boxCount = 5),
+            generation,
+        )
+        stats = RoundResultStore.snapshot()
+        assertEquals(mapOf(1 to 0, 2 to 0, 3 to 2, 4 to 1, 5 to 2), stats.roundsByBoxCount)
+    }
+
+    @Test fun boxCountDistributionIncludesRoundsOutsideRecentFiftyAndResetsWithSession() {
+        val generation = RoundResultStore.startNewSession()
+        (1..55).forEach { round ->
+            val count = round % 5 + 1
+            RoundResultStore.upsert(
+                result(round, coins = 0, xp = 0).copy(
+                    boxes = List(count) { "wood" },
+                    boxCount = count,
+                ),
+                generation,
+            )
+        }
+        val stats = RoundResultStore.snapshot()
+        assertEquals(55, stats.rounds)
+        (1..5).forEach { count -> assertEquals(11, stats.roundsByBoxCount[count]) }
+        assertEquals(50, stats.history.size)
+        RoundResultStore.startNewSession()
+        assertEquals(mapOf(1 to 0, 2 to 0, 3 to 0, 4 to 0, 5 to 0), RoundResultStore.snapshot().roundsByBoxCount)
+    }
+
     @Test fun nmsKeepsDistinctBoxesAndOrdersThemLeftToRight() {
         val selected = MysteryBoxClassifier.suppressOverlaps(
             listOf(

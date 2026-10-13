@@ -65,4 +65,6 @@ data class SessionStatistics(
     val antiBotSuccessfulTapCount: Int = 0,
     val antiBotHistory: List<AntiBotEvent> = emptyList(),
     val antiBotLatestEvidence: AntiBotEvidence? = null,
+    /** Number of rounds that produced exactly 1..5 Mystery Boxes, keyed by box count. */
+    val roundsByBoxCount: Map<Int, Int> = emptyMap(),
 )

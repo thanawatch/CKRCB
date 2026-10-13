@@ -41,6 +41,19 @@ class TelegramDashboardTest {
         assertTrue(reply.indexOf("🤖 RobotRun Status") < reply.indexOf("🎮 Last Round"))
     }
 
+    @Test fun allAndStatsShowRoundCountsForExactlyOneThroughFiveBoxes() {
+        val session = stats(emptyList()).copy(
+            roundsByBoxCount = mapOf(1 to 7, 2 to 11, 3 to 13, 4 to 17, 5 to 19),
+        )
+        val reply = formatAllReply(session, bot(), GameProgressWatchdog().status(100_000L))
+        assertTrue(reply.contains("Rounds by box count:"))
+        assertTrue(reply.contains("1 box: 7 rounds"))
+        assertTrue(reply.contains("2 boxes: 11 rounds"))
+        assertTrue(reply.contains("3 boxes: 13 rounds"))
+        assertTrue(reply.contains("4 boxes: 17 rounds"))
+        assertTrue(reply.contains("5 boxes: 19 rounds"))
+    }
+
     @Test fun dashboardKeyboardIsPersistentAndHelpListsAllCommands() {
         val markup = TelegramDashboardPolicy.keyboardJson
         assertTrue(markup.contains("\"is_persistent\":true"))

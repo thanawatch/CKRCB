@@ -255,6 +255,10 @@ internal fun formatStatsReply(stats: com.example.cookierunbot.statistics.Session
         "Coins: ${stats.totalCoins.formatNumber()}\nXP: ${stats.totalXp.formatNumber()}\n\n" +
         "Mystery Boxes: ${stats.totalBoxes}\nWood: ${stats.woodBoxes}\nSilver: ${stats.silverBoxes}\n" +
         "Gold: ${stats.goldBoxes}\nRainbow: ${stats.rainbowBoxes}\n\n" +
+        "Rounds by box count:\n" +
+        (1..5).joinToString("\n") { count ->
+            "$count box${if (count == 1) "" else "es"}: ${stats.roundsByBoxCount[count] ?: 0} rounds"
+        } + "\n\n" +
         "Anti-bot challenges: ${stats.antiBotChallengeCount}\n" +
         "Anti-bot tests: ${stats.antiBotDetectedCount}\n" +
         "Anti-bot successful taps: ${stats.antiBotSuccessfulTapCount}"
