@@ -44,7 +44,6 @@ private data class BoxTemplateVariant(
     val grade: String,
     val scale: Double,
     val bgr: Mat,
-    val alphaMask: Mat,
 )
 
 class MysteryBoxClassifier(context: Context) : AutoCloseable {
@@ -55,28 +54,19 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
                     val bitmap = requireNotNull(BitmapFactory.decodeStream(input))
                     val rgba = Mat()
                     val baseBgr = Mat()
-                    val baseMask = Mat()
                     try {
                         Utils.bitmapToMat(bitmap, rgba)
                         Imgproc.cvtColor(rgba, baseBgr, Imgproc.COLOR_RGBA2BGR)
-                        Core.extractChannel(rgba, baseMask, 3)
-                        Imgproc.threshold(baseMask, baseMask, 1.0, 255.0, Imgproc.THRESH_BINARY)
-                        check(Core.countNonZero(baseMask) > 0) {
-                            "Mystery Box alpha mask is empty for grade=$grade"
-                        }
-
                         SCALES.forEach { scale ->
                             add(
                                 BoxTemplateVariant(
                                     grade = grade,
                                     scale = scale,
                                     bgr = baseBgr.clone(),
-                                    alphaMask = baseMask.clone(),
                                 )
                             )
                         }
                     } finally {
-                        baseMask.release()
                         baseBgr.release()
                         rgba.release()
                         bitmap.recycle()
@@ -144,7 +134,6 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
                 val bestScore = collectLocalCandidates(
                     cropBgr,
                     variant.bgr,
-                    variant.alphaMask,
                     variant.grade,
                     variant.scale,
                     output,
@@ -163,7 +152,6 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
     private fun collectLocalCandidates(
         cropBgr: Mat,
         templateBgr: Mat,
-        alphaMask: Mat,
         grade: String,
         scale: Double,
         output: MutableList<BoxDetection>,
@@ -176,7 +164,6 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
                 templateBgr,
                 result,
                 Imgproc.TM_SQDIFF_NORMED,
-                alphaMask,
             )
             repeat(MAX_LOCAL_CANDIDATES_PER_SCALE) {
                 val minimum = Core.minMaxLoc(result)
@@ -216,7 +203,6 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
     }
 
     override fun close() = templateVariants.forEach {
-        it.alphaMask.release()
         it.bgr.release()
     }
 
