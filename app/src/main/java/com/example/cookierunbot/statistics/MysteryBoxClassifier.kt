@@ -38,34 +38,6 @@ internal object MysteryBoxPhasePolicy {
 }
 internal object MysteryBoxScanPolicy {
     const val FAST_SCALE = 1.0
-    internal val NEAR_FALLBACK_SCALES = setOf(0.95, 1.05)
-    internal const val FAR_PROBE_SCALE = 1.10
-    internal const val EXTREME_FALLBACK_SCALE = 1.15
-    private const val MAX_VISIBLE_BOXES = 4
-    private const val EXTREME_WEAK_SCORE = 0.75
-
-    fun shouldRunNearFallback(fastPathDetections: List<BoxDetection>): Boolean {
-        if (fastPathDetections.size <= 2) return true
-        if (fastPathDetections.size >= MAX_VISIBLE_BOXES) return false
-        return fastPathDetections.minOfOrNull { it.score }?.let { it < EXTREME_WEAK_SCORE } ?: true
-    }
-
-    fun shouldRunFarProbe(nearDetections: List<BoxDetection>): Boolean {
-        if (nearDetections.size <= 2) return true
-        if (nearDetections.size >= MAX_VISIBLE_BOXES) return false
-        return nearDetections.minOfOrNull { it.score }?.let { it < EXTREME_WEAK_SCORE } ?: true
-    }
-
-    fun shouldRunExtremeFallback(
-        beforeFarProbeCount: Int,
-        farProbeDetections: List<BoxDetection>,
-    ): Boolean {
-        if (farProbeDetections.size >= MAX_VISIBLE_BOXES) return false
-        val weakest = farProbeDetections.minOfOrNull { it.score } ?: Double.NEGATIVE_INFINITY
-        return farProbeDetections.size <= 2 ||
-            farProbeDetections.size > beforeFarProbeCount ||
-            weakest < EXTREME_WEAK_SCORE
-    }
 }
 
 private data class BoxTemplateVariant(
@@ -94,19 +66,14 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
                         }
 
                         SCALES.forEach { scale ->
-                            val variantBgr: Mat
-                            val variantMask: Mat
-                            if (scale == MysteryBoxScanPolicy.FAST_SCALE) {
-                                variantBgr = baseBgr.clone()
-                                variantMask = baseMask.clone()
-                            } else {
-                                variantBgr = Mat()
-                                variantMask = Mat()
-                                val size = Size(baseBgr.cols() * scale, baseBgr.rows() * scale)
-                                Imgproc.resize(baseBgr, variantBgr, size, 0.0, 0.0, Imgproc.INTER_LINEAR)
-                                Imgproc.resize(baseMask, variantMask, size, 0.0, 0.0, Imgproc.INTER_NEAREST)
-                            }
-                            add(BoxTemplateVariant(grade, scale, variantBgr, variantMask))
+                            add(
+                                BoxTemplateVariant(
+                                    grade = grade,
+                                    scale = scale,
+                                    bgr = baseBgr.clone(),
+                                    alphaMask = baseMask.clone(),
+                                )
+                            )
                         }
                     } finally {
                         baseMask.release()
@@ -120,13 +87,6 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
     }
     private val fastPathVariants =
         templateVariants.filter { it.scale == MysteryBoxScanPolicy.FAST_SCALE }
-    private val nearFallbackVariants =
-        templateVariants.filter { it.scale in MysteryBoxScanPolicy.NEAR_FALLBACK_SCALES }
-    private val farProbeVariants =
-        templateVariants.filter { it.scale == MysteryBoxScanPolicy.FAR_PROBE_SCALE }
-    private val extremeFallbackVariants =
-        templateVariants.filter { it.scale == MysteryBoxScanPolicy.EXTREME_FALLBACK_SCALE }
-
     fun classifyAll(frame: Mat): List<BoxDetection> = scan(frame).detections
 
     fun scan(frame: Mat): BoxScanResult {
@@ -148,52 +108,19 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
             val fastStartedAt = System.nanoTime()
             collectVariants(cropBgr, fastPathVariants, candidates, bestScores, bestScales)
             val fastPathDurationMs = elapsedMs(fastStartedAt)
-            val fastPathCandidateCount = candidates.size
-            val fastPathDetections = suppressOverlaps(candidates)
-
-            var fallbackDurationMs = 0.0
-            var detections = fastPathDetections
-            val useNearFallback = MysteryBoxScanPolicy.shouldRunNearFallback(detections)
-            if (useNearFallback) {
-                val startedAt = System.nanoTime()
-                collectVariants(cropBgr, nearFallbackVariants, candidates, bestScores, bestScales)
-                fallbackDurationMs += elapsedMs(startedAt)
-                detections = suppressOverlaps(candidates)
-            }
-
-            val beforeFarProbeCount = detections.size
-            val useFarProbe =
-                useNearFallback && MysteryBoxScanPolicy.shouldRunFarProbe(detections)
-            if (useFarProbe) {
-                val startedAt = System.nanoTime()
-                collectVariants(cropBgr, farProbeVariants, candidates, bestScores, bestScales)
-                fallbackDurationMs += elapsedMs(startedAt)
-                detections = suppressOverlaps(candidates)
-            }
-
-            val useExtremeFallback = useFarProbe &&
-                MysteryBoxScanPolicy.shouldRunExtremeFallback(
-                    beforeFarProbeCount,
-                    detections,
-                )
-            if (useExtremeFallback) {
-                val startedAt = System.nanoTime()
-                collectVariants(cropBgr, extremeFallbackVariants, candidates, bestScores, bestScales)
-                fallbackDurationMs += elapsedMs(startedAt)
-                detections = suppressOverlaps(candidates)
-            }
+            val detections = suppressOverlaps(candidates)
 
             BoxScanResult(
                 candidateCount = candidates.size,
                 detections = detections,
-                fastPathCandidateCount = fastPathCandidateCount,
-                fastPathAcceptedCount = fastPathDetections.size,
-                usedFallback = useNearFallback || useFarProbe || useExtremeFallback,
-                usedNearFallback = useNearFallback,
-                usedFarProbe = useFarProbe,
-                usedExtremeFallback = useExtremeFallback,
+                fastPathCandidateCount = candidates.size,
+                fastPathAcceptedCount = detections.size,
+                usedFallback = false,
+                usedNearFallback = false,
+                usedFarProbe = false,
+                usedExtremeFallback = false,
                 fastPathDurationMs = fastPathDurationMs,
-                fallbackDurationMs = fallbackDurationMs,
+                fallbackDurationMs = 0.0,
                 totalDurationMs = elapsedMs(totalStartedAt),
                 bestScoreByGrade = bestScores.toMap(),
                 bestScaleByGrade = bestScales.toMap(),
@@ -295,7 +222,7 @@ class MysteryBoxClassifier(context: Context) : AutoCloseable {
 
     companion object {
         internal const val MATCH_THRESHOLD = 0.80
-        internal val SCALES = listOf(0.95, 1.00, 1.05, 1.10, 1.15)
+        internal val SCALES = listOf(1.00)
         private val ROI = Rect(192, 144, 896, 396)
         private const val MAX_LOCAL_CANDIDATES_PER_SCALE = 8
         internal const val NMS_IOU_THRESHOLD = 0.30
