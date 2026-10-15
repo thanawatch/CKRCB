@@ -1924,6 +1924,9 @@ class BotController(
             return
         }
 
+        // Party-run season rewards are a post-game popup; preserve that group when
+        // the asynchronous tap callback resumes detection.
+        val resumeGroup = DetectionGroup.POST_GAME
         val runGeneration = synchronized(lock) { botRunGeneration }
         val action = performPhysicalTap(
             "PARTY_RUN_SEASON_REWARDS",
