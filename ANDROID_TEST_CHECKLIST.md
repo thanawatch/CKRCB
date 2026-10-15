@@ -28,6 +28,9 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 
 ## Capture, geometry, and detection
 
+- [ ] During IN_GAME, show the league-ended restart popup and verify it is detected only by background ROI scan, confirmed on a newer frame, and Confirm is tapped at most once for the same visible popup.
+- [ ] After Confirm, verify the controller waits for a post-gesture fresh frame and routes to PRE_GAME detection; confirm it recognizes the resulting menu/restart state instead of continuing as ordinary gameplay.
+
 - [ ] Diagnostics show correct source dimensions, orientation, content rectangle, advancing generation/FPS, and frame age below 1 second during normal operation.
 - [ ] Test a device with a cutout/inset. Confirm the visible game viewport and physical gesture mapping share the same crop.
 - [ ] Validate MAINMENU detection while bot is stopped; verify the service's idle detector yields while bot runs.
