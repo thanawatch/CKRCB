@@ -1893,13 +1893,6 @@ class BotController(
         sourceHeight: Int,
         frameGeneration: Long,
     ) {
-        // A league-ended restart popup can interrupt gameplay. After Confirm, route back
-        // through PRE_GAME detection so a fresh frame must establish the resulting menu/state.
-        val resumeGroup = if (stage == BotStage.LEAGUE_ENDED_RESTART) {
-            DetectionGroup.PRE_GAME
-        } else {
-            rewardPopupResumeGroup(group)
-        }
         if (!isRunning() || PopupFreshFramePolicy.blocks(frameGeneration, minimumFreshFrameGeneration)) return
         if (synchronized(lock) { pendingPartyRunSeasonRewardsGesture?.isCompleted == false }) {
             logDiagnostic("[PARTY_RUN_SEASON_REWARDS_SKIP] reason=callback_pending")
@@ -5511,7 +5504,13 @@ class BotController(
         frameGeneration: Long,
         jitter: Int = AutomationConfig.DEFAULT_SAFE_JITTER,
     ) {
-        val resumeGroup = rewardPopupResumeGroup(group)
+        // A league-ended restart popup can interrupt gameplay. After Confirm, route back
+        // through PRE_GAME detection so a fresh frame must establish the resulting menu/state.
+        val resumeGroup = if (stage == BotStage.LEAGUE_ENDED_RESTART) {
+            DetectionGroup.PRE_GAME
+        } else {
+            rewardPopupResumeGroup(group)
+        }
         val fingerprint = capturePopupFingerprint(stage)
         pendingPopupAction = stage.name
         try {
