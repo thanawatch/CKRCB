@@ -6,10 +6,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class LeagueEndedRestartPolicyTest {
-    @Test fun onlyPreAndPostGameAreEligible() {
+    @Test fun prePostAndInGameAreEligibleForBackgroundDetection() {
         assertTrue(LeagueEndedRestartPolicy.eligibleGroup(DetectionGroup.PRE_GAME))
         assertTrue(LeagueEndedRestartPolicy.eligibleGroup(DetectionGroup.POST_GAME))
-        assertFalse(LeagueEndedRestartPolicy.eligibleGroup(DetectionGroup.IN_GAME))
+        assertTrue(LeagueEndedRestartPolicy.eligibleGroup(DetectionGroup.IN_GAME))
     }
 
     @Test fun referenceGeometryMatchesTheSuppliedNormalizedFrame() {
