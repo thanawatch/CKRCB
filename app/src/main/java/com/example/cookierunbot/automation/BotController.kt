@@ -74,6 +74,7 @@ internal val IN_GAME_BACKGROUND_RECOVERY_STAGES = listOf(
     BotStage.ENTER_LEAGUE,
     BotStage.LEAGUE_RESULTS,
     BotStage.PREVIOUS_RANK_RESULTS,
+    BotStage.LEAGUE_ENDED_RESTART,
 )
 
 internal fun excludeHandledInGameStages(
@@ -1892,7 +1893,13 @@ class BotController(
         sourceHeight: Int,
         frameGeneration: Long,
     ) {
-        val resumeGroup = rewardPopupResumeGroup(group)
+        // A league-ended restart popup can interrupt gameplay. After Confirm, route back
+        // through PRE_GAME detection so a fresh frame must establish the resulting menu/state.
+        val resumeGroup = if (stage == BotStage.LEAGUE_ENDED_RESTART) {
+            DetectionGroup.PRE_GAME
+        } else {
+            rewardPopupResumeGroup(group)
+        }
         if (!isRunning() || PopupFreshFramePolicy.blocks(frameGeneration, minimumFreshFrameGeneration)) return
         if (synchronized(lock) { pendingPartyRunSeasonRewardsGesture?.isCompleted == false }) {
             logDiagnostic("[PARTY_RUN_SEASON_REWARDS_SKIP] reason=callback_pending")
