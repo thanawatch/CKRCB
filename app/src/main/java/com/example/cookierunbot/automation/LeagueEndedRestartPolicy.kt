@@ -14,5 +14,6 @@ internal object LeagueEndedRestartPolicy {
     val CONFIRM_POINT = LogicalPoint(640, 458)
 
     fun eligibleGroup(group: DetectionGroup): Boolean =
-        group == DetectionGroup.PRE_GAME || group == DetectionGroup.POST_GAME
+        group == DetectionGroup.PRE_GAME || group == DetectionGroup.POST_GAME ||
+            group == DetectionGroup.IN_GAME
 }
