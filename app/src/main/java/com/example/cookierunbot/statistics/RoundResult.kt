@@ -8,6 +8,8 @@ data class RoundResult(
     val xp: Int?,
     val boxes: List<String> = emptyList(),
     val boxCount: Int = boxes.size,
+    /** True only after the Mystery Box scan completed; an empty list alone is not proof of zero boxes. */
+    val boxesScanned: Boolean = false,
     val screenshotPath: String? = null,
     val hasScreenshot: Boolean = screenshotPath != null,
 )
@@ -65,6 +67,6 @@ data class SessionStatistics(
     val antiBotSuccessfulTapCount: Int = 0,
     val antiBotHistory: List<AntiBotEvent> = emptyList(),
     val antiBotLatestEvidence: AntiBotEvidence? = null,
-    /** Number of rounds that produced exactly 1..5 Mystery Boxes, keyed by box count. */
+    /** Number of rounds confirmed to have produced exactly 0..5 Mystery Boxes, keyed by box count. */
     val roundsByBoxCount: Map<Int, Int> = emptyMap(),
 )
