@@ -184,7 +184,12 @@ object RoundResultStore {
             silverBoxes = silverBoxes,
             goldBoxes = goldBoxes,
             rainbowBoxes = rainbowBoxes,
-            roundsByBoxCount = roundsByBoxCount.toMap(),
+            // Zero-box rounds are a residual, not a direct Mystery Box scan result:
+            // all completed rounds minus rounds confirmed to have 1..5 boxes.
+            roundsByBoxCount = roundsByBoxCount.toMap().also { counts ->
+                counts[0] = (cumulativeByRound.size - (1..5).sumOf { counts[it] ?: 0 })
+                    .coerceAtLeast(0)
+            },
             lastRound = history.firstOrNull(),
             history = history,
             sessionRuntimeMs = if (sessionStartedAt == 0L) 0L else
