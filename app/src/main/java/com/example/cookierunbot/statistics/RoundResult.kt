@@ -8,10 +8,10 @@ data class RoundResult(
     val xp: Int?,
     val boxes: List<String> = emptyList(),
     val boxCount: Int = boxes.size,
-    /** True only after the Mystery Box scan completed; an empty list alone is not proof of zero boxes. */
-    val boxesScanned: Boolean = false,
     val screenshotPath: String? = null,
     val hasScreenshot: Boolean = screenshotPath != null,
+    /** True only after the Mystery Box scan completed; an empty list alone is not proof of zero boxes. */
+    val boxesScanned: Boolean = false,
 )
 
 data class AntiBotEvent(
