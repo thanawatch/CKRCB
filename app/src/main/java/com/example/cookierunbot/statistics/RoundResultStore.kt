@@ -264,6 +264,7 @@ private data class RoundContribution(
             result.coins ?: 0,
             result.xp ?: 0,
             result.boxCount,
+            result.boxCount.coerceAtLeast(0),
             result.boxesScanned,
             result.boxes.count { it == "wood" },
             result.boxes.count { it == "silver" },
