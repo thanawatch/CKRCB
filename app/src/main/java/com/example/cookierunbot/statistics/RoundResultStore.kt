@@ -18,7 +18,7 @@ object RoundResultStore {
     private var silverBoxes = 0
     private var goldBoxes = 0
     private var rainbowBoxes = 0
-    private val roundsByBoxCount = (1..5).associateWith { 0 }.toMutableMap()
+    private val roundsByBoxCount = (0..5).associateWith { 0 }.toMutableMap()
     private var antiBotChallengeCount = 0
     private var antiBotCompletedChallengeCount = 0
     private val completedAntiBotChallenges = mutableSetOf<Int>()
@@ -164,11 +164,11 @@ object RoundResultStore {
     fun updateBoxes(round: Int, boxes: List<String>, generation: Long): Boolean = synchronized(lock) {
         if (generation != sessionGeneration) return@synchronized false
         val contribution = cumulativeByRound[round] ?: return@synchronized false
-        replaceContribution(round, contribution.copyWithBoxes(boxes))
+        replaceContribution(round, contribution.copyWithBoxes(boxes, boxCountKnown = true))
         val current = results.firstOrNull { it.round == round } ?: return@synchronized true
         val retained = results.filterNot { it.round == round }
         results.clear()
-        results.addFirst(current.copy(boxes = boxes.toList(), boxCount = boxes.size))
+        results.addFirst(current.copy(boxes = boxes.toList(), boxCount = boxes.size, boxesScanned = true))
         retained.take(MAX_ROUNDS - 1).forEach(results::addLast)
         true
     }
@@ -225,7 +225,7 @@ object RoundResultStore {
         totalCoins += value.coins; totalXp += value.xp; totalBoxes += value.totalBoxes
         woodBoxes += value.wood; silverBoxes += value.silver
         goldBoxes += value.gold; rainbowBoxes += value.rainbow
-        if (value.boxCount in 1..5) roundsByBoxCount[value.boxCount] =
+        if (value.boxCountKnown && value.boxCount in 0..5) roundsByBoxCount[value.boxCount] =
             (roundsByBoxCount[value.boxCount] ?: 0) + 1
     }
 
@@ -233,7 +233,7 @@ object RoundResultStore {
         totalCoins -= value.coins; totalXp -= value.xp; totalBoxes -= value.totalBoxes
         woodBoxes -= value.wood; silverBoxes -= value.silver
         goldBoxes -= value.gold; rainbowBoxes -= value.rainbow
-        if (value.boxCount in 1..5) roundsByBoxCount[value.boxCount] =
+        if (value.boxCountKnown && value.boxCount in 0..5) roundsByBoxCount[value.boxCount] =
             ((roundsByBoxCount[value.boxCount] ?: 0) - 1).coerceAtLeast(0)
     }
 }
@@ -243,14 +243,16 @@ private data class RoundContribution(
     val xp: Int,
     val totalBoxes: Int,
     val boxCount: Int,
+    val boxCountKnown: Boolean,
     val wood: Int,
     val silver: Int,
     val gold: Int,
     val rainbow: Int,
 ) {
-    fun copyWithBoxes(boxes: List<String>) = copy(
+    fun copyWithBoxes(boxes: List<String>, boxCountKnown: Boolean) = copy(
         totalBoxes = boxes.size,
         boxCount = boxes.size,
+        boxCountKnown = boxCountKnown,
         wood = boxes.count { it == "wood" },
         silver = boxes.count { it == "silver" },
         gold = boxes.count { it == "gold" },
@@ -262,7 +264,7 @@ private data class RoundContribution(
             result.coins ?: 0,
             result.xp ?: 0,
             result.boxCount,
-            result.boxCount.coerceAtLeast(0),
+            result.boxesScanned,
             result.boxes.count { it == "wood" },
             result.boxes.count { it == "silver" },
             result.boxes.count { it == "gold" },
