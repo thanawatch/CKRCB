@@ -20,6 +20,7 @@ class RoundResultCollector(
     private val lock = Any()
     private val starts = mutableMapOf<Int, Long>()
     private val boxes = mutableMapOf<Int, MutableList<String>>()
+    private val scannedRounds = mutableSetOf<Int>()
     private var sessionGeneration = 0L
 
     fun startNewSession() {
@@ -27,13 +28,18 @@ class RoundResultCollector(
         synchronized(lock) {
             starts.clear()
             boxes.clear()
+            scannedRounds.clear()
             sessionGeneration = generation
         }
         log("[STATS_SESSION_START] generation=$generation")
     }
 
     fun beginRound(round: Int, elapsedRealtime: Long = SystemClock.elapsedRealtime()) {
-        synchronized(lock) { starts[round] = elapsedRealtime; boxes[round] = mutableListOf() }
+        synchronized(lock) {
+            starts[round] = elapsedRealtime
+            boxes[round] = mutableListOf()
+            scannedRounds.remove(round)
+        }
         log("[ROUND_START] round=$round elapsedRealtime=$elapsedRealtime")
     }
 
@@ -79,6 +85,7 @@ class RoundResultCollector(
                         xp = reading.xp.value,
                         boxes = roundBoxes,
                         boxCount = roundBoxes.size,
+                        boxesScanned = synchronized(lock) { round in scannedRounds },
                         screenshotPath = screenshotPath,
                         hasScreenshot = screenshotPath != null,
                     ), analysisGeneration,
@@ -107,7 +114,10 @@ class RoundResultCollector(
             )
         }
         val stored = RoundResultStore.upsert(
-            RoundResult(round, finishedAt, state.first, null, null, state.second, state.second.size),
+            RoundResult(
+                round, finishedAt, state.first, null, null, state.second, state.second.size,
+                boxesScanned = synchronized(lock) { round in scannedRounds },
+            ),
             generation,
         )
         if (!stored) { logStaleResult(round, generation); return }
@@ -120,7 +130,9 @@ class RoundResultCollector(
         val analysisGeneration = synchronized(lock) { sessionGeneration }
         executor.execute {
             try {
+                var scanSucceeded = true
                 val scan = try { boxClassifier.scan(ownedFrame) } catch (error: Exception) {
+                    scanSucceeded = false
                     Log.e(CookieRunBotApplication.TAG, "[BOX_SCAN] round=$round phase=1 failed", error)
                     BoxScanResult(0, emptyList())
                 }
@@ -188,8 +200,11 @@ class RoundResultCollector(
                 }
                 val grades = detections.map { it.grade }
                 val updated = synchronized(lock) {
-                    if (sessionGeneration != analysisGeneration) null
-                    else grades.also { boxes[round] = it.toMutableList() }
+                    if (sessionGeneration != analysisGeneration || !scanSucceeded) null
+                    else grades.also {
+                        boxes[round] = it.toMutableList()
+                        scannedRounds.add(round)
+                    }
                 }
                 if (updated == null || !RoundResultStore.updateBoxes(round, updated, analysisGeneration)) {
                     logStaleBox(round, 1, analysisGeneration)
