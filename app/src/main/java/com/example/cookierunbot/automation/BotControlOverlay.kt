@@ -49,6 +49,7 @@ class BotControlOverlay(private val context: Context) {
     private val statsCoins = TextView(context)
     private val statsXp = TextView(context)
     private val statsTime = TextView(context)
+    private val statsZeroBoxRounds = TextView(context)
     private val statsBoxCounts = linkedMapOf<String, TextView>()
     private val fastStart = Switch(context)
     private val redfingerProfile = Switch(context)
@@ -581,6 +582,7 @@ class BotControlOverlay(private val context: Context) {
             addView(statsXp.apply { compactStatStyle() }, LinearLayout.LayoutParams(0, dp(22), 1f))
             addView(statsTime.apply { compactStatStyle() }, LinearLayout.LayoutParams(0, dp(22), 1f))
         }, matchWidth())
+        addView(statsZeroBoxRounds.apply { compactStatStyle() }, matchWidth())
         addView(LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             listOf("wood", "silver", "gold", "rainbow").forEach { grade ->
@@ -615,6 +617,7 @@ class BotControlOverlay(private val context: Context) {
         statsCoins.text = "Coins: ${formatter.format(stats.totalCoins)}"
         statsXp.text = "XP: ${formatter.format(stats.totalXp)}"
         statsTime.text = "Time: ${formatSessionRuntime(stats.sessionRuntimeMs)}"
+        statsZeroBoxRounds.text = "Rounds with 0 boxes: ${stats.roundsByBoxCount[0] ?: 0}"
         statsBoxCounts["wood"]?.text = stats.woodBoxes.toString()
         statsBoxCounts["silver"]?.text = stats.silverBoxes.toString()
         statsBoxCounts["gold"]?.text = stats.goldBoxes.toString()
