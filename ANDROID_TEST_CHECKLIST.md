@@ -28,6 +28,8 @@ Use this after changes that touch runtime behavior. Mark only checks actually pe
 
 ## Capture, geometry, and detection
 
+- [ ] Verify session stats count a round as **0 boxes only after a successful completed Mystery Box scan**; an empty initial result, missing frame, or classifier exception must not count as zero. Verify a later corrected scan moves the round from the zero bucket to its new bucket without double-counting.
+
 - [ ] During IN_GAME, show the league-ended restart popup and verify it is detected only by background ROI scan, confirmed on a newer frame, and Confirm is tapped at most once for the same visible popup.
 - [ ] After Confirm, verify the controller waits for a post-gesture fresh frame and routes to PRE_GAME detection; confirm it recognizes the resulting menu/restart state instead of continuing as ordinary gameplay.
 
