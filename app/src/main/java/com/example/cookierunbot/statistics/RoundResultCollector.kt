@@ -72,9 +72,12 @@ class RoundResultCollector(
                         "coinsConfidence=${format(reading.coins.confidence)} " +
                         "xpConfidence=${format(reading.xp.confidence)}",
                 )
-                val roundBoxes = synchronized(lock) {
-                    if (sessionGeneration == analysisGeneration) boxes[round]?.toList().orEmpty()
-                    else emptyList()
+                val (roundBoxes, boxesScanned) = synchronized(lock) {
+                    if (sessionGeneration == analysisGeneration) {
+                        boxes[round]?.toList().orEmpty() to (round in scannedRounds)
+                    } else {
+                        emptyList<String>() to false
+                    }
                 }
                 val stored = RoundResultStore.upsert(
                     RoundResult(
@@ -85,7 +88,7 @@ class RoundResultCollector(
                         xp = reading.xp.value,
                         boxes = roundBoxes,
                         boxCount = roundBoxes.size,
-                        boxesScanned = synchronized(lock) { round in scannedRounds },
+                        boxesScanned = boxesScanned,
                         screenshotPath = screenshotPath,
                         hasScreenshot = screenshotPath != null,
                     ), analysisGeneration,
