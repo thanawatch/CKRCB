@@ -5,7 +5,7 @@ import org.junit.Test
 
 class ZeroBoxRoundStatisticsTest {
     @Test
-    fun zeroBoxesCountOnlyAfterConfirmedScanAndMoveWhenUpdated() {
+    fun zeroBoxCountIsDerivedAsTotalRoundsMinusRoundsWithOneToFiveBoxes() {
         RoundResultStore.clearForTests()
         try {
             val generation = RoundResultStore.startNewSession(1L)
