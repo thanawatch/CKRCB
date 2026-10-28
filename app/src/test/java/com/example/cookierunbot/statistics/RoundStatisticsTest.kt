@@ -373,12 +373,13 @@ class RoundStatisticsTest {
                 result(count, coins = count, xp = count).copy(
                     boxes = List(count) { "wood" },
                     boxCount = count,
+                    boxesScanned = true,
                 ),
                 generation,
             )
         }
         RoundResultStore.upsert(
-            result(6, coins = 6, xp = 6).copy(boxes = List(6) { "silver" }, boxCount = 6),
+            result(6, coins = 6, xp = 6).copy(boxes = List(6) { "silver" }, boxCount = 6, boxesScanned = true),
             generation,
         )
         var stats = RoundResultStore.snapshot()
@@ -402,6 +403,7 @@ class RoundStatisticsTest {
                 result(round, coins = 0, xp = 0).copy(
                     boxes = List(count) { "wood" },
                     boxCount = count,
+                    boxesScanned = true,
                 ),
                 generation,
             )
