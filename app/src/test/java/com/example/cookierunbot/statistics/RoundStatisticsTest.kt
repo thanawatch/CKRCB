@@ -388,7 +388,7 @@ class RoundStatisticsTest {
         stats = RoundResultStore.snapshot()
         assertEquals(mapOf(0 to 1, 1 to 0, 2 to 1, 3 to 2, 4 to 1, 5 to 1), stats.roundsByBoxCount)
         RoundResultStore.upsert(
-            result(2, coins = 2, xp = 2).copy(boxes = List(5) { "rainbow" }, boxCount = 5),
+            result(2, coins = 2, xp = 2).copy(boxes = List(5) { "rainbow" }, boxCount = 5, boxesScanned = true),
             generation,
         )
         stats = RoundResultStore.snapshot()
