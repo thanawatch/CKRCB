@@ -19,9 +19,9 @@ class ZeroBoxRoundStatisticsTest {
                 ),
                 generation,
             )
-            assertEquals(0, RoundResultStore.snapshot().roundsByBoxCount[0])
+            assertEquals(1, RoundResultStore.snapshot().roundsByBoxCount[0])
 
-            // An empty, completed scan confirms that this round earned zero boxes.
+            // Zero-box rounds are derived as total rounds minus the 1..5 box buckets.
             assertEquals(true, RoundResultStore.updateBoxes(1, emptyList(), generation))
             assertEquals(1, RoundResultStore.snapshot().roundsByBoxCount[0])
 
